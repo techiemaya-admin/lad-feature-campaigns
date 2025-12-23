@@ -2,7 +2,9 @@
 
 ## 🎯 Purpose
 
-The sandbox allows you to test your feature locally with a full LAD stack **without committing web code** to the feature repository.
+The sandbox allows you to test your feature in two modes:
+1. **Standalone**: Test feature backend and SDK independently
+2. **Full LAD Integration**: Test with complete LAD stack including web UI
 
 ## 🚨 Critical Rules
 
@@ -14,40 +16,54 @@ The sandbox allows you to test your feature locally with a full LAD stack **with
 
 ## 📁 Sandbox Structure
 
+### Standalone Mode (Default)
 ```
 lad-feature-campaigns/
-├── backend/features/campaigns/      ✅ Committed (source of truth)
-├── frontend/sdk/features/campaigns/ ✅ Committed (source of truth)
+├── backend/                         ✅ Feature backend (committed)
+├── sdk/                             ✅ Feature SDK (committed)
 ├── lad-sandbox/                     ❌ NEVER COMMIT (local only)
-│   ├── backend/   → symlink to LAD/backend
-│   ├── sdk/       → symlink to LAD/frontend/sdk
-│   └── web/       → symlink to LAD/frontend/web
+│   ├── backend/   → symlink to ./backend
+│   └── sdk/       → symlink to ./sdk
 ├── .gitignore                       ✅ Updated to exclude lad-sandbox/
 └── SANDBOX_SETUP.md                 ✅ This file
 ```
 
+### Full LAD Mode (Optional)
+```
+lad-feature-campaigns/
+├── backend/                         ✅ Feature backend (committed)
+├── sdk/                             ✅ Feature SDK (committed)
+├── lad-sandbox/                     ❌ NEVER COMMIT (local only)
+│   ├── backend/   → symlink to LAD/backend
+│   ├── sdk/       → symlink to LAD/frontend/sdk
+│   └── web/       → symlink to LAD/frontend/web
+└── ...
+```
+
 ## 🛠️ Setup Instructions
 
-### 1. Create Sandbox Directory
+### Quick Start (Standalone Mode)
 
 ```bash
 # From feature repository root
-mkdir -p lad-sandbox
-cd lad-sandbox
-```
-
-### 2. Create Symlinks to LAD
-
-**Option A: Using provided script**
-```bash
-# Run the setup script (creates symlinks automatically)
 ./setup-sandbox.sh
+
+# This creates:
+# - lad-sandbox/backend -> ./backend
+# - lad-sandbox/sdk -> ./sdk
 ```
 
-**Option B: Manual setup**
+### Full LAD Integration Mode
+
 ```bash
-# Link to LAD backend
-ln -s /path/to/LAD/backend backend
+# Provide path to LAD repository
+./setup-sandbox.sh /path/to/LAD
+
+# Or on Windows/WSL:
+./setup-sandbox.sh /mnt/d/techiemaya/LAD
+```
+
+### Manual Setup
 
 # Link to LAD frontend SDK
 ln -s /path/to/LAD/frontend/sdk sdk
