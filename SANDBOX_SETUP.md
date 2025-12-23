@@ -1,253 +1,227 @@
-# Local Sandbox Setup for Feature Development
+# LAD Feature Sandbox Setup
 
-## 🎯 Purpose
+Complete guide for setting up and using the local sandbox environment for feature development.
 
-The sandbox allows you to test your feature in two modes:
-1. **Standalone**: Test feature backend and SDK independently
-2. **Full LAD Integration**: Test with complete LAD stack including web UI
+## 📁 Repository Structure
 
-## 🚨 Critical Rules
-
-- ✅ Sandbox is LOCAL ONLY
-- ✅ Sandbox is GITIGNORED
-- ✅ Web code in sandbox is DISPOSABLE
-- ❌ NEVER commit sandbox to feature repo
-- ❌ NEVER merge sandbox to LAD main
-
-## 📁 Sandbox Structure
-
-### Standalone Mode (Default)
 ```
 lad-feature-campaigns/
 ├── backend/                         ✅ Feature backend (committed)
 ├── sdk/                             ✅ Feature SDK (committed)
 ├── lad-sandbox/                     ❌ NEVER COMMIT (local only)
-│   ├── backend/   → symlink to ./backend
-│   └── sdk/       → symlink to ./sdk
+│   ├── backend/   → symlink to ../backend
+│   └── sdk/       → symlink to ../sdk
 ├── .gitignore                       ✅ Updated to exclude lad-sandbox/
 └── SANDBOX_SETUP.md                 ✅ This file
 ```
 
-### Full LAD Mode (Optional)
+## 🎯 Purpose
+
+The sandbox allows you to:
+- Test your feature backend and SDK **locally**
+- Work on your feature in complete isolation
+- Develop and test without affecting LAD main repo
+- Keep sandbox completely disposable (never committed)
+
+## ⚙️ How It Works
+
+The sandbox uses **symlinks** to connect to your local feature code:
+
 ```
-lad-feature-campaigns/
-├── backend/                         ✅ Feature backend (committed)
-├── sdk/                             ✅ Feature SDK (committed)
-├── lad-sandbox/                     ❌ NEVER COMMIT (local only)
-│   ├── backend/   → symlink to LAD/backend
-│   ├── sdk/       → symlink to LAD/frontend/sdk
-│   └── web/       → symlink to LAD/frontend/web
-└── ...
+lad-sandbox/
+├── backend/  → ../backend  (your feature backend)
+└── sdk/      → ../sdk      (your feature SDK)
 ```
 
-## 🛠️ Setup Instructions
+This means:
+- Sandbox provides isolated testing environment
+- All changes stay in your feature repo
+- No connection to LAD main repository
+- Complete feature isolation for development
 
-### Quick Start (Standalone Mode)
+## 🚀 Quick Setup
+
+### Option 1: Automated Setup (Recommended)
 
 ```bash
 # From feature repository root
 ./setup-sandbox.sh
-
-# This creates:
-# - lad-sandbox/backend -> ./backend
-# - lad-sandbox/sdk -> ./sdk
 ```
 
-### Full LAD Integration Mode
+### Option 2: Manual Setup
 
 ```bash
-# Provide path to LAD repository
-./setup-sandbox.sh /path/to/LAD
+# Create sandbox directory
+mkdir -p lad-sandbox
+cd lad-sandbox
 
-# Or on Windows/WSL:
-./setup-sandbox.sh /mnt/d/techiemaya/LAD
+# Create symlinks
+ln -s ../backend backend
+ln -s ../sdk sdk
+
+# Update .gitignore
+cd ..
+echo "lad-sandbox/" >> .gitignore
 ```
 
-### Manual Setup
+## 🧪 Testing Workflows
 
-# Link to LAD frontend SDK
-ln -s /path/to/LAD/frontend/sdk sdk
-
-# Link to LAD frontend web
-ln -s /path/to/LAD/frontend/web web
-```
-
-### 3. Update LAD Paths (if needed)
-
-Edit `setup-sandbox.sh` to point to your LAD installation:
+### 1. Test SDK
 
 ```bash
-LAD_ROOT="/Users/naveenreddy/Desktop/AI-Maya/LAD"
+cd sdk
+npm test
+
+# Watch mode
+npm test -- --watch
 ```
 
-### 4. Verify Setup
+### 2. Test Backend
 
 ```bash
-# Check symlinks are created
+cd backend
+npm start
+```
+
+### 3. Develop Features
+
+Work directly in `backend/` and `sdk/` directories:
+
+```bash
+# Edit backend
+vim backend/controllers/myController.js
+
+# Edit SDK
+vim sdk/api.ts
+vim sdk/hooks/useMyFeature.ts
+
+# Run tests
+cd sdk && npm test
+```
+
+## 📝 Development Workflow
+
+1. **Develop** in `backend/` and `sdk/` directories
+2. **Test** using sandbox environment
+3. **Commit** only backend/ and sdk/ changes
+4. **Never commit** lad-sandbox/
+
+## 🔐 Critical Rules
+
+### ✅ DO:
+- Work in `backend/` and `sdk/` directories
+- Commit backend and SDK changes
+- Use sandbox for testing
+- Keep files under 400 lines
+- Follow feature isolation rules
+
+### ❌ DON'T:
+- Commit `lad-sandbox/` directory
+- Create cross-feature dependencies
+- Hardcode secrets or credentials
+- Exceed 400-line file limit
+- Break feature isolation
+
+## 🔄 Merge to LAD Main
+
+When your feature is ready:
+
+### What Gets Merged:
+```
+✅ backend/              → LAD/backend/features/campaigns/
+✅ sdk/                  → LAD/frontend/sdk/features/campaigns/
+```
+
+### What Never Gets Merged:
+```
+❌ lad-sandbox/          (local only, disposable)
+```
+
+### Pre-Merge Checklist:
+
+- [ ] All SDK tests pass (`npm test`)
+- [ ] No file exceeds 400 lines
+- [ ] Feature-prefixed API routes (`/campaigns/*`)
+- [ ] No cross-feature imports
+- [ ] No hardcoded secrets
+- [ ] Documentation updated
+- [ ] Types properly exported
+- [ ] Hooks domain-split if needed
+- [ ] `.gitignore` excludes sandbox
+- [ ] Only backend/ and sdk/ committed
+
+## 🐛 Troubleshooting
+
+### Symlinks Not Working?
+
+```bash
+# Check symlinks
 ls -la lad-sandbox/
 
 # Should see:
-# backend -> /path/to/LAD/backend
-# sdk -> /path/to/LAD/frontend/sdk
-# web -> /path/to/LAD/frontend/web
+# lrwxr-xr-x backend -> ../backend
+# lrwxr-xr-x sdk -> ../sdk
+
+# Re-create if broken
+rm -rf lad-sandbox
+./setup-sandbox.sh
 ```
 
-## 🧪 Testing Your Feature
+### Changes Not Reflecting?
 
-### Backend Testing
+- Changes to backend/ and sdk/ are immediate (symlinks)
+- Restart backend server if needed: `npm start`
+- Re-run SDK tests: `npm test`
+
+### Accidentally Staged Sandbox?
 
 ```bash
-# Navigate to LAD backend
-cd lad-sandbox/backend
+# Remove from staging
+git reset lad-sandbox/
 
-# Your feature is available at:
-# backend/features/campaigns/
+# Verify .gitignore
+cat .gitignore | grep lad-sandbox
 
-# Run backend server
-npm start
-
-# Test your endpoints
-curl http://localhost:5001/campaigns
+# Should show: lad-sandbox/
 ```
 
-### SDK Testing
+### Backend Not Starting?
 
 ```bash
-# Navigate to SDK
-cd lad-sandbox/sdk
+# Check dependencies
+cd backend
+npm install
 
-# Your feature SDK is at:
-# sdk/features/campaigns/
+# Check environment variables
+cat .env.example
 
-# Run SDK tests
-npm test
-
-# Or test specific feature
-npm run test:sdk:campaigns
+# Check for port conflicts
+lsof -i :3000
 ```
 
-### Frontend Testing (Optional)
+## 📚 Documentation Links
 
-If you need to test UI integration:
-
-```bash
-# Navigate to web
-cd lad-sandbox/web
-
-# Import your SDK
-import { useCampaigns } from '@/sdk/features/campaigns';
-
-# Create test pages in:
-# web/src/app/(features)/campaigns-test/page.tsx
-
-# Run dev server
-npm run dev
-```
-
-**IMPORTANT:** Any web code you create in the sandbox is **disposable**. Real web implementation should be done in the LAD repository.
-
-## 📦 What Gets Merged to LAD
-
-When your feature is ready, **ONLY** these folders are merged:
-
-```bash
-✅ backend/features/campaigns/
-✅ frontend/sdk/features/campaigns/
-```
-
-**NEVER merge:**
-```bash
-❌ lad-sandbox/
-❌ frontend/web/ (if created in sandbox)
-```
-
-## 🔄 Workflow
-
-### 1. Development
-```bash
-# Develop in feature repo
-├── backend/features/campaigns/     ← Edit here
-└── frontend/sdk/features/campaigns/ ← Edit here
-```
-
-### 2. Local Testing
-```bash
-# Test via sandbox symlinks
-lad-sandbox/
-├── backend/ → sees your feature changes
-├── sdk/ → sees your SDK changes
-└── web/ → use for disposable UI tests
-```
-
-### 3. Merge to LAD
-```bash
-# Copy to LAD (only feature folders)
-cp -r backend/features/campaigns/ /path/to/LAD/backend/features/
-cp -r frontend/sdk/features/campaigns/ /path/to/LAD/frontend/sdk/features/
-```
-
-## 🚧 Common Issues
-
-### Issue: Symlinks not working
-**Solution:** Use absolute paths, not relative:
-```bash
-ln -s /Users/you/Desktop/LAD/backend backend  # ✅ Good
-ln -s ../../LAD/backend backend               # ❌ Might break
-```
-
-### Issue: Changes not reflected in sandbox
-**Solution:** Check if you're editing the feature files, not the LAD files:
-```bash
-# Edit these (feature repo):
-backend/features/campaigns/
-frontend/sdk/features/campaigns/
-
-# NOT these (LAD repo):
-LAD/backend/features/campaigns/
-LAD/frontend/sdk/features/campaigns/
-```
-
-### Issue: Web code getting committed
-**Solution:** Ensure `.gitignore` includes:
-```gitignore
-# Sandbox (never commit)
-lad-sandbox/
-lad-sandbox/**
-
-# Local testing files
-**/test-pages/
-**/*-test.tsx
-```
-
-## ✅ Pre-Merge Checklist
-
-Before merging to LAD, verify:
-
-- [ ] No files > 400 lines
-- [ ] APIs are feature-prefixed (`/campaigns/*`)
-- [ ] SDK has no Next.js/JSX/CSS imports
-- [ ] All SDK tests pass (`npm test`)
-- [ ] Backend tests pass
-- [ ] `lad-sandbox/` is not in git
-- [ ] No web code in feature repo
-- [ ] Feature follows LAD architecture
-
-## 📚 Additional Resources
-
+- [Feature Repository Rules](../../../lad-docs/FEATURE_REPOSITORY_RULES.md)
 - [LAD Feature Developer Playbook](../../../lad-docs/lad-feature-developer-playbook.md)
 - [SDK Template](../../SDK_TEMPLATE.md)
-- [Backend Feature Guidelines](../../../backend/README.md)
+- [Feature Repositories Index](../../../lad-docs/FEATURE_REPOSITORIES_INDEX.md)
 
-## 🆘 Need Help?
+## 💡 Tips
 
-If sandbox setup fails:
-1. Check symlink paths are absolute
-2. Verify LAD is cloned and built
-3. Ensure you have proper file permissions
-4. Check `.gitignore` includes `lad-sandbox/`
+1. **Keep It Simple**: Sandbox is just for testing
+2. **Stay Isolated**: Work only in your feature directories
+3. **Test Often**: Run `npm test` frequently
+4. **Follow Template**: Use campaigns SDK as reference
+5. **Ask When Stuck**: Refer to documentation
+
+## ⚠️ Important Reminders
+
+- 🔴 **NEVER commit lad-sandbox/**
+- 🟢 **ONLY commit backend/ and sdk/**
+- 🔵 **Sandbox is LOCAL ONLY**
+- 🟡 **Keep feature isolated**
+- 🟣 **Follow 400-line limit**
 
 ---
 
-**Version:** 1.0  
-**Last Updated:** 23 December 2025  
-**Purpose:** Local development and testing only - NEVER commit sandbox
+**Need Help?** Check the [LAD Feature Developer Playbook](../../../lad-docs/lad-feature-developer-playbook.md)

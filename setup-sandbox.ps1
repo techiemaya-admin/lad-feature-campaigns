@@ -62,6 +62,12 @@ try {
     # Create SDK symlink
     New-Item -ItemType SymbolicLink -Path $sandboxSdkPath -Target $sdkPath -ErrorAction Stop | Out-Null
     Write-Host "✓ sdk/ → ../sdk" -ForegroundColor Green
+    
+    # Create Web symlink
+    $webPath = Join-Path $currentDir "web"
+    $sandboxWebPath = Join-Path $currentDir "$SANDBOX_DIR\web"
+    New-Item -ItemType SymbolicLink -Path $sandboxWebPath -Target $webPath -ErrorAction Stop | Out-Null
+    Write-Host "✓ web/ → ../web" -ForegroundColor Green
 }
 catch {
     Write-Host "✗ Failed to create symlinks" -ForegroundColor Red
@@ -110,6 +116,15 @@ else {
     Write-Host "✗ SDK symlink failed" -ForegroundColor Red
     exit 1
 }
+
+$sandboxWebPath = Join-Path $currentDir "$SANDBOX_DIR\web"
+if ((Get-Item $sandboxWebPath).LinkType -eq "SymbolicLink" -and (Test-Path $sandboxWebPath)) {
+    Write-Host "✓ Web symlink working" -ForegroundColor Green
+}
+else {
+    Write-Host "✗ Web symlink failed" -ForegroundColor Red
+    exit 1
+}
 Write-Host ""
 
 # Success message
@@ -121,15 +136,17 @@ Write-Host ""
 Write-Host "📁 Sandbox Structure:" -ForegroundColor Cyan
 Write-Host "   lad-sandbox/"
 Write-Host "   ├── backend/  → Feature backend"
-Write-Host "   └── sdk/      → Feature SDK"
+Write-Host "   ├── sdk/      → Feature SDK"
+Write-Host "   └── web/      → Feature test UI"
 Write-Host ""
 
 Write-Host "🧪 Next Steps:" -ForegroundColor Cyan
 Write-Host "   1. Test backend:  " -NoNewline
 Write-Host "cd backend && npm start" -ForegroundColor Yellow
-Write-Host "   2. Test SDK:      " -NoNewline
+Write-Host "   2. Test web UI:   " -NoNewline
+Write-Host "cd web && npm install && npm run dev" -ForegroundColor Yellow
+Write-Host "   3. Test SDK:      " -NoNewline
 Write-Host "cd sdk && npm test" -ForegroundColor Yellow
-Write-Host "   3. Develop features in backend/ and sdk/ directories"
 Write-Host ""
 
 Write-Host "📚 Documentation:" -ForegroundColor Cyan
