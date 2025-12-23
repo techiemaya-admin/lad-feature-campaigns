@@ -6,7 +6,7 @@
 const express = require('express');
 const router = express.Router();
 const CampaignController = require('../controllers/CampaignController');
-const { jwtAuth } = require('../../../middleware/auth');
+const { jwtAuth } = require('../middleware/auth');
 const {
   validateCampaignCreation,
   validateCampaignUpdate,
