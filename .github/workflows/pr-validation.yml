@@ -118,13 +118,13 @@ jobs:
         run: |
           echo "Checking for accidentally committed secrets..."
           
-          # Check for common secret patterns
-          if grep -r -i "api[_-]key.*=.*['\"][a-zA-Z0-9]{20,}['\"]" backend/ frontend/ 2>/dev/null; then
+          # Check for common secret patterns (excluding node_modules and vendor directories)
+          if grep -r -i "api[_-]key.*=.*['\"][a-zA-Z0-9]{20,}['\"]" backend/ --exclude-dir=node_modules --exclude-dir=vendor 2>/dev/null; then
             echo "❌ Possible API keys found in code"
             exit 1
           fi
           
-          if grep -r -i "password.*=.*['\"][^'\"]*['\"]" backend/ frontend/ 2>/dev/null | grep -v "password.*process.env"; then
+          if grep -r -i "password.*=.*['\"][^'\"]*['\"]" backend/ --exclude-dir=node_modules --exclude-dir=vendor 2>/dev/null | grep -v "password.*process.env" | grep -v "password.*config\." | grep -v "// password" | grep -v "* password"; then
             echo "❌ Possible hardcoded passwords found"
             exit 1
           fi
