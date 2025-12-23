@@ -5,7 +5,7 @@
  * Exports router and metadata
  */
 
-const campaignsRouter = require('./campaigns');
+const campaignsRouter = require('./routes');
 
 module.exports = {
   // Router
