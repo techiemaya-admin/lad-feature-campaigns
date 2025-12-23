@@ -31,18 +31,21 @@ jobs:
           mkdir -p lad-backend/features/campaigns/services
           mkdir -p lad-backend/features/campaigns/routes
           mkdir -p lad-backend/features/campaigns/controllers
-          mkdir -p lad-backend/features/campaigns/middleware
           mkdir -p lad-backend/features/campaigns/models
+          mkdir -p lad-backend/features/campaigns/engine
 
-          # Copy new files
+          # Copy new files (excluding local testing files)
           [ -d "backend/services" ] && cp backend/services/* lad-backend/features/campaigns/services/ || echo "No services directory"
           [ -f "backend/routes/index.js" ] && cp backend/routes/index.js lad-backend/features/campaigns/routes/index.js || echo "No routes/index.js"
           [ -d "backend/controllers" ] && cp backend/controllers/* lad-backend/features/campaigns/controllers/ 2>/dev/null || echo "No controllers directory"
-          [ -d "backend/middleware" ] && cp backend/middleware/* lad-backend/features/campaigns/middleware/ 2>/dev/null || echo "No middleware directory"
           [ -d "backend/models" ] && cp backend/models/* lad-backend/features/campaigns/models/ 2>/dev/null || echo "No models directory"
+          [ -d "backend/engine" ] && cp -r backend/engine/* lad-backend/features/campaigns/engine/ 2>/dev/null || echo "No engine directory"
           [ -f "backend/manifest.js" ] && cp backend/manifest.js lad-backend/features/campaigns/ || echo "No manifest.js"
           [ -f "backend/UPGRADE_NOTES.md" ] && cp backend/UPGRADE_NOTES.md lad-backend/features/campaigns/ || echo "No UPGRADE_NOTES.md"
           [ -f "backend/README.md" ] && cp backend/README.md lad-backend/features/campaigns/ || echo "No README.md"
+          
+          # Note: DO NOT copy backend/middleware/auth.js, backend/.env, backend/generate-token.js
+          # These are for local testing only and main repo has its own
 
       - name: Commit and push to LAD-Backend
         working-directory: lad-backend

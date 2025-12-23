@@ -43,3 +43,11 @@ coverage/
 *.tmp
 *.temp
 .cache/
+
+# Local testing files (DO NOT sync to main repo)
+backend/.env
+backend/generate-token.js
+backend/middleware/auth.js
+backend/package.json
+backend/package-lock.json
+backend/node_modules/
