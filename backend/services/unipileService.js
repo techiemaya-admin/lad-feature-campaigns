@@ -3,7 +3,6 @@ const axios = require('axios');
 
 /**
  * Unipile Service for LinkedIn Connection Management
- * 
  * This service handles:
  * - Sending LinkedIn connection requests via Unipile API
  * - Tracking connection request status
