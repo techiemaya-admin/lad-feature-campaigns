@@ -6,7 +6,8 @@
 const express = require('express');
 const router = express.Router();
 const CampaignController = require('../controllers/CampaignController');
-const { jwtAuth } = require('../../../middleware/auth');
+const linkedInRoutes = require('./linkedin');
+const { jwtAuth } = require('../middleware/auth');
 const {
   validateCampaignCreation,
   validateCampaignUpdate,
@@ -14,6 +15,9 @@ const {
   validatePagination,
   validateLeadIds
 } = require('../middleware/validation');
+
+// LinkedIn integration (mount before /:id routes to avoid conflicts)
+router.use('/linkedin', linkedInRoutes);
 
 // Campaign CRUD operations
 router.get('/', jwtAuth, validatePagination, CampaignController.listCampaigns);

@@ -3,7 +3,7 @@
  * Handles database operations for campaigns
  */
 
-const db = require('../../../config/database');
+const { pool } = require('../../../shared/database/connection');
 
 class CampaignModel {
   /**
@@ -33,7 +33,7 @@ class CampaignModel {
       JSON.stringify(config)
     ];
 
-    const result = await db.query(query, values);
+    const result = await pool.query(query, values);
     return result.rows[0];
   }
 
@@ -46,7 +46,7 @@ class CampaignModel {
       WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
     `;
 
-    const result = await db.query(query, [campaignId, tenantId]);
+    const result = await pool.query(query, [campaignId, tenantId]);
     return result.rows[0];
   }
 
@@ -88,7 +88,7 @@ class CampaignModel {
     query += ` GROUP BY c.id ORDER BY c.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
     params.push(limit, offset);
 
-    const result = await db.query(query, params);
+    const result = await pool.query(query, params);
     return result.rows;
   }
 
@@ -121,7 +121,7 @@ class CampaignModel {
       RETURNING *
     `;
 
-    const result = await db.query(query, values);
+    const result = await pool.query(query, values);
     return result.rows[0];
   }
 
@@ -136,7 +136,7 @@ class CampaignModel {
       RETURNING id
     `;
 
-    const result = await db.query(query, [campaignId, tenantId]);
+    const result = await pool.query(query, [campaignId, tenantId]);
     return result.rows[0];
   }
 
@@ -159,7 +159,7 @@ class CampaignModel {
       WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
     `;
 
-    const result = await db.query(query, [tenantId]);
+    const result = await pool.query(query, [tenantId]);
     return result.rows[0];
   }
 
@@ -173,7 +173,7 @@ class CampaignModel {
       ORDER BY created_at DESC
     `;
 
-    const result = await db.query(query, [tenantId]);
+    const result = await pool.query(query, [tenantId]);
     return result.rows;
   }
 }

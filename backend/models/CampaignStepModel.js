@@ -3,7 +3,7 @@
  * Handles database operations for campaign steps (workflow builder)
  */
 
-const db = require('../../../config/database');
+const { pool } = require('../../../shared/database/connection');
 
 class CampaignStepModel {
   /**
@@ -37,7 +37,7 @@ class CampaignStepModel {
       JSON.stringify(config)
     ];
 
-    const result = await db.query(query, values);
+    const result = await pool.query(query, values);
     return result.rows[0];
   }
 
@@ -51,7 +51,7 @@ class CampaignStepModel {
       ORDER BY "order" ASC
     `;
 
-    const result = await db.query(query, [campaignId, tenantId]);
+    const result = await pool.query(query, [campaignId, tenantId]);
     return result.rows;
   }
 
@@ -64,7 +64,7 @@ class CampaignStepModel {
       WHERE id = $1 AND tenant_id = $2
     `;
 
-    const result = await db.query(query, [stepId, tenantId]);
+    const result = await pool.query(query, [stepId, tenantId]);
     return result.rows[0];
   }
 
@@ -97,7 +97,7 @@ class CampaignStepModel {
       RETURNING *
     `;
 
-    const result = await db.query(query, values);
+    const result = await pool.query(query, values);
     return result.rows[0];
   }
 
@@ -111,7 +111,7 @@ class CampaignStepModel {
       RETURNING id
     `;
 
-    const result = await db.query(query, [stepId, tenantId]);
+    const result = await pool.query(query, [stepId, tenantId]);
     return result.rows[0];
   }
 
@@ -125,7 +125,7 @@ class CampaignStepModel {
       RETURNING id
     `;
 
-    const result = await db.query(query, [campaignId, tenantId]);
+    const result = await pool.query(query, [campaignId, tenantId]);
     return result.rows;
   }
 
@@ -168,7 +168,7 @@ class CampaignStepModel {
       RETURNING *
     `;
 
-    const result = await db.query(query, values);
+    const result = await pool.query(query, values);
     return result.rows;
   }
 }

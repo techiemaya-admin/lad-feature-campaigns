@@ -3,6 +3,21 @@
  * Simple Express server to test the campaigns feature
  */
 
+const path = require('path');
+const fs = require('fs');
+
+// Load .env file from project root (lad-feature-campaigns/.env)
+try {
+  const envPath = path.join(__dirname, '..', '.env');
+  if (fs.existsSync(envPath)) {
+    require('dotenv').config({ path: envPath });
+  } else {
+    require('dotenv').config();
+  }
+} catch (e) {
+  // dotenv not available, that's okay
+}
+
 const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,16 +26,8 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Mock authentication middleware for testing
-const mockAuth = (req, res, next) => {
-  req.user = {
-    userId: 1,
-    user_id: 1,
-    organization_id: 1,
-    email: 'test@example.com'
-  };
-  next();
-};
+// Use real JWT auth middleware for testing
+const { jwtAuth } = require('./middleware/auth');
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -31,17 +38,40 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Mock database connection if not available
+try {
+  require.resolve('../../../shared/database/connection');
+} catch (e) {
+  // Database connection not available, use mock
+  console.log('⚠️  Database connection not found, using mock database');
+  const Module = require('module');
+  const originalRequire = Module.prototype.require;
+  Module.prototype.require = function(...args) {
+    if (args[0] === '../../../shared/database/connection' || 
+        args[0] === '../../../../shared/database/connection') {
+      return require('./mock-database');
+    }
+    return originalRequire.apply(this, args);
+  };
+}
+
 // Test if we can load the feature modules
 try {
   const campaignRoutes = require('./routes/index');
+  const LinkedInWebhookController = require('./controllers/LinkedInWebhookController');
+  
   console.log('✓ Campaign routes loaded successfully');
   
-  // Mount routes with mock auth
-  app.use('/api/campaigns', mockAuth, campaignRoutes);
+  // Mount LinkedIn webhook route WITHOUT auth (webhooks don't need auth)
+  app.post('/api/campaigns/linkedin/webhook', LinkedInWebhookController.handleWebhook);
+  
+  // Mount all other routes with JWT auth
+  app.use('/api/campaigns', jwtAuth, campaignRoutes);
   console.log('✓ Campaign routes mounted at /api/campaigns');
+  console.log('✓ LinkedIn webhook mounted without auth');
 } catch (error) {
   console.error('✗ Error loading campaign routes:', error.message);
-  console.error('  This is expected if database dependencies are not available');
+  console.error('  Stack:', error.stack);
 }
 
 // Error handling middleware

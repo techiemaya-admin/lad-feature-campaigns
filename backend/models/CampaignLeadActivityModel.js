@@ -3,7 +3,7 @@
  * Handles database operations for campaign lead activities (tracking actions)
  */
 
-const db = require('../../../config/database');
+const { pool } = require('../../../shared/database/connection');
 
 class CampaignLeadActivityModel {
   /**
@@ -48,7 +48,7 @@ class CampaignLeadActivityModel {
       JSON.stringify(metadata)
     ];
 
-    const result = await db.query(query, values);
+    const result = await pool.query(query, values);
     return result.rows[0];
   }
 
@@ -61,7 +61,7 @@ class CampaignLeadActivityModel {
       WHERE id = $1 AND tenant_id = $2
     `;
 
-    const result = await db.query(query, [activityId, tenantId]);
+    const result = await pool.query(query, [activityId, tenantId]);
     return result.rows[0];
   }
 
@@ -76,7 +76,7 @@ class CampaignLeadActivityModel {
       LIMIT $3
     `;
 
-    const result = await db.query(query, [campaignLeadId, tenantId, limit]);
+    const result = await pool.query(query, [campaignLeadId, tenantId, limit]);
     return result.rows;
   }
 
@@ -92,7 +92,7 @@ class CampaignLeadActivityModel {
       LIMIT 1
     `;
 
-    const result = await db.query(query, [campaignLeadId, tenantId]);
+    const result = await pool.query(query, [campaignLeadId, tenantId]);
     return result.rows[0];
   }
 
@@ -108,7 +108,7 @@ class CampaignLeadActivityModel {
       LIMIT 1
     `;
 
-    const result = await db.query(query, [campaignLeadId, stepId, tenantId]);
+    const result = await pool.query(query, [campaignLeadId, stepId, tenantId]);
     return result.rows.length > 0 ? result.rows[0] : null;
   }
 
@@ -144,7 +144,7 @@ class CampaignLeadActivityModel {
       RETURNING *
     `;
 
-    const result = await db.query(query, values);
+    const result = await pool.query(query, values);
     return result.rows[0];
   }
 
@@ -176,7 +176,7 @@ class CampaignLeadActivityModel {
     query += ` ORDER BY cla.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
     params.push(limit, offset);
 
-    const result = await db.query(query, params);
+    const result = await pool.query(query, params);
     return result.rows;
   }
 
@@ -199,7 +199,7 @@ class CampaignLeadActivityModel {
       WHERE cl.campaign_id = $1 AND cla.tenant_id = $2
     `;
 
-    const result = await db.query(query, [campaignId, tenantId]);
+    const result = await pool.query(query, [campaignId, tenantId]);
     return result.rows[0];
   }
 
@@ -213,7 +213,7 @@ class CampaignLeadActivityModel {
       RETURNING id
     `;
 
-    const result = await db.query(query, [campaignLeadId, tenantId]);
+    const result = await pool.query(query, [campaignLeadId, tenantId]);
     return result.rows;
   }
 }

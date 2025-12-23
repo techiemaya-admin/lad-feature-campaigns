@@ -25,6 +25,7 @@ module.exports = {
   routes: [
     '',           // GET /api/campaigns - List campaigns
     'stats',      // GET /api/campaigns/stats - Get statistics
+    'linkedin',   // LinkedIn integration routes (must be before :id routes)
     ':id',        // GET /api/campaigns/:id - Get campaign details
     ':id/start',  // POST /api/campaigns/:id/start - Start campaign
     ':id/pause',  // POST /api/campaigns/:id/pause - Pause campaign
