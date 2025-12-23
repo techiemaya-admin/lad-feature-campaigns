@@ -80,6 +80,22 @@ class CampaignCRUDController {
 
       const stats = await CampaignModel.getStats(tenantId);
 
+      // Handle empty results from database (mock DB or no data)
+      if (!stats) {
+        return res.json({
+          success: true,
+          data: {
+            total_campaigns: 0,
+            active_campaigns: 0,
+            total_leads: 0,
+            total_sent: 0,
+            total_delivered: 0,
+            total_connected: 0,
+            total_replied: 0
+          }
+        });
+      }
+
       res.json({
         success: true,
         data: {

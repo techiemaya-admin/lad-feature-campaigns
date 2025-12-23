@@ -118,17 +118,30 @@ class LinkedInAuthController {
         });
       }
 
-      const result = await linkedInService.connectAccount({
-        method,
-        email,
-        password,
-        li_at,
-        li_a,
-        user_agent
-      });
+      let result;
+      try {
+        result = await linkedInService.connectAccount({
+          method,
+          email,
+          password,
+          li_at,
+          li_a,
+          user_agent
+        });
+      } catch (error) {
+        // Handle Unipile API errors gracefully
+        if (error.response && error.response.status === 404) {
+          return res.status(404).json({
+            success: false,
+            error: 'LinkedIn connect endpoint not found in Unipile API. This may require a different API version or endpoint path.',
+            details: error.response.data?.message || error.message
+          });
+        }
+        throw error; // Re-throw other errors
+      }
 
       // If connection successful, save to database
-      if (result.account_id || result.id) {
+      if (result && (result.account_id || result.id)) {
         const unipileAccountId = result.account_id || result.id;
         const accountDetails = await linkedInService.getAccountDetails(unipileAccountId);
         
