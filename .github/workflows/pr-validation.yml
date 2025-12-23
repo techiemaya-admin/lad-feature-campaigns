@@ -20,10 +20,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci || echo "No package.json found, skipping npm ci"
+      - name: Install backend dependencies
+        run: |
+          if [ -f backend/package.json ]; then
+            cd backend && npm ci
+          else
+            echo "No backend package.json found, skipping"
+          fi
 
       - name: Check for required files
         run: |
