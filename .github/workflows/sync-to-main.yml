@@ -1,0 +1,111 @@
+name: Sync to LAD Main Repositories
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature repo
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Checkout LAD-Backend
+        uses: actions/checkout@v3
+        with:
+          repository: techiemaya-admin/LAD-Backend
+          token: ${{ secrets.LAD_REPO_TOKEN }}
+          path: lad-backend
+          ref: develop
+
+      - name: Copy backend files
+        run: |
+          # Remove old files
+          rm -rf lad-backend/features/campaigns/*
+
+          # Ensure directories exist
+          mkdir -p lad-backend/features/campaigns/services
+          mkdir -p lad-backend/features/campaigns/routes
+          mkdir -p lad-backend/features/campaigns/controllers
+          mkdir -p lad-backend/features/campaigns/models
+          mkdir -p lad-backend/features/campaigns/engine
+
+          # Copy new files (excluding local testing files)
+          [ -d "backend/services" ] && cp backend/services/* lad-backend/features/campaigns/services/ || echo "No services directory"
+          [ -f "backend/routes/index.js" ] && cp backend/routes/index.js lad-backend/features/campaigns/routes/index.js || echo "No routes/index.js"
+          [ -d "backend/controllers" ] && cp backend/controllers/* lad-backend/features/campaigns/controllers/ 2>/dev/null || echo "No controllers directory"
+          [ -d "backend/models" ] && cp backend/models/* lad-backend/features/campaigns/models/ 2>/dev/null || echo "No models directory"
+          [ -d "backend/engine" ] && cp -r backend/engine/* lad-backend/features/campaigns/engine/ 2>/dev/null || echo "No engine directory"
+          [ -f "backend/manifest.js" ] && cp backend/manifest.js lad-backend/features/campaigns/ || echo "No manifest.js"
+          [ -f "backend/UPGRADE_NOTES.md" ] && cp backend/UPGRADE_NOTES.md lad-backend/features/campaigns/ || echo "No UPGRADE_NOTES.md"
+          [ -f "backend/README.md" ] && cp backend/README.md lad-backend/features/campaigns/ || echo "No README.md"
+          
+          # Note: DO NOT copy backend/middleware/auth.js, backend/.env, backend/generate-token.js
+          # These are for local testing only and main repo has its own
+
+      - name: Commit and push to LAD-Backend
+        working-directory: lad-backend
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add features/campaigns/
+          git commit -m "feat(campaigns): auto-sync from feature repo
+
+          Synced from: ${{ github.sha }}
+          Repository: lad-feature-campaigns
+          Timestamp: $(date -u)
+          " || echo "No changes to commit"
+          git push origin develop
+
+  sync-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature repo
+        uses: actions/checkout@v3
+
+      - name: Checkout LAD-Frontend
+        uses: actions/checkout@v3
+        with:
+          repository: techiemaya-admin/LAD-Frontend
+          token: ${{ secrets.LAD_REPO_TOKEN }}
+          path: lad-frontend
+          ref: develop
+
+      - name: Copy frontend SDK files
+        run: |
+          # Remove old SDK
+          rm -rf lad-frontend/sdk/features/campaigns/*
+
+          # Ensure directory exists
+          mkdir -p lad-frontend/sdk/features/campaigns
+
+          # Copy new SDK
+          [ -d "frontend/sdk" ] && cp -r frontend/sdk/* lad-frontend/sdk/features/campaigns/ || echo "No frontend SDK"
+
+          # Copy components if exist
+          if [ -d "frontend/components" ] && [ "$(ls -A frontend/components)" ]; then
+            mkdir -p lad-frontend/web/src/features/campaigns
+            rm -rf lad-frontend/web/src/features/campaigns/*
+            cp -r frontend/components/* lad-frontend/web/src/features/campaigns/
+          fi
+
+      - name: Commit and push to LAD-Frontend
+        working-directory: lad-frontend
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add sdk/features/campaigns/
+          if [ -d "web/src/features/campaigns" ]; then
+            git add web/src/features/campaigns/
+          fi
+          git commit -m "feat(campaigns): auto-sync SDK from feature repo
+
+          Synced from: ${{ github.sha }}
+          Repository: lad-feature-campaigns
+          Timestamp: $(date -u)
+          " || echo "No changes to commit"
+          git push origin develop

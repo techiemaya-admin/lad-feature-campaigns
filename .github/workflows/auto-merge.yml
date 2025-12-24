@@ -1,0 +1,187 @@
+name: Auto-merge Approved PRs
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request_target:
+    types: [labeled]
+
+jobs:
+  auto-merge:
+    name: Auto-merge PR
+    runs-on: ubuntu-latest
+    if: |
+      (github.event.review.state == 'approved' && github.event.pull_request.user.login != 'dependabot[bot]') ||
+      (github.event.label.name == 'auto-merge' && github.event.pull_request.user.login != 'dependabot[bot]')
+    
+    permissions:
+      pull-requests: write
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check PR status
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+
+            // Check if PR has required approvals
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+
+            const approvals = reviews.filter(r => r.state === 'APPROVED').length;
+            console.log(`PR has ${approvals} approval(s)`);
+
+            // Check if all checks passed
+            const { data: checks } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: pr.head.sha,
+            });
+
+            const failedChecks = checks.check_runs.filter(c => 
+              c.conclusion === 'failure' || c.conclusion === 'cancelled'
+            );
+
+            console.log(`Failed checks: ${failedChecks.length}`);
+
+            // Check if PR is mergeable
+            const mergeable = pr.mergeable;
+            const mergeableState = pr.mergeable_state;
+
+            console.log(`Mergeable: ${mergeable}, State: ${mergeableState}`);
+
+            const canMerge = approvals >= 1 && failedChecks.length === 0 && mergeable;
+
+            core.setOutput('can_merge', canMerge);
+            core.setOutput('approvals', approvals);
+            core.setOutput('failed_checks', failedChecks.length);
+            core.setOutput('mergeable', mergeable);
+
+            return canMerge;
+
+      - name: Wait for checks to complete
+        if: steps.check.outputs.can_merge == 'false'
+        run: |
+          echo "⏳ Waiting for checks to complete..."
+          sleep 30
+
+      - name: Auto-merge PR
+        if: steps.check.outputs.can_merge == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                merge_method: 'squash',
+                commit_title: `${context.payload.pull_request.title} (#${context.issue.number})`,
+                commit_message: context.payload.pull_request.body || '',
+              });
+
+              console.log('✅ PR merged successfully');
+
+              // Add comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: '🎉 PR has been automatically merged after approval and passing all checks!',
+              });
+
+              // Delete branch if it's from the same repo
+              if (!context.payload.pull_request.head.repo.fork) {
+                try {
+                  await github.rest.git.deleteRef({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    ref: `heads/${context.payload.pull_request.head.ref}`,
+                  });
+                  console.log('✅ Branch deleted');
+                } catch (error) {
+                  console.log('⚠️  Could not delete branch:', error.message);
+                }
+              }
+            } catch (error) {
+              console.error('❌ Failed to merge PR:', error.message);
+              
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `⚠️ Auto-merge failed: ${error.message}\n\nPlease merge manually.`,
+              });
+            }
+
+      - name: Comment if cannot merge
+        if: steps.check.outputs.can_merge != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const approvals = '${{ steps.check.outputs.approvals }}';
+            const failedChecks = '${{ steps.check.outputs.failed_checks }}';
+            const mergeable = '${{ steps.check.outputs.mergeable }}';
+
+            let reasons = [];
+            if (approvals < 1) reasons.push('Needs at least 1 approval');
+            if (failedChecks > 0) reasons.push(`Has ${failedChecks} failed check(s)`);
+            if (mergeable === 'false') reasons.push('Has merge conflicts');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `⚠️ Cannot auto-merge PR yet:\n\n${reasons.map(r => `- ${r}`).join('\n')}\n\nPlease resolve these issues first.`,
+            });
+
+  dependabot-auto-merge:
+    name: Auto-merge Dependabot PRs
+    runs-on: ubuntu-latest
+    if: |
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.review.state == 'approved'
+    
+    permissions:
+      pull-requests: write
+      contents: write
+    
+    steps:
+      - name: Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v1
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Auto-merge for patch and minor updates
+        if: |
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comment on major updates
+        if: steps.metadata.outputs.update-type == 'version-update:semver-major'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: '⚠️ This is a major version update. Please review carefully before merging.',
+            });
