@@ -6,7 +6,7 @@
 const express = require('express');
 const router = express.Router();
 const LinkedInController = require('../controllers/LinkedInController');
-const { jwtAuth } = require('../middleware/auth');
+const { authenticateToken: jwtAuth } = require('../../../core/middleware/auth');
 
 // OAuth flow
 router.get('/auth/start', jwtAuth, LinkedInController.startAuth);
