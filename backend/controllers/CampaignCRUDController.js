@@ -1,0 +1,275 @@
+/**
+ * Campaign CRUD Controller
+ * Handles basic CRUD operations for campaigns
+ */
+
+const CampaignModel = require('../models/CampaignModel');
+const CampaignStepModel = require('../models/CampaignStepModel');
+
+class CampaignCRUDController {
+  /**
+   * GET /api/campaigns
+   * List all campaigns with stats
+   */
+  static async listCampaigns(req, res) {
+    try {
+      const tenantId = req.user.tenantId;
+      const { search, status, limit, offset } = req.query;
+
+      const campaigns = await CampaignModel.list(tenantId, {
+        search,
+        status,
+        limit: parseInt(limit) || 50,
+        offset: parseInt(offset) || 0
+      });
+
+      // Fetch steps for each campaign
+      const campaignsWithSteps = await Promise.all(
+        campaigns.map(async (campaign) => {
+          try {
+            const steps = await CampaignStepModel.getStepsByCampaignId(campaign.id, tenantId);
+            return {
+              ...campaign,
+              steps: steps || [],
+              leads_count: parseInt(campaign.leads_count) || 0,
+              sent_count: parseInt(campaign.sent_count) || 0,
+              delivered_count: parseInt(campaign.delivered_count) || 0,
+              connected_count: parseInt(campaign.connected_count) || 0,
+              replied_count: parseInt(campaign.replied_count) || 0,
+              opened_count: parseInt(campaign.opened_count) || 0,
+              clicked_count: parseInt(campaign.clicked_count) || 0
+            };
+          } catch (error) {
+            console.warn(`Could not fetch steps for campaign ${campaign.id}:`, error.message);
+            return {
+              ...campaign,
+              steps: [],
+              leads_count: parseInt(campaign.leads_count) || 0,
+              sent_count: parseInt(campaign.sent_count) || 0,
+              delivered_count: parseInt(campaign.delivered_count) || 0,
+              connected_count: parseInt(campaign.connected_count) || 0,
+              replied_count: parseInt(campaign.replied_count) || 0,
+              opened_count: parseInt(campaign.opened_count) || 0,
+              clicked_count: parseInt(campaign.clicked_count) || 0
+            };
+          }
+        })
+      );
+
+      res.json({
+        success: true,
+        data: campaignsWithSteps
+      });
+    } catch (error) {
+      console.error('[Campaign CRUD] Error listing campaigns:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to list campaigns',
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * GET /api/campaigns/stats
+   * Get campaign statistics
+   */
+  static async getCampaignStats(req, res) {
+    try {
+      const tenantId = req.user.tenantId;
+
+      const stats = await CampaignModel.getStats(tenantId);
+
+      // Handle empty results from database (mock DB or no data)
+      if (!stats) {
+        return res.json({
+          success: true,
+          data: {
+            total_campaigns: 0,
+            active_campaigns: 0,
+            total_leads: 0,
+            total_sent: 0,
+            total_delivered: 0,
+            total_connected: 0,
+            total_replied: 0
+          }
+        });
+      }
+
+      res.json({
+        success: true,
+        data: {
+          total_campaigns: parseInt(stats.total_campaigns) || 0,
+          active_campaigns: parseInt(stats.active_campaigns) || 0,
+          total_leads: parseInt(stats.total_leads) || 0,
+          total_sent: parseInt(stats.total_sent) || 0,
+          total_delivered: parseInt(stats.total_delivered) || 0,
+          total_connected: parseInt(stats.total_connected) || 0,
+          total_replied: parseInt(stats.total_replied) || 0
+        }
+      });
+    } catch (error) {
+      console.error('[Campaign CRUD] Error getting stats:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to get campaign stats',
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * GET /api/campaigns/:id
+   * Get campaign by ID
+   */
+  static async getCampaignById(req, res) {
+    try {
+      const tenantId = req.user.tenantId;
+      const { id } = req.params;
+
+      const campaign = await CampaignModel.getById(id, tenantId);
+
+      if (!campaign) {
+        return res.status(404).json({
+          success: false,
+          error: 'Campaign not found'
+        });
+      }
+
+      // Get steps
+      const steps = await CampaignStepModel.getStepsByCampaignId(id, tenantId);
+
+      res.json({
+        success: true,
+        data: {
+          ...campaign,
+          steps: steps || []
+        }
+      });
+    } catch (error) {
+      console.error('[Campaign CRUD] Error getting campaign:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to get campaign',
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * POST /api/campaigns
+   * Create a new campaign
+   */
+  static async createCampaign(req, res) {
+    try {
+      const tenantId = req.user.tenantId;
+      const userId = req.user.user_id || req.user.id;
+      const { name, status, config, steps } = req.body;
+
+      // Validate required fields
+      if (!name) {
+        return res.status(400).json({
+          success: false,
+          error: 'Campaign name is required'
+        });
+      }
+
+      // Create campaign
+      const campaign = await CampaignModel.create({
+        name,
+        status: status || 'draft',
+        createdBy: userId,
+        config: config || {}
+      }, tenantId);
+
+      // Create steps if provided
+      let createdSteps = [];
+      if (steps && Array.isArray(steps) && steps.length > 0) {
+        createdSteps = await CampaignStepModel.bulkCreate(campaign.id, tenantId, steps);
+      }
+
+      res.status(201).json({
+        success: true,
+        data: {
+          ...campaign,
+          steps: createdSteps
+        }
+      });
+    } catch (error) {
+      console.error('[Campaign CRUD] Error creating campaign:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to create campaign',
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * PATCH /api/campaigns/:id
+   * Update campaign
+   */
+  static async updateCampaign(req, res) {
+    try {
+      const tenantId = req.user.tenantId;
+      const { id } = req.params;
+      const updates = req.body;
+
+      const campaign = await CampaignModel.update(id, tenantId, updates);
+
+      if (!campaign) {
+        return res.status(404).json({
+          success: false,
+          error: 'Campaign not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: campaign
+      });
+    } catch (error) {
+      console.error('[Campaign CRUD] Error updating campaign:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to update campaign',
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * DELETE /api/campaigns/:id
+   * Delete campaign (soft delete)
+   */
+  static async deleteCampaign(req, res) {
+    try {
+      const tenantId = req.user.tenantId;
+      const { id } = req.params;
+
+      const result = await CampaignModel.delete(id, tenantId);
+
+      if (!result) {
+        return res.status(404).json({
+          success: false,
+          error: 'Campaign not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Campaign deleted successfully'
+      });
+    } catch (error) {
+      console.error('[Campaign CRUD] Error deleting campaign:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to delete campaign',
+        message: error.message
+      });
+    }
+  }
+}
+
+module.exports = CampaignCRUDController;
+
