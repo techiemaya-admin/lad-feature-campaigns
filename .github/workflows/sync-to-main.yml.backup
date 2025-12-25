@@ -25,8 +25,7 @@ jobs:
       - name: Copy backend files
         run: |
           # Remove old files
-          # Use rsync to sync files
-          rsync -av --delete backend/features/campaigns/ lad-backend/features/campaigns/
+          rm -rf lad-backend/features/campaigns/*
 
           # Ensure directories exist
           mkdir -p lad-backend/features/campaigns/services
@@ -78,16 +77,20 @@ jobs:
 
       - name: Copy frontend SDK files
         run: |
+          # Remove old SDK
+          rm -rf lad-frontend/sdk/features/campaigns/*
+
           # Ensure directory exists
           mkdir -p lad-frontend/sdk/features/campaigns
 
-          # Use rsync to sync SDK files
-          [ -d "frontend/sdk" ] && rsync -av --delete frontend/sdk/ lad-frontend/sdk/features/campaigns/ || echo "No frontend SDK"
+          # Copy new SDK
+          [ -d "frontend/sdk" ] && cp -r frontend/sdk/* lad-frontend/sdk/features/campaigns/ || echo "No frontend SDK"
 
           # Copy components if exist
           if [ -d "frontend/components" ] && [ "$(ls -A frontend/components)" ]; then
             mkdir -p lad-frontend/web/src/features/campaigns
-            rsync -av --delete frontend/components/ lad-frontend/web/src/features/campaigns/
+            rm -rf lad-frontend/web/src/features/campaigns/*
+            cp -r frontend/components/* lad-frontend/web/src/features/campaigns/
           fi
 
       - name: Commit and push to LAD-Frontend
