@@ -25,13 +25,23 @@ class CampaignLeadModel {
       status = 'active'
     } = leadData;
 
+    // Per TDD: Use lad_dev schema with snapshot JSONB (not individual columns)
+    const snapshot = {
+      first_name: firstName,
+      last_name: lastName,
+      email: email,
+      linkedin_url: linkedinUrl,
+      company_name: companyName,
+      title: title,
+      phone: phone
+    };
+    
     const query = `
-      INSERT INTO campaign_leads (
-        tenant_id, campaign_id, lead_id, first_name, last_name, email,
-        linkedin_url, company_name, title, phone, lead_data, status,
+      INSERT INTO lad_dev.campaign_leads (
+        tenant_id, campaign_id, lead_id, snapshot, lead_data, status,
         created_at, updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       RETURNING *
     `;
 
@@ -39,13 +49,7 @@ class CampaignLeadModel {
       tenantId,
       campaignId,
       leadId,
-      firstName,
-      lastName,
-      email,
-      linkedinUrl,
-      companyName,
-      title,
-      phone,
+      JSON.stringify(snapshot),
       JSON.stringify(customData),
       status
     ];
@@ -58,9 +62,10 @@ class CampaignLeadModel {
    * Get lead by ID
    */
   static async getById(leadId, tenantId) {
+    // Per TDD: Use lad_dev schema
     const query = `
-      SELECT * FROM campaign_leads
-      WHERE id = $1 AND tenant_id = $2
+      SELECT * FROM lad_dev.campaign_leads
+      WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
     `;
 
     const result = await pool.query(query, [leadId, tenantId]);
@@ -73,9 +78,10 @@ class CampaignLeadModel {
   static async getByCampaignId(campaignId, tenantId, filters = {}) {
     const { status, limit = 100, offset = 0 } = filters;
 
+    // Per TDD: Use lad_dev schema
     let query = `
-      SELECT * FROM campaign_leads
-      WHERE campaign_id = $1 AND tenant_id = $2
+      SELECT * FROM lad_dev.campaign_leads
+      WHERE campaign_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
     `;
 
     const params = [campaignId, tenantId];
@@ -97,9 +103,10 @@ class CampaignLeadModel {
    * Check if lead exists by Apollo ID
    */
   static async existsByApolloId(campaignId, tenantId, apolloPersonId) {
+    // Per TDD: Use lad_dev schema
     const query = `
-      SELECT id FROM campaign_leads
-      WHERE campaign_id = $1 AND tenant_id = $2
+      SELECT id FROM lad_dev.campaign_leads
+      WHERE campaign_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
       AND lead_data->>'apollo_person_id' = $3
     `;
 
@@ -111,10 +118,10 @@ class CampaignLeadModel {
    * Update campaign lead
    */
   static async update(leadId, tenantId, updates) {
+    // Per TDD: Use lad_dev schema, update snapshot JSONB or other direct columns
     const allowedFields = [
-      'first_name', 'last_name', 'email', 'linkedin_url', 
-      'company_name', 'title', 'phone', 'lead_data', 'status',
-      'current_step_order', 'started_at', 'completed_at'
+      'snapshot', 'lead_data', 'status',
+      'current_step_order', 'started_at', 'completed_at', 'error_message'
     ];
 
     const setClause = [];
@@ -124,7 +131,8 @@ class CampaignLeadModel {
     for (const [key, value] of Object.entries(updates)) {
       if (allowedFields.includes(key)) {
         setClause.push(`${key} = $${paramIndex++}`);
-        values.push(key === 'lead_data' ? JSON.stringify(value) : value);
+        // JSONB fields need to be stringified
+        values.push((key === 'snapshot' || key === 'lead_data') ? JSON.stringify(value) : value);
       }
     }
 
@@ -134,10 +142,11 @@ class CampaignLeadModel {
 
     setClause.push(`updated_at = CURRENT_TIMESTAMP`);
 
+    // Per TDD: Use lad_dev schema
     const query = `
-      UPDATE campaign_leads
+      UPDATE lad_dev.campaign_leads
       SET ${setClause.join(', ')}
-      WHERE id = $1 AND tenant_id = $2
+      WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
       RETURNING *
     `;
 
@@ -149,8 +158,10 @@ class CampaignLeadModel {
    * Delete campaign lead
    */
   static async delete(leadId, tenantId) {
+    // Per TDD: Use lad_dev schema (soft delete)
     const query = `
-      DELETE FROM campaign_leads
+      UPDATE lad_dev.campaign_leads
+      SET is_deleted = TRUE, updated_at = CURRENT_TIMESTAMP
       WHERE id = $1 AND tenant_id = $2
       RETURNING id
     `;
@@ -163,9 +174,10 @@ class CampaignLeadModel {
    * Get active leads for processing
    */
   static async getActiveLeadsForCampaign(campaignId, tenantId, limit = 10) {
+    // Per TDD: Use lad_dev schema
     const query = `
-      SELECT * FROM campaign_leads
-      WHERE campaign_id = $1 AND tenant_id = $2 AND status = 'active'
+      SELECT * FROM lad_dev.campaign_leads
+      WHERE campaign_id = $1 AND tenant_id = $2 AND status = 'active' AND is_deleted = FALSE
       ORDER BY created_at ASC
       LIMIT $3
     `;
@@ -178,9 +190,10 @@ class CampaignLeadModel {
    * Get lead data (handles both lead_data and custom_fields columns)
    */
   static async getLeadData(campaignLeadId, tenantId) {
+    // Per TDD: Use lad_dev schema
     const query = `
-      SELECT lead_data FROM campaign_leads
-      WHERE id = $1 AND tenant_id = $2
+      SELECT lead_data FROM lad_dev.campaign_leads
+      WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
     `;
 
     const result = await pool.query(query, [campaignLeadId, tenantId]);
@@ -206,33 +219,38 @@ class CampaignLeadModel {
     let paramIndex = 1;
 
     leads.forEach((lead, index) => {
-      const offset = index * 12;
+      const offset = index * 6;
       placeholders.push(
-        `($${paramIndex + offset}, $${paramIndex + offset + 1}, $${paramIndex + offset + 2}, $${paramIndex + offset + 3}, $${paramIndex + offset + 4}, $${paramIndex + offset + 5}, $${paramIndex + offset + 6}, $${paramIndex + offset + 7}, $${paramIndex + offset + 8}, $${paramIndex + offset + 9}, $${paramIndex + offset + 10}, $${paramIndex + offset + 11})`
+        `($${paramIndex + offset}, $${paramIndex + offset + 1}, $${paramIndex + offset + 2}, $${paramIndex + offset + 3}, $${paramIndex + offset + 4}, $${paramIndex + offset + 5})`
       );
+
+      // Per TDD: Build snapshot JSONB from individual fields
+      const snapshot = {
+        first_name: lead.firstName,
+        last_name: lead.lastName,
+        email: lead.email,
+        linkedin_url: lead.linkedinUrl,
+        company_name: lead.companyName,
+        title: lead.title,
+        phone: lead.phone
+      };
 
       values.push(
         tenantId,
         campaignId,
         lead.leadId || randomUUID(),
-        lead.firstName,
-        lead.lastName,
-        lead.email,
-        lead.linkedinUrl,
-        lead.companyName,
-        lead.title,
-        lead.phone,
+        JSON.stringify(snapshot),
         JSON.stringify(lead.leadData || {}),
         lead.status || 'active'
       );
     });
 
-    paramIndex += leads.length * 12;
+    paramIndex += leads.length * 6;
 
+    // Per TDD: Use lad_dev schema with snapshot JSONB
     const query = `
-      INSERT INTO campaign_leads (
-        tenant_id, campaign_id, lead_id, first_name, last_name, email,
-        linkedin_url, company_name, title, phone, lead_data, status
+      INSERT INTO lad_dev.campaign_leads (
+        tenant_id, campaign_id, lead_id, snapshot, lead_data, status
       )
       VALUES ${placeholders.join(', ')}
       RETURNING *

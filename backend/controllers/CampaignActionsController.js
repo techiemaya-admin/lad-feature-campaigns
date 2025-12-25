@@ -26,10 +26,41 @@ class CampaignActionsController {
         });
       }
 
-      // Trigger campaign execution
-      CampaignExecutionService.processCampaign(id, tenantId).catch(err => {
-        console.error(`[Campaign Actions] Error executing campaign ${id}:`, err);
-      });
+      // Trigger campaign execution (fire and forget, but log errors)
+      console.log(`[Campaign Actions] 🚀 Triggering campaign execution for ${id} (tenant: ${tenantId || 'none'})`);
+      console.log(`[Campaign Actions] ⏰ Start time: ${new Date().toISOString()}`);
+      
+      // Extract auth token from request to pass to processCampaign
+      // The token is available via req.headers.authorization (Bearer token)
+      const authToken = req.headers.authorization 
+        ? req.headers.authorization.replace('Bearer ', '').trim()
+        : null;
+      
+      console.log(`[Campaign Actions] 🔑 Auth token available: ${authToken ? 'Yes' : 'No'}`);
+      
+      // IMPORTANT: Wrap in try-catch to catch synchronous errors
+      try {
+        CampaignExecutionService.processCampaign(id, tenantId, authToken)
+          .then((result) => {
+            console.log(`[Campaign Actions] ✅ Campaign ${id} processing completed at ${new Date().toISOString()}`);
+            if (result) {
+              console.log(`[Campaign Actions] Result:`, JSON.stringify(result, null, 2));
+            }
+          })
+          .catch(err => {
+            console.error(`[Campaign Actions] ❌ CRITICAL ERROR executing campaign ${id}:`);
+            console.error(`[Campaign Actions] Error message: ${err.message}`);
+            console.error(`[Campaign Actions] Error name: ${err.name}`);
+            console.error(`[Campaign Actions] Error code: ${err.code || 'N/A'}`);
+            console.error(`[Campaign Actions] Error stack:`, err.stack);
+            if (err.response) {
+              console.error(`[Campaign Actions] Error response:`, err.response.status, err.response.data);
+            }
+          });
+      } catch (syncError) {
+        console.error(`[Campaign Actions] ❌ SYNCHRONOUS ERROR when calling processCampaign:`, syncError);
+        console.error(`[Campaign Actions] Sync error stack:`, syncError.stack);
+      }
 
       res.json({
         success: true,

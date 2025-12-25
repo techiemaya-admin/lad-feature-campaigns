@@ -106,11 +106,11 @@ class StepExecutor {
     const delayMs = (days * 24 * 60 * 60 * 1000) + (hours * 60 * 60 * 1000) + (minutes * 60 * 1000);
     const scheduledAt = new Date(Date.now() + delayMs);
 
-    // Update activity with scheduled time
+    // Per TDD: Use lad_dev schema (note: TDD schema uses executed_at, not scheduled_at)
     await pool.query(
-      `UPDATE campaign_lead_activities 
-       SET scheduled_at = $1, status = 'pending'
-       WHERE id = $2`,
+      `UPDATE lad_dev.campaign_lead_activities 
+       SET executed_at = $1, status = 'pending', updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2 AND is_deleted = FALSE`,
       [scheduledAt, activityId]
     );
 
@@ -137,10 +137,11 @@ class StepExecutor {
    * Mark lead as completed
    */
   async markLeadCompleted(leadId) {
+    // Per TDD: Use lad_dev schema
     await pool.query(
-      `UPDATE campaign_leads 
-       SET status = 'completed', updated_at = CURRENT_TIMESTAMP 
-       WHERE id = $1`,
+      `UPDATE lad_dev.campaign_leads 
+       SET status = 'completed', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $1 AND is_deleted = FALSE`,
       [leadId]
     );
   }
@@ -149,25 +150,45 @@ class StepExecutor {
    * Create activity record
    */
   async createActivity(campaignId, leadId, stepId, stepType) {
+    // Per TDD: Use lad_dev schema - need tenant_id and campaign_lead_id
+    // Get tenant_id from campaign
+    const campaignResult = await pool.query(
+      `SELECT tenant_id FROM lad_dev.campaigns WHERE id = $1 AND is_deleted = FALSE`,
+      [campaignId]
+    );
+    
+    if (campaignResult.rows.length === 0) {
+      throw new Error('Campaign not found');
+    }
+    
+    const tenantId = campaignResult.rows[0].tenant_id;
     const result = await pool.query(
-      `INSERT INTO campaign_lead_activities 
-       (campaign_id, lead_id, step_id, step_type, status, created_at)
-       VALUES ($1, $2, $3, $4, 'pending', CURRENT_TIMESTAMP)
+      `INSERT INTO lad_dev.campaign_lead_activities 
+       (tenant_id, campaign_id, campaign_lead_id, step_id, step_type, action_type, status, channel, created_at)
+       VALUES ($1, $2, $3, $4, $5, $5, 'pending', $6, CURRENT_TIMESTAMP)
        RETURNING id`,
-      [campaignId, leadId, stepId, stepType]
+      [tenantId, campaignId, leadId, stepId, stepType, this.getChannelForStepType(stepType)]
     );
 
     return result.rows[0].id;
+  }
+  
+  getChannelForStepType(stepType) {
+    if (stepType.startsWith('linkedin_')) return 'linkedin';
+    if (stepType.startsWith('email_')) return 'email';
+    if (stepType === 'voice_agent_call') return 'voice';
+    return 'web';
   }
 
   /**
    * Update activity status
    */
   async updateActivityStatus(activityId, status, errorMessage = null) {
+    // Per TDD: Use lad_dev schema
     await pool.query(
-      `UPDATE campaign_lead_activities 
+      `UPDATE lad_dev.campaign_lead_activities 
        SET status = $1, error_message = $2, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $3`,
+       WHERE id = $3 AND is_deleted = FALSE`,
       [status, errorMessage, activityId]
     );
   }

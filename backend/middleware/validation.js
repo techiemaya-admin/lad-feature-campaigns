@@ -155,12 +155,18 @@ const validateCampaignUpdate = (req, res, next) => {
 };
 
 /**
- * Validate lead IDs
+ * Validate lead IDs or leads array
+ * Supports both formats:
+ * - { leadIds: [uuid1, uuid2] } - for adding existing leads by ID
+ * - { leads: [{ firstName, lastName, ... }] } - for creating new leads
  */
 const validateLeadIds = (req, res, next) => {
-  const { leadIds } = req.body;
+  const { leadIds, leads } = req.body;
   
-  if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
+  // Accept either leadIds or leads format
+  if (leadIds) {
+    // Validate leadIds format (array of UUIDs)
+    if (!Array.isArray(leadIds) || leadIds.length === 0) {
     return res.status(400).json({
       success: false,
       error: 'leadIds must be a non-empty array'
@@ -175,6 +181,39 @@ const validateLeadIds = (req, res, next) => {
         error: `Invalid leadId: ${leadId}. Each leadId must be a valid UUID`
       });
     }
+    }
+  } else if (leads) {
+    // Validate leads format (array of lead objects)
+    if (!Array.isArray(leads) || leads.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'leads must be a non-empty array'
+      });
+    }
+    
+    // Basic validation for lead objects
+    for (const lead of leads) {
+      if (!lead || typeof lead !== 'object') {
+        return res.status(400).json({
+          success: false,
+          error: 'Each lead must be an object'
+        });
+      }
+      
+      // At least firstName and lastName or linkedinUrl should be present
+      if (!lead.firstName && !lead.linkedinUrl) {
+        return res.status(400).json({
+          success: false,
+          error: 'Each lead must have at least firstName or linkedinUrl'
+        });
+      }
+    }
+  } else {
+    // Neither format provided
+    return res.status(400).json({
+      success: false,
+      error: 'Either leadIds or leads array is required'
+    });
   }
   
   next();

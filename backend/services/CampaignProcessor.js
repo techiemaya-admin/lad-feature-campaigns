@@ -1,6 +1,7 @@
 /**
  * Campaign Processor
- * Handles main campaign processing and workflow orchestration
+ * Handles main campaign processing and step execution
+ * Note: processLeadThroughWorkflow has been moved to WorkflowProcessor.js
  */
 
 const { pool } = require('../../../shared/database/connection');
@@ -15,16 +16,17 @@ const {
   executeDelayStep, 
   executeConditionStep 
 } = require('./StepExecutors');
+const { processLeadThroughWorkflow } = require('./WorkflowProcessor');
 
 /**
  * Execute a campaign step for a specific lead
  */
-async function executeStepForLead(campaignId, step, campaignLead, userId, orgId) {
+async function executeStepForLead(campaignId, step, campaignLead, userId, orgId, authToken = null) {
   // Declare activityId outside try block so it's accessible in catch
   let activityId = null;
   
   try {
-    const stepType = step.type;
+    const stepType = step.step_type || step.type;
     const stepConfig = typeof step.config === 'string' ? JSON.parse(step.config) : step.config;
     
     // VALIDATE: Check if all required fields are filled before executing
@@ -48,32 +50,42 @@ async function executeStepForLead(campaignId, step, campaignLead, userId, orgId)
     
     // Record activity start (skip for lead generation as it's campaign-level and creates leads)
     if (stepType !== 'lead_generation' && campaignLead && campaignLead.id) {
-      const activityResult = await pool.query(
-        `INSERT INTO campaign_lead_activities 
-         (campaign_lead_id, step_id, step_type, action_type, status, channel, created_at)
-         VALUES ($1, $2, $3, $4, 'sent', $5, CURRENT_TIMESTAMP)
-         RETURNING id`,
-        [campaignLead.id, step.id, stepType, stepType, getChannelForStepType(stepType)]
+      // Per TDD: Use lad_dev schema, need tenant_id and campaign_id
+      // Get tenant_id from campaign
+      const campaignQuery = await pool.query(
+        `SELECT tenant_id FROM lad_dev.campaigns WHERE id = $1 AND is_deleted = FALSE`,
+        [campaignId]
       );
       
-      activityId = activityResult.rows[0].id;
+      if (campaignQuery.rows.length > 0) {
+        const tenantId = campaignQuery.rows[0].tenant_id;
+        const activityResult = await pool.query(
+          `INSERT INTO lad_dev.campaign_lead_activities 
+           (tenant_id, campaign_id, campaign_lead_id, step_id, step_type, action_type, status, channel, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, 'sent', $7, CURRENT_TIMESTAMP)
+           RETURNING id`,
+          [tenantId, campaignId, campaignLead.id, step.id, stepType, stepType, getChannelForStepType(stepType)]
+        );
+        
+        activityId = activityResult.rows[0].id;
+      }
     }
     
     let result = { success: false, error: 'Unknown step type' };
     
     // Handle all step types dynamically based on step type
     if (stepType === 'lead_generation') {
-      result = await executeLeadGeneration(campaignId, step, stepConfig, userId, orgId);
-    } else if (stepType.startsWith('linkedin_')) {
+      result = await executeLeadGeneration(campaignId, step, stepConfig, userId, orgId, authToken);
+    } else if (stepType && stepType.startsWith('linkedin_')) {
       // All LinkedIn steps: connect, message, follow, visit, scrape_profile, company_search, employee_list, autopost, comment_reply
       result = await executeLinkedInStep(stepType, stepConfig, campaignLead, userId, orgId);
-    } else if (stepType.startsWith('email_')) {
+    } else if (stepType && stepType.startsWith('email_')) {
       // All email steps: send, followup
       result = await executeEmailStep(stepType, stepConfig, campaignLead, userId, orgId);
-    } else if (stepType.startsWith('whatsapp_')) {
+    } else if (stepType && stepType.startsWith('whatsapp_')) {
       // WhatsApp steps: send
       result = await executeWhatsAppStep(stepType, stepConfig, campaignLead, userId, orgId);
-    } else if (stepType.startsWith('instagram_')) {
+    } else if (stepType && stepType.startsWith('instagram_')) {
       // Instagram steps: follow, like, dm, autopost, comment_reply, story_view
       result = await executeInstagramStep(stepType, stepConfig, campaignLead, userId, orgId);
     } else if (stepType === 'voice_agent_call') {
@@ -93,8 +105,9 @@ async function executeStepForLead(campaignId, step, campaignLead, userId, orgId)
     // Update activity status (only if activity was created)
     if (activityId) {
       const status = result.success ? 'delivered' : 'error';
+      // Per TDD: Use lad_dev schema
       await pool.query(
-        `UPDATE campaign_lead_activities 
+        `UPDATE lad_dev.campaign_lead_activities 
          SET status = $1, 
              error_message = $2,
              updated_at = CURRENT_TIMESTAMP
@@ -123,8 +136,9 @@ async function executeStepForLead(campaignId, step, campaignLead, userId, orgId)
     // If activity was created, update it to error status
     if (activityId) {
       try {
+        // Per TDD: Use lad_dev schema
         await pool.query(
-          `UPDATE campaign_lead_activities 
+          `UPDATE lad_dev.campaign_lead_activities 
            SET status = 'error', 
                error_message = $1,
                updated_at = CURRENT_TIMESTAMP
@@ -142,72 +156,132 @@ async function executeStepForLead(campaignId, step, campaignLead, userId, orgId)
 
 /**
  * Process a running campaign
+ * Note: processLeadThroughWorkflow has been moved to WorkflowProcessor.js
  */
-async function processCampaign(campaignId) {
+async function processCampaign(campaignId, tenantId, authToken = null) {
   try {
-    console.log(`[Campaign Execution] Processing campaign ${campaignId}`);
+    console.log(`[Campaign Execution] 🚀 Starting processCampaign for ${campaignId}${tenantId ? ` (tenant: ${tenantId})` : ''}`);
+    console.log(`[Campaign Execution] ⏰ Timestamp: ${new Date().toISOString()}`);
+
+    // Test database connection first
+    try {
+      const testResult = await pool.query('SELECT NOW() as now');
+      console.log(`[Campaign Execution] ✅ Database connection test successful: ${testResult.rows[0]?.now}`);
+    } catch (dbError) {
+      console.error(`[Campaign Execution] ❌ Database connection test failed:`, dbError.message);
+      console.error(`[Campaign Execution] Database error details:`, {
+        code: dbError.code,
+        detail: dbError.detail,
+        hint: dbError.hint
+      });
+      throw new Error(`Database connection failed: ${dbError.message}`);
+    }
+
+    // Get campaign - include tenantId if provided for multi-tenant isolation
+    // Per TDD: Use lad_dev schema
+    let query = `SELECT * FROM lad_dev.campaigns WHERE id = $1 AND status = 'running' AND is_deleted = FALSE`;
+    let params = [campaignId];
+
+    if (tenantId) {
+      query += ` AND tenant_id = $2`;
+      params.push(tenantId);
+    }
     
-    // Get campaign
-    const campaignResult = await pool.query(
-      `SELECT * FROM campaigns WHERE id = $1 AND status = 'running' AND is_deleted = FALSE`,
-      [campaignId]
-    );
-    
+    console.log(`[Campaign Execution] 🔍 Querying campaign: ${query}`);
+    console.log(`[Campaign Execution] 🔍 Params:`, params);
+
+    const campaignResult = await pool.query(query, params);
+
     if (campaignResult.rows.length === 0) {
-      console.log(`[Campaign Execution] Campaign ${campaignId} not found or not running`);
+      console.log(`[Campaign Execution] ❌ Campaign ${campaignId} not found or not running`);
+      console.log(`[Campaign Execution] Query returned ${campaignResult.rows.length} rows`);
       return;
     }
-    
+
     const campaign = campaignResult.rows[0];
-    
+    const userIdFromCampaign = campaign.created_by_user_id;
+    const tenantIdFromCampaign = campaign.tenant_id;
+
+    console.log(`[Campaign Execution] ✅ Found campaign: ${campaign.name || 'unnamed'} (id: ${campaign.id})`);
+    console.log(`[Campaign Execution] Campaign status: ${campaign.status}, created_by_user_id: ${userIdFromCampaign}, tenant_id: ${tenantIdFromCampaign}`);
+
     // Get campaign steps in order
+    // Per TDD: Use lad_dev schema and step_order column
     const stepsResult = await pool.query(
-      `SELECT * FROM campaign_steps 
+      `SELECT * FROM lad_dev.campaign_steps 
        WHERE campaign_id = $1 
-       ORDER BY "order" ASC`,
+       ORDER BY step_order ASC`,
       [campaignId]
     );
-    
     const steps = stepsResult.rows;
+
     if (steps.length === 0) {
-      console.log(`[Campaign Execution] No steps found for campaign ${campaignId}`);
+      console.log(`[Campaign Execution] ⚠️  Campaign ${campaignId} has no steps. Skipping execution.`);
       return;
     }
-    
-    // Check if lead generation step exists - run daily lead generation
-    console.log(`[Campaign Execution] Campaign ${campaignId} has ${steps.length} steps. Step types:`, steps.map(s => s.type));
-    const leadGenStep = steps.find(s => s.type === 'lead_generation');
-    if (leadGenStep) {
-      // Always run lead generation daily (respects daily limit and offset)
-      console.log(`[Campaign Execution] Executing daily lead generation step for campaign ${campaignId}`);
-        const dummyLead = { id: null, lead_id: 'lead_gen', campaign_id: campaignId };
-      const leadGenResult = await executeStepForLead(campaignId, leadGenStep, dummyLead, campaign.created_by, campaign.organization_id);
-      console.log(`[Campaign Execution] Lead generation result:`, leadGenResult);
-      } else {
-      console.warn(`[Campaign Execution] No lead_generation step found for campaign ${campaignId}. Steps:`, steps.map(s => ({ id: s.id, type: s.type, title: s.title })));
-      console.warn(`[Campaign Execution] Campaign will not generate leads automatically. Make sure the campaign was created with target criteria (industries, location, or roles).`);
+
+    console.log(`[Campaign Execution] Found ${steps.length} steps for campaign ${campaignId}`);
+
+    // Find the lead generation step
+    const leadGenerationStep = steps.find(s => (s.step_type || s.type) === 'lead_generation');
+
+    if (leadGenerationStep) {
+      console.log(`[Campaign Execution] Found lead generation step: ${leadGenerationStep.id} (order: ${leadGenerationStep.step_order || leadGenerationStep.order})`);
+      
+      // Parse step config
+      let stepWithParsedConfig = { ...leadGenerationStep };
+      if (typeof leadGenerationStep.config === 'string') {
+        try {
+          stepWithParsedConfig.config = JSON.parse(leadGenerationStep.config);
+        } catch (parseErr) {
+          console.error(`[Campaign Execution] Failed to parse lead generation step config:`, parseErr.message);
+          stepWithParsedConfig.config = {};
+        }
+      }
+
+      // Create a dummy lead object for the initial call to executeStepForLead
+      // The actual leads will be generated and saved by executeLeadGeneration
+      const dummyLead = { id: null, campaign_id: campaignId }; 
+
+      console.log(`[Campaign Execution] 🚀 Executing lead generation...`);
+      console.log(`[Campaign Execution] 🔑 Auth token available: ${authToken ? 'Yes' : 'No'}`);
+      const leadGenResult = await executeStepForLead(campaignId, stepWithParsedConfig, dummyLead, userIdFromCampaign, tenantIdFromCampaign, authToken);
+      
+      console.log(`[Campaign Execution] Lead generation result:`, JSON.stringify(leadGenResult, null, 2));
+
+      if (!leadGenResult.success) {
+        console.error(`[Campaign Execution] ❌ Lead generation failed for campaign ${campaignId}: ${leadGenResult.error}`);
+        // Optionally update campaign status to 'error' or log more details
+        return;
+      }
+    } else {
+      console.log(`[Campaign Execution] ℹ️  No lead generation step found for campaign ${campaignId}. Skipping lead generation.`);
     }
-    
-    // Get active leads for this campaign
+
+    // Fetch leads for the campaign (after potential lead generation)
+    // Per TDD: Use lad_dev schema
     const leadsResult = await pool.query(
-      `SELECT * FROM campaign_leads 
-       WHERE campaign_id = $1 AND status = 'active'
-       ORDER BY created_at ASC
-       LIMIT 10`,
+      `SELECT id, campaign_id, lead_id, status, snapshot, lead_data 
+       FROM lad_dev.campaign_leads 
+       WHERE campaign_id = $1 
+       AND status = 'active' 
+       AND is_deleted = FALSE`,
       [campaignId]
     );
     
     const leads = leadsResult.rows;
     
     // Process each lead through the workflow (skip lead generation, start, and end steps)
-    const workflowSteps = steps.filter(s => 
-      s.type !== 'lead_generation' && 
-      s.type !== 'start' && 
-      s.type !== 'end'
-    );
+    const workflowSteps = steps.filter(s => {
+      const stepType = s.step_type || s.type;
+      return stepType !== 'lead_generation' && 
+             stepType !== 'start' && 
+             stepType !== 'end';
+    });
     
+    // Per TDD: Use tenant_id and created_by_user_id
     for (const lead of leads) {
-      await processLeadThroughWorkflow(campaign, workflowSteps, lead, campaign.created_by, campaign.organization_id);
+      await processLeadThroughWorkflow(campaign, workflowSteps, lead, userIdFromCampaign, tenantIdFromCampaign, authToken);
     }
     
     console.log(`[Campaign Execution] Processed ${leads.length} leads for campaign ${campaignId}`);
@@ -216,153 +290,8 @@ async function processCampaign(campaignId) {
   }
 }
 
-/**
- * Process a lead through the workflow steps
- */
-async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId, orgId) {
-  try {
-    // Find the last successfully completed step for this lead
-    // This ensures we don't re-execute steps that were already completed
-    const lastSuccessfulActivityResult = await pool.query(
-      `SELECT step_id, status, created_at FROM campaign_lead_activities 
-       WHERE campaign_lead_id = $1 
-       AND status IN ('delivered', 'connected', 'replied')
-       ORDER BY created_at DESC LIMIT 1`,
-      [campaignLead.id]
-    );
-    
-    let nextStepIndex = 0;
-    if (lastSuccessfulActivityResult.rows.length > 0) {
-      const lastSuccessfulActivity = lastSuccessfulActivityResult.rows[0];
-      const lastSuccessfulStepIndex = steps.findIndex(s => s.id === lastSuccessfulActivity.step_id);
-      if (lastSuccessfulStepIndex >= 0) {
-        // Advance to the step after the last successfully completed step
-        nextStepIndex = lastSuccessfulStepIndex + 1;
-        console.log(`[Campaign Execution] Last successful step for lead ${campaignLead.id}: step ${lastSuccessfulStepIndex} (${lastSuccessfulActivity.step_id}), advancing to step ${nextStepIndex}`);
-      }
-    } else {
-      // No successful activities yet, start from the beginning
-      console.log(`[Campaign Execution] No successful activities found for lead ${campaignLead.id}, starting from step 0`);
-    }
-    
-    if (nextStepIndex >= steps.length) {
-      // All steps completed, mark lead as completed
-      await pool.query(
-        `UPDATE campaign_leads SET status = 'completed' WHERE id = $1`,
-        [campaignLead.id]
-      );
-      return;
-    }
-    
-    const nextStep = steps[nextStepIndex];
-    
-    // CRITICAL: Check if this step has already been successfully executed for this lead
-    // This prevents duplicate execution of steps like "Visit LinkedIn Profile" or "Send Connection Request"
-    const existingActivityResult = await pool.query(
-      `SELECT id, status FROM campaign_lead_activities 
-       WHERE campaign_lead_id = $1 
-       AND step_id = $2 
-       AND status IN ('delivered', 'connected', 'replied')
-       ORDER BY created_at DESC LIMIT 1`,
-      [campaignLead.id, nextStep.id]
-    );
-    
-    if (existingActivityResult.rows.length > 0) {
-      const existingActivity = existingActivityResult.rows[0];
-      console.log(`[Campaign Execution] ⏭️  Step ${nextStep.id} (${nextStep.type}) already completed for lead ${campaignLead.id} with status: ${existingActivity.status}. Skipping duplicate execution.`);
-      
-      // Step already completed successfully, advance to next step
-      const currentStepIndex = steps.findIndex(s => s.id === nextStep.id);
-      if (currentStepIndex >= 0 && currentStepIndex < steps.length - 1) {
-        // Recursively process the next step
-        const remainingSteps = steps.slice(currentStepIndex + 1);
-        await processLeadThroughWorkflow(campaign, remainingSteps, campaignLead, userId, orgId);
-      }
-      return;
-    }
-    
-    // Validate step before execution - check if all required fields are filled by user
-    const stepConfig = typeof nextStep.config === 'string' ? JSON.parse(nextStep.config) : nextStep.config;
-    const validation = validateStepConfig(nextStep.type, stepConfig);
-    
-    if (!validation.valid) {
-      // Step validation failed - required fields not filled by user
-      console.error(`[Campaign Execution] Step ${nextStep.id} (${nextStep.type}) validation failed for lead ${campaignLead.id}`);
-      console.error(`[Campaign Execution] Error: ${validation.error}`);
-      console.error(`[Campaign Execution] Missing required fields: ${validation.missingFields.join(', ')}`);
-      console.error(`[Campaign Execution] User must fill all required fields in step settings before execution`);
-      
-      // Record validation error in activity
-      await pool.query(
-        `INSERT INTO campaign_lead_activities 
-         (campaign_lead_id, step_id, step_type, action_type, status, error_message, created_at)
-         VALUES ($1, $2, $3, $4, 'error', $5, CURRENT_TIMESTAMP)`,
-        [
-          campaignLead.id,
-          nextStep.id,
-          nextStep.type,
-          nextStep.type,
-          `Validation failed: ${validation.error}. Missing required fields: ${validation.missingFields.join(', ')}. Please configure all required fields in step settings.`
-        ]
-      );
-      
-      // Mark lead as stopped because step configuration is incomplete
-      await pool.query(
-        `UPDATE campaign_leads SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-        [campaignLead.id]
-      );
-      
-      console.log(`[Campaign Execution] Lead ${campaignLead.id} stopped due to incomplete step configuration. User must complete step settings.`);
-      return;
-    }
-    
-    console.log(`[Campaign Execution] Step ${nextStep.id} (${nextStep.type}) validation passed - all required fields configured`);
-    
-    // Check if this is a delay step - if so, check if delay has passed
-    // (stepConfig already parsed above during validation)
-    if (nextStep.type === 'delay') {
-      const delayDays = stepConfig.delay_days || stepConfig.delayDays || 0;
-      const delayHours = stepConfig.delay_hours || stepConfig.delayHours || 0;
-      
-      // Check last activity time
-      if (lastSuccessfulActivityResult.rows.length > 0) {
-        const lastActivityTime = new Date(lastSuccessfulActivityResult.rows[0].created_at || campaignLead.created_at);
-        const now = new Date();
-        const delayMs = (delayDays * 24 * 60 * 60 * 1000) + (delayHours * 60 * 60 * 1000);
-        
-        if (now - lastActivityTime < delayMs) {
-          // Delay not yet passed, skip this lead for now
-          return;
-        }
-      }
-    }
-    
-    // Check if this is a condition step
-    // (stepConfig already parsed above during validation)
-    if (nextStep.type === 'condition') {
-      const conditionResult = await executeConditionStep(stepConfig, campaignLead);
-      
-      if (!conditionResult.conditionMet) {
-        // Condition not met, mark lead as stopped
-        await pool.query(
-          `UPDATE campaign_leads SET status = 'stopped' WHERE id = $1`,
-          [campaignLead.id]
-        );
-        return;
-      }
-    }
-    
-    // Execute the step
-    await executeStepForLead(campaign.id, nextStep, campaignLead, userId, orgId);
-    
-  } catch (error) {
-    console.error(`[Campaign Execution] Error processing lead ${campaignLead.id}:`, error);
-  }
-}
-
 module.exports = {
   executeStepForLead,
-  processCampaign,
-  processLeadThroughWorkflow
+  processCampaign
 };
 

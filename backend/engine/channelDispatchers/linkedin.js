@@ -182,12 +182,12 @@ Generate a concise, professional summary highlighting their role, expertise, and
             console.error('[LinkedInDispatcher] Error calling Gemini API:', geminiErr.message);
           }
           
-          // Save summary to campaign_leads table
+          // Per TDD: Use lad_dev schema - Save summary to campaign_leads table
           if (summary && lead.id) {
             try {
               // Get current lead_data
               const leadDataQuery = await pool.query(
-                `SELECT lead_data FROM campaign_leads WHERE id = $1`,
+                `SELECT lead_data FROM lad_dev.campaign_leads WHERE id = $1 AND is_deleted = FALSE`,
                 [lead.id]
               );
               
@@ -204,9 +204,9 @@ Generate a concise, professional summary highlighting their role, expertise, and
               
               // Update campaign_leads with summary
               await pool.query(
-                `UPDATE campaign_leads 
+                `UPDATE lad_dev.campaign_leads 
                  SET lead_data = $1, updated_at = CURRENT_TIMESTAMP 
-                 WHERE id = $2`,
+                 WHERE id = $2 AND is_deleted = FALSE`,
                 [JSON.stringify(currentLeadData), lead.id]
               );
               

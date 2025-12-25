@@ -14,9 +14,9 @@ class WorkflowEngine {
     try {
       console.log(`[WorkflowEngine] Processing campaign ${campaignId}...`);
 
-      // Get campaign details
+      // Per TDD: Use lad_dev schema
       const campaignResult = await pool.query(
-        'SELECT * FROM campaigns WHERE id = $1',
+        'SELECT * FROM lad_dev.campaigns WHERE id = $1 AND is_deleted = FALSE',
         [campaignId]
       );
 
@@ -36,9 +36,9 @@ class WorkflowEngine {
         throw new Error('Invalid workflow configuration');
       }
 
-      // Get all leads for this campaign
+      // Per TDD: Use lad_dev schema
       const leadsResult = await pool.query(
-        'SELECT * FROM campaign_leads WHERE campaign_id = $1',
+        'SELECT * FROM lad_dev.campaign_leads WHERE campaign_id = $1 AND is_deleted = FALSE',
         [campaignId]
       );
 
@@ -64,8 +64,10 @@ class WorkflowEngine {
     try {
       console.log(`[WorkflowEngine] Processing lead ${lead.id} for campaign ${campaignId}`);
 
-      // Get current step for this lead
-      let currentStepId = lead.current_step_id;
+      // Per TDD: Use current_step_order (integer) instead of current_step_id
+      // Note: This code uses step IDs but TDD schema tracks step_order (integer)
+      // This may need refactoring to use step_order properly
+      let currentStepId = lead.current_step_order ? workflow.steps[lead.current_step_order - 1]?.id : null;
 
       // If no current step, start from the first step
       if (!currentStepId) {
@@ -114,9 +116,9 @@ class WorkflowEngine {
         // Determine next step
         currentStepId = await this.getNextStep(currentStep, lead, workflow, result);
 
-        // Update lead's current step
+        // Per TDD: Use lad_dev schema
         await pool.query(
-          'UPDATE campaign_leads SET current_step_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+          'UPDATE lad_dev.campaign_leads SET current_step_order = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND is_deleted = FALSE',
           [currentStepId, lead.id]
         );
 
@@ -169,14 +171,18 @@ class WorkflowEngine {
    */
   async getPendingDelayedLeads() {
     try {
+      // Per TDD: Use lad_dev schema
       const result = await pool.query(`
-        SELECT DISTINCT cl.*, c.workflow, c.user_id, c.org_id
-        FROM campaign_leads cl
-        JOIN campaigns c ON cl.campaign_id = c.id
-        JOIN campaign_lead_activities cla ON cl.id = cla.lead_id
+        SELECT DISTINCT cl.*, c.config as workflow, c.created_by_user_id as user_id, c.tenant_id as org_id
+        FROM lad_dev.campaign_leads cl
+        JOIN lad_dev.campaigns c ON cl.campaign_id = c.id
+        JOIN lad_dev.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id
         WHERE cla.status = 'pending'
-          AND cla.scheduled_at <= CURRENT_TIMESTAMP
-          AND c.status = 'active'
+          AND cla.executed_at <= CURRENT_TIMESTAMP
+          AND c.status = 'running'
+          AND cl.is_deleted = FALSE
+          AND c.is_deleted = FALSE
+          AND cla.is_deleted = FALSE
       `);
 
       return result.rows;

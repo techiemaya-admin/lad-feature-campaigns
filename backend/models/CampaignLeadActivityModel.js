@@ -12,40 +12,49 @@ class CampaignLeadActivityModel {
   static async create(activityData) {
     const {
       tenantId,
+      campaignId, // Required in TDD schema
       campaignLeadId,
       stepId,
       stepType,
       actionType,
-      status = 'sent',
+      status = 'pending',
       channel,
       messageContent,
       subject,
       errorMessage,
-      metadata = {}
+      metadata = {},
+      provider,
+      providerEventId,
+      executedAt
     } = activityData;
 
+    // Per TDD: Use lad_dev schema with all required columns
     const query = `
-      INSERT INTO campaign_lead_activities (
-        tenant_id, campaign_lead_id, step_id, step_type, action_type, status,
-        channel, message_content, subject, error_message, metadata,
-        executed_at, created_at, updated_at
+      INSERT INTO lad_dev.campaign_lead_activities (
+        tenant_id, campaign_id, campaign_lead_id, step_id, step_type, action_type, status,
+        channel, subject, message_content, error_message, metadata,
+        provider, provider_event_id, executed_at, created_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP)
       RETURNING *
     `;
 
     const values = [
       tenantId,
+      campaignId,
       campaignLeadId,
       stepId,
       stepType,
       actionType,
       status,
       channel,
-      messageContent,
-      subject,
-      errorMessage,
-      JSON.stringify(metadata)
+      subject || null,
+      messageContent || null,
+      errorMessage || null,
+      JSON.stringify(metadata),
+      provider || null,
+      providerEventId || null,
+      executedAt || null
     ];
 
     const result = await pool.query(query, values);
@@ -56,9 +65,10 @@ class CampaignLeadActivityModel {
    * Get activity by ID
    */
   static async getById(activityId, tenantId) {
+    // Per TDD: Use lad_dev schema
     const query = `
-      SELECT * FROM campaign_lead_activities
-      WHERE id = $1 AND tenant_id = $2
+      SELECT * FROM lad_dev.campaign_lead_activities
+      WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
     `;
 
     const result = await pool.query(query, [activityId, tenantId]);
@@ -69,9 +79,10 @@ class CampaignLeadActivityModel {
    * Get activities by campaign lead ID
    */
   static async getByLeadId(campaignLeadId, tenantId, limit = 100) {
+    // Per TDD: Use lad_dev schema
     const query = `
-      SELECT * FROM campaign_lead_activities
-      WHERE campaign_lead_id = $1 AND tenant_id = $2
+      SELECT * FROM lad_dev.campaign_lead_activities
+      WHERE campaign_lead_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
       ORDER BY created_at DESC
       LIMIT $3
     `;
@@ -84,9 +95,10 @@ class CampaignLeadActivityModel {
    * Get last successful activity for a lead
    */
   static async getLastSuccessfulActivity(campaignLeadId, tenantId) {
+    // Per TDD: Use lad_dev schema
     const query = `
-      SELECT * FROM campaign_lead_activities
-      WHERE campaign_lead_id = $1 AND tenant_id = $2
+      SELECT * FROM lad_dev.campaign_lead_activities
+      WHERE campaign_lead_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
       AND status IN ('delivered', 'connected', 'replied')
       ORDER BY created_at DESC
       LIMIT 1
@@ -100,9 +112,10 @@ class CampaignLeadActivityModel {
    * Check if step was already executed for lead
    */
   static async stepAlreadyExecuted(campaignLeadId, stepId, tenantId) {
+    // Per TDD: Use lad_dev schema
     const query = `
-      SELECT id, status FROM campaign_lead_activities
-      WHERE campaign_lead_id = $1 AND step_id = $2 AND tenant_id = $3
+      SELECT id, status FROM lad_dev.campaign_lead_activities
+      WHERE campaign_lead_id = $1 AND step_id = $2 AND tenant_id = $3 AND is_deleted = FALSE
       AND status IN ('delivered', 'connected', 'replied')
       ORDER BY created_at DESC
       LIMIT 1
@@ -116,8 +129,10 @@ class CampaignLeadActivityModel {
    * Update activity
    */
   static async update(activityId, tenantId, updates) {
+    // Per TDD: Use lad_dev schema, update allowed fields
     const allowedFields = [
-      'status', 'error_message', 'metadata', 'message_content', 'subject'
+      'status', 'error_message', 'metadata', 'message_content', 'subject',
+      'provider', 'provider_event_id', 'executed_at'
     ];
 
     const setClause = [];
@@ -127,6 +142,7 @@ class CampaignLeadActivityModel {
     for (const [key, value] of Object.entries(updates)) {
       if (allowedFields.includes(key)) {
         setClause.push(`${key} = $${paramIndex++}`);
+        // JSONB fields need to be stringified
         values.push(key === 'metadata' ? JSON.stringify(value) : value);
       }
     }
@@ -137,10 +153,11 @@ class CampaignLeadActivityModel {
 
     setClause.push(`updated_at = CURRENT_TIMESTAMP`);
 
+    // Per TDD: Use lad_dev schema
     const query = `
-      UPDATE campaign_lead_activities
+      UPDATE lad_dev.campaign_lead_activities
       SET ${setClause.join(', ')}
-      WHERE id = $1 AND tenant_id = $2
+      WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
       RETURNING *
     `;
 
@@ -154,10 +171,11 @@ class CampaignLeadActivityModel {
   static async getByCampaignId(campaignId, tenantId, filters = {}) {
     const { status, stepType, limit = 1000, offset = 0 } = filters;
 
+    // Per TDD: Use lad_dev schema
     let query = `
-      SELECT cla.* FROM campaign_lead_activities cla
-      INNER JOIN campaign_leads cl ON cla.campaign_lead_id = cl.id
-      WHERE cl.campaign_id = $1 AND cla.tenant_id = $2
+      SELECT cla.* FROM lad_dev.campaign_lead_activities cla
+      INNER JOIN lad_dev.campaign_leads cl ON cla.campaign_lead_id = cl.id
+      WHERE cl.campaign_id = $1 AND cla.tenant_id = $2 AND cla.is_deleted = FALSE
     `;
 
     const params = [campaignId, tenantId];
@@ -184,6 +202,7 @@ class CampaignLeadActivityModel {
    * Get activity stats for a campaign
    */
   static async getCampaignStats(campaignId, tenantId) {
+    // Per TDD: Use lad_dev schema
     const query = `
       SELECT
         COUNT(*) as total_activities,
@@ -193,10 +212,10 @@ class CampaignLeadActivityModel {
         COUNT(CASE WHEN status = 'replied' THEN 1 END) as replied_count,
         COUNT(CASE WHEN status = 'opened' THEN 1 END) as opened_count,
         COUNT(CASE WHEN status = 'clicked' THEN 1 END) as clicked_count,
-        COUNT(CASE WHEN status = 'error' THEN 1 END) as error_count
-      FROM campaign_lead_activities cla
-      INNER JOIN campaign_leads cl ON cla.campaign_lead_id = cl.id
-      WHERE cl.campaign_id = $1 AND cla.tenant_id = $2
+        COUNT(CASE WHEN status = 'failed' THEN 1 END) as error_count
+      FROM lad_dev.campaign_lead_activities cla
+      INNER JOIN lad_dev.campaign_leads cl ON cla.campaign_lead_id = cl.id
+      WHERE cl.campaign_id = $1 AND cla.tenant_id = $2 AND cla.is_deleted = FALSE
     `;
 
     const result = await pool.query(query, [campaignId, tenantId]);
@@ -207,8 +226,10 @@ class CampaignLeadActivityModel {
    * Delete activities by lead ID
    */
   static async deleteByLeadId(campaignLeadId, tenantId) {
+    // Per TDD: Use lad_dev schema (soft delete)
     const query = `
-      DELETE FROM campaign_lead_activities
+      UPDATE lad_dev.campaign_lead_activities
+      SET is_deleted = TRUE, updated_at = CURRENT_TIMESTAMP
       WHERE campaign_lead_id = $1 AND tenant_id = $2
       RETURNING id
     `;
