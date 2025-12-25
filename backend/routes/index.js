@@ -31,6 +31,9 @@ router.delete('/:id', jwtAuth, validateUuidParam('id'), CampaignController.delet
 router.get('/:id/leads', jwtAuth, validateUuidParam('id'), validatePagination, CampaignController.getCampaignLeads);
 router.post('/:id/leads', jwtAuth, validateUuidParam('id'), validateLeadIds, CampaignController.addLeadsToCampaign);
 
+// Campaign analytics
+router.get('/:id/analytics', jwtAuth, validateUuidParam('id'), CampaignController.getCampaignAnalytics);
+
 // Campaign activities
 router.get('/:id/activities', jwtAuth, validateUuidParam('id'), validatePagination, CampaignController.getCampaignActivities);
 

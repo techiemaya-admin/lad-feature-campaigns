@@ -1,38 +1,128 @@
 /**
- * LinkedIn Integration Routes
- * Express routes for LinkedIn account management
+ * LinkedIn Integration Routes for Campaigns
+ * Uses campaign's own LinkedIn integration services
  */
 
 const express = require('express');
 const router = express.Router();
-const LinkedInController = require('../controllers/LinkedInController');
 const { authenticateToken: jwtAuth } = require('../../../core/middleware/auth');
+const linkedInIntegrationService = require('../services/LinkedInIntegrationService');
 
-// OAuth flow
-router.get('/auth/start', jwtAuth, LinkedInController.startAuth);
-router.get('/auth/callback', LinkedInController.handleCallback); // No auth needed for callback
+// GET /api/campaigns/linkedin/status - Check LinkedIn connection status
+router.get('/status', jwtAuth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const accounts = await linkedInIntegrationService.getUserLinkedInAccounts(userId);
+    
+    res.json({
+      success: true,
+      connected: accounts && accounts.length > 0,
+      accountCount: accounts ? accounts.length : 0,
+      accounts: accounts || []
+    });
+  } catch (error) {
+    console.error('[LinkedIn] Status check error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
-// Account management
-router.get('/accounts', jwtAuth, LinkedInController.getAccounts);
-router.get('/status', jwtAuth, LinkedInController.getStatus);
-router.get('/account-status', jwtAuth, LinkedInController.getAccountStatus);
-router.post('/disconnect', jwtAuth, LinkedInController.disconnect);
-router.post('/sync', jwtAuth, LinkedInController.sync);
-router.get('/sync-from-unipile', jwtAuth, LinkedInController.syncFromUnipile);
+// POST /api/campaigns/linkedin/connect - Connect LinkedIn account
+router.post('/connect', jwtAuth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { redirectUri } = req.body;
+    
+    const result = await linkedInIntegrationService.startLinkedInConnection(userId, redirectUri);
+    
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error('[LinkedIn] Connect error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
-// Checkpoint and OTP
-router.post('/solve-checkpoint', jwtAuth, LinkedInController.solveCheckpoint);
-router.post('/verify-otp', jwtAuth, LinkedInController.verifyOTP);
+// GET /api/campaigns/linkedin/callback - OAuth callback handler
+router.get('/callback', jwtAuth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { code, redirectUri } = req.query;
+    
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        error: 'Authorization code is required'
+      });
+    }
+    
+    const result = await linkedInIntegrationService.handleLinkedInCallback(userId, code, redirectUri);
+    
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error('[LinkedIn] Callback error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
-// Connection management
-router.post('/connect', jwtAuth, LinkedInController.connect);
-router.post('/reconnect', jwtAuth, LinkedInController.reconnect);
-router.post('/refresh', jwtAuth, LinkedInController.refreshToken);
+// POST /api/campaigns/linkedin/disconnect - Disconnect LinkedIn account
+router.post('/disconnect', jwtAuth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { unipileAccountId } = req.body;
+    
+    if (!unipileAccountId) {
+      return res.status(400).json({
+        success: false,
+        error: 'unipileAccountId is required'
+      });
+    }
+    
+    await linkedInIntegrationService.disconnectAccount(userId, unipileAccountId);
+    
+    res.json({
+      success: true,
+      message: 'LinkedIn account disconnected successfully'
+    });
+  } catch (error) {
+    console.error('[LinkedIn] Disconnect error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
-// Webhooks
-router.get('/webhooks', jwtAuth, LinkedInController.listWebhooks);
-router.post('/register-webhook', jwtAuth, LinkedInController.registerWebhook);
-router.post('/webhook', LinkedInController.handleWebhook); // No auth for webhook callback
+// GET /api/campaigns/linkedin/accounts - List all LinkedIn accounts for user
+router.get('/accounts', jwtAuth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const accounts = await linkedInIntegrationService.getUserLinkedInAccounts(userId);
+    
+    res.json({
+      success: true,
+      accounts: accounts || []
+    });
+  } catch (error) {
+    console.error('[LinkedIn] List accounts error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
 module.exports = router;
-

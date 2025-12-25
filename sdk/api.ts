@@ -1,141 +1,104 @@
 /**
- * Campaigns SDK API
+ * Campaigns Feature - API Functions
  * 
- * API functions for interacting with the Campaigns feature
- * All paths are feature-prefixed: /campaigns/*
+ * All HTTP API calls for the campaigns feature.
+ * Uses the shared apiClient for consistent request handling.
  */
 
-import { apiClient } from '@/sdk/shared/apiClient';
+import { apiClient } from '../../shared/apiClient';
 import type {
   Campaign,
-  CampaignStep,
-  CampaignLead,
-  CampaignLeadActivity,
   CampaignStats,
-  CampaignCreateInput,
-  CampaignUpdateInput,
-  AddLeadsInput,
-  CampaignListParams,
+  CampaignFilters,
+  CreateCampaignRequest,
+  UpdateCampaignRequest,
+  CampaignAnalytics,
+  CampaignLead,
 } from './types';
 
 /**
- * Get all campaigns
+ * Get all campaigns with optional filters
  */
-export async function getCampaigns(params?: CampaignListParams): Promise<Campaign[]> {
-  const queryParams = new URLSearchParams();
-  if (params?.status) queryParams.append('status', params.status);
-  if (params?.type) queryParams.append('type', params.type);
-  if (params?.search) queryParams.append('search', params.search);
-  if (params?.page) queryParams.append('page', String(params.page));
-  if (params?.limit) queryParams.append('limit', String(params.limit));
+export async function getCampaigns(filters?: CampaignFilters): Promise<Campaign[]> {
+  const params: Record<string, string> = {};
+  if (filters?.search) params.search = filters.search;
+  if (filters?.status && filters.status !== 'all') params.status = filters.status;
 
-  const query = queryParams.toString();
-  const path = query ? `/campaigns?${query}` : '/campaigns';
-  
-  const response = await apiClient.get<{ data: Campaign[] }>(path);
-  return response.data;
+  const response = await apiClient.get<{ data: Campaign[] }>('/api/campaigns', { params });
+  return response.data.data || [];
 }
 
 /**
- * Get campaign by ID
+ * Get a single campaign by ID
  */
 export async function getCampaign(campaignId: string): Promise<Campaign> {
-  const response = await apiClient.get<{ data: Campaign }>(`/campaigns/${campaignId}`);
-  return response.data;
+  const response = await apiClient.get<{ data: Campaign }>(`/api/campaigns/${campaignId}`);
+  return response.data.data;
 }
 
 /**
- * Create new campaign
+ * Get campaign statistics
  */
-export async function createCampaign(data: CampaignCreateInput): Promise<Campaign> {
-  const response = await apiClient.post<{ data: Campaign }>('/campaigns', data);
-  return response.data;
+export async function getCampaignStats(): Promise<CampaignStats> {
+  const response = await apiClient.get<{ data: CampaignStats }>('/api/campaigns/stats');
+  return response.data.data;
 }
 
 /**
- * Update campaign
+ * Create a new campaign
+ */
+export async function createCampaign(data: CreateCampaignRequest): Promise<Campaign> {
+  const response = await apiClient.post<{ data: Campaign }>('/api/campaigns', data);
+  return response.data.data;
+}
+
+/**
+ * Update an existing campaign
  */
 export async function updateCampaign(
   campaignId: string,
-  data: CampaignUpdateInput
+  data: UpdateCampaignRequest
 ): Promise<Campaign> {
-  const response = await apiClient.put<{ data: Campaign }>(`/campaigns/${campaignId}`, data);
-  return response.data;
+  const response = await apiClient.put<{ data: Campaign }>(`/api/campaigns/${campaignId}`, data);
+  return response.data.data;
 }
 
 /**
- * Delete campaign
+ * Delete a campaign
  */
 export async function deleteCampaign(campaignId: string): Promise<void> {
-  await apiClient.delete(`/campaigns/${campaignId}`);
+  await apiClient.delete(`/api/campaigns/${campaignId}`);
 }
 
 /**
- * Activate campaign
+ * Start a campaign
  */
-export async function activateCampaign(campaignId: string): Promise<Campaign> {
-  const response = await apiClient.post<{ data: Campaign }>(`/campaigns/${campaignId}/activate`);
-  return response.data;
+export async function startCampaign(campaignId: string): Promise<void> {
+  await apiClient.post(`/api/campaigns/${campaignId}/start`, {});
 }
 
 /**
- * Pause campaign
+ * Pause a campaign
  */
-export async function pauseCampaign(campaignId: string): Promise<Campaign> {
-  const response = await apiClient.post<{ data: Campaign }>(`/campaigns/${campaignId}/pause`);
-  return response.data;
+export async function pauseCampaign(campaignId: string): Promise<void> {
+  await apiClient.post(`/api/campaigns/${campaignId}/pause`, {});
 }
 
 /**
- * Archive campaign
+ * Stop a campaign
  */
-export async function archiveCampaign(campaignId: string): Promise<Campaign> {
-  const response = await apiClient.post<{ data: Campaign }>(`/campaigns/${campaignId}/archive`);
-  return response.data;
+export async function stopCampaign(campaignId: string): Promise<void> {
+  await apiClient.post(`/api/campaigns/${campaignId}/stop`, {});
 }
 
 /**
- * Get campaign steps
+ * Get campaign analytics
  */
-export async function getCampaignSteps(campaignId: string): Promise<CampaignStep[]> {
-  const response = await apiClient.get<{ data: CampaignStep[] }>(`/campaigns/${campaignId}/steps`);
-  return response.data;
-}
-
-/**
- * Add step to campaign
- */
-export async function addCampaignStep(
-  campaignId: string,
-  step: Omit<CampaignStep, 'id' | 'campaign_id' | 'created_at' | 'updated_at'>
-): Promise<CampaignStep> {
-  const response = await apiClient.post<{ data: CampaignStep }>(
-    `/campaigns/${campaignId}/steps`,
-    step
+export async function getCampaignAnalytics(campaignId: string): Promise<CampaignAnalytics> {
+  const response = await apiClient.get<{ data: CampaignAnalytics }>(
+    `/api/campaigns/${campaignId}/analytics`
   );
-  return response.data;
-}
-
-/**
- * Update campaign step
- */
-export async function updateCampaignStep(
-  campaignId: string,
-  stepId: string,
-  step: Partial<CampaignStep>
-): Promise<CampaignStep> {
-  const response = await apiClient.put<{ data: CampaignStep }>(
-    `/campaigns/${campaignId}/steps/${stepId}`,
-    step
-  );
-  return response.data;
-}
-
-/**
- * Delete campaign step
- */
-export async function deleteCampaignStep(campaignId: string, stepId: string): Promise<void> {
-  await apiClient.delete(`/campaigns/${campaignId}/steps/${stepId}`);
+  return response.data.data;
 }
 
 /**
@@ -143,76 +106,45 @@ export async function deleteCampaignStep(campaignId: string, stepId: string): Pr
  */
 export async function getCampaignLeads(
   campaignId: string,
-  params?: { status?: string; page?: number; limit?: number }
+  filters?: { search?: string }
 ): Promise<CampaignLead[]> {
-  const queryParams = new URLSearchParams();
-  if (params?.status) queryParams.append('status', params.status);
-  if (params?.page) queryParams.append('page', String(params.page));
-  if (params?.limit) queryParams.append('limit', String(params.limit));
+  const params: Record<string, string> = {};
+  if (filters?.search) params.search = filters.search;
 
-  const query = queryParams.toString();
-  const path = query
-    ? `/campaigns/${campaignId}/leads?${query}`
-    : `/campaigns/${campaignId}/leads`;
-
-  const response = await apiClient.get<{ data: CampaignLead[] }>(path);
-  return response.data;
-}
-
-/**
- * Add leads to campaign
- */
-export async function addLeadsToCampaign(
-  campaignId: string,
-  data: AddLeadsInput
-): Promise<{ added: number; failed: number }> {
-  const response = await apiClient.post<{ data: { added: number; failed: number } }>(
-    `/campaigns/${campaignId}/leads`,
-    data
+  const response = await apiClient.get<{ data: CampaignLead[] }>(
+    `/api/campaigns/${campaignId}/leads`,
+    { params }
   );
-  return response.data;
+  return response.data.data || [];
 }
 
 /**
- * Remove lead from campaign
+ * Get or generate lead profile summary
  */
-export async function removeLeadFromCampaign(
+export async function getLeadProfileSummary(
   campaignId: string,
   leadId: string
-): Promise<void> {
-  await apiClient.delete(`/campaigns/${campaignId}/leads/${leadId}`);
-}
-
-/**
- * Get lead activities
- */
-export async function getCampaignLeadActivities(
-  campaignLeadId: string
-): Promise<CampaignLeadActivity[]> {
-  const response = await apiClient.get<{ data: CampaignLeadActivity[] }>(
-    `/campaigns/leads/${campaignLeadId}/activities`
+): Promise<{ summary: string | null; exists: boolean }> {
+  const response = await apiClient.get<{ success: boolean; summary: string | null; exists: boolean }>(
+    `/api/campaigns/${campaignId}/leads/${leadId}/summary`
   );
-  return response.data;
+  return {
+    summary: response.data.summary || null,
+    exists: response.data.exists || false,
+  };
 }
 
 /**
- * Execute campaign
+ * Generate lead profile summary
  */
-export async function executeCampaign(
+export async function generateLeadProfileSummary(
   campaignId: string,
-  options?: { leadIds?: string[] }
-): Promise<{ success: boolean; executed: number }> {
-  const response = await apiClient.post<{ data: { success: boolean; executed: number } }>(
-    `/campaigns/${campaignId}/execute`,
-    options || {}
+  leadId: string
+): Promise<{ summary: string }> {
+  const response = await apiClient.post<{ success: boolean; summary: string }>(
+    `/api/campaigns/${campaignId}/leads/${leadId}/summary`,
+    {}
   );
-  return response.data;
+  return { summary: response.data.summary };
 }
 
-/**
- * Get campaign statistics
- */
-export async function getCampaignStats(): Promise<CampaignStats> {
-  const response = await apiClient.get<{ data: CampaignStats }>('/campaigns/stats');
-  return response.data;
-}

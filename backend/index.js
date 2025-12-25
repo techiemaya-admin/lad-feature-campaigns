@@ -1,21 +1,8 @@
 /**
- * Campaign Feature Index
- * 
- * Main entry point for the campaign feature module
- * Exports router and metadata
+ * Campaigns Feature Entry Point
+ * Exports the campaigns router for app.js
  */
 
-const campaignsRouter = require('./routes');
+const campaignsRouter = require('./routes/index');
 
-module.exports = {
-  // Router
-  router: campaignsRouter,
-  
-  // Feature metadata
-  meta: {
-    id: 'campaigns',
-    name: 'Campaigns',
-    version: '1.0.0',
-    description: 'Multi-channel outreach campaigns with workflow automation'
-  }
-};
+module.exports = campaignsRouter;

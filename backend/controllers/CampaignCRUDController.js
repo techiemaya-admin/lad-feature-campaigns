@@ -163,8 +163,11 @@ class CampaignCRUDController {
   static async createCampaign(req, res) {
     try {
       const tenantId = req.user.tenantId;
-      const userId = req.user.user_id || req.user.id;
-      const { name, status, config, steps } = req.body;
+      const userId = req.user.userId || req.user.user_id || req.user.id;
+      
+      console.log('[Campaign CRUD] Creating campaign for user:', userId, 'tenant:', tenantId);
+      
+      const { name, status, config, steps, campaign_type } = req.body;
 
       // Validate required fields
       if (!name) {
@@ -174,12 +177,18 @@ class CampaignCRUDController {
         });
       }
 
+      // Store campaign_type in config
+      const campaignConfig = config || {};
+      if (campaign_type) {
+        campaignConfig.campaign_type = campaign_type;
+      }
+
       // Create campaign
       const campaign = await CampaignModel.create({
         name,
         status: status || 'draft',
         createdBy: userId,
-        config: config || {}
+        config: campaignConfig
       }, tenantId);
 
       // Create steps if provided
@@ -192,11 +201,13 @@ class CampaignCRUDController {
         success: true,
         data: {
           ...campaign,
+          campaign_type: campaignConfig.campaign_type || 'linkedin_outreach',
           steps: createdSteps
         }
       });
     } catch (error) {
       console.error('[Campaign CRUD] Error creating campaign:', error);
+      console.error('[Campaign CRUD] Error stack:', error.stack);
       res.status(500).json({
         success: false,
         error: 'Failed to create campaign',
