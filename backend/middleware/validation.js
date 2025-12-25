@@ -1,169 +1,189 @@
 /**
- * Validation Middleware for Campaigns Feature
+ * Campaign Validation Middleware
+ * Provides request validation for campaign endpoints
  */
 
 /**
- * Validate campaign creation request
+ * Validate UUID format
  */
-function validateCampaignCreation(req, res, next) {
-  const { name, type } = req.body;
-
-  if (!name || typeof name !== 'string') {
-    return res.status(400).json({
-      success: false,
-      error: 'Campaign name is required and must be a string'
-    });
-  }
-
-  if (name.trim().length === 0) {
-    return res.status(400).json({
-      success: false,
-      error: 'Campaign name cannot be empty'
-    });
-  }
-
-  if (name.length > 255) {
-    return res.status(400).json({
-      success: false,
-      error: 'Campaign name too long (max 255 characters)'
-    });
-  }
-
-  if (type && !['email', 'sms', 'voice', 'multi-channel'].includes(type)) {
-    return res.status(400).json({
-      success: false,
-      error: 'Invalid campaign type. Must be: email, sms, voice, or multi-channel'
-    });
-  }
-
-  next();
-}
-
-/**
- * Validate campaign update request
- */
-function validateCampaignUpdate(req, res, next) {
-  const { name, status } = req.body;
-
-  if (name !== undefined) {
-    if (typeof name !== 'string' || name.trim().length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Campaign name must be a non-empty string'
-      });
-    }
-    if (name.length > 255) {
-      return res.status(400).json({
-        success: false,
-        error: 'Campaign name too long (max 255 characters)'
-      });
-    }
-  }
-
-  if (status && !['draft', 'active', 'paused', 'completed', 'archived'].includes(status)) {
-    return res.status(400).json({
-      success: false,
-      error: 'Invalid status. Must be: draft, active, paused, completed, or archived'
-    });
-  }
-
-  next();
-}
+const isValidUUID = (uuid) => {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(uuid);
+};
 
 /**
  * Validate UUID parameter
  */
-function validateUuidParam(paramName = 'id') {
+const validateUuidParam = (paramName) => {
   return (req, res, next) => {
-    const uuid = req.params[paramName];
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-    if (!uuid || !uuidRegex.test(uuid)) {
+    const value = req.params[paramName];
+    
+    if (!value || !isValidUUID(value)) {
       return res.status(400).json({
         success: false,
-        error: `Invalid ${paramName} format`
+        error: `Invalid ${paramName}: must be a valid UUID`
       });
     }
-
+    
     next();
   };
-}
+};
 
 /**
  * Validate pagination parameters
  */
-function validatePagination(req, res, next) {
-  const { limit, offset } = req.query;
-
-  if (limit !== undefined) {
-    const limitNum = parseInt(limit);
-    if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
-      return res.status(400).json({
-        success: false,
-        error: 'Limit must be between 1 and 100'
-      });
-    }
+const validatePagination = (req, res, next) => {
+  const { page, limit } = req.query;
+  
+  if (page && (isNaN(page) || parseInt(page) < 1)) {
+    return res.status(400).json({
+      success: false,
+      error: 'page must be a positive integer'
+    });
   }
-
-  if (offset !== undefined) {
-    const offsetNum = parseInt(offset);
-    if (isNaN(offsetNum) || offsetNum < 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Offset must be a non-negative number'
-      });
-    }
+  
+  if (limit && (isNaN(limit) || parseInt(limit) < 1 || parseInt(limit) > 100)) {
+    return res.status(400).json({
+      success: false,
+      error: 'limit must be between 1 and 100'
+    });
   }
-
+  
   next();
-}
+};
 
 /**
- * Validate lead IDs array
+ * Validate campaign creation
  */
-function validateLeadIds(req, res, next) {
-  const { leadIds } = req.body;
-
-  if (!leadIds || !Array.isArray(leadIds)) {
-    return res.status(400).json({
-      success: false,
-      error: 'leadIds must be an array'
-    });
-  }
-
-  if (leadIds.length === 0) {
-    return res.status(400).json({
-      success: false,
-      error: 'leadIds array cannot be empty'
-    });
-  }
-
-  if (leadIds.length > 1000) {
-    return res.status(400).json({
-      success: false,
-      error: 'Too many lead IDs (max 1000 per request)'
-    });
-  }
-
-  // Validate each ID is a valid UUID
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const invalidIds = leadIds.filter(id => !uuidRegex.test(id));
+const validateCampaignCreation = (req, res, next) => {
+  const { name, campaign_type, status, steps } = req.body;
   
-  if (invalidIds.length > 0) {
+  // Name is required
+  if (!name || typeof name !== 'string' || name.trim().length === 0) {
     return res.status(400).json({
       success: false,
-      error: 'Invalid lead ID format',
-      invalidIds: invalidIds.slice(0, 5) // Show first 5 invalid IDs
+      error: 'Campaign name is required'
     });
   }
-
+  
+  if (name.length > 255) {
+    return res.status(400).json({
+      success: false,
+      error: 'Campaign name must be less than 255 characters'
+    });
+  }
+  
+  // Validate campaign_type if provided
+  const validTypes = ['linkedin_outreach', 'email_outreach', 'multi_channel'];
+  if (campaign_type && !validTypes.includes(campaign_type)) {
+    return res.status(400).json({
+      success: false,
+      error: `Invalid campaign_type. Must be one of: ${validTypes.join(', ')}`
+    });
+  }
+  
+  // Validate status if provided
+  const validStatuses = ['draft', 'active', 'paused', 'completed', 'stopped'];
+  if (status && !validStatuses.includes(status)) {
+    return res.status(400).json({
+      success: false,
+      error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+    });
+  }
+  
+  // Validate steps if provided
+  if (steps && !Array.isArray(steps)) {
+    return res.status(400).json({
+      success: false,
+      error: 'steps must be an array'
+    });
+  }
+  
   next();
-}
+};
+
+/**
+ * Validate campaign update
+ */
+const validateCampaignUpdate = (req, res, next) => {
+  const { name, campaign_type, status, steps } = req.body;
+  
+  // Name validation if provided
+  if (name !== undefined) {
+    if (typeof name !== 'string' || name.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Campaign name cannot be empty'
+      });
+    }
+    
+    if (name.length > 255) {
+      return res.status(400).json({
+        success: false,
+        error: 'Campaign name must be less than 255 characters'
+      });
+    }
+  }
+  
+  // Validate campaign_type if provided
+  const validTypes = ['linkedin_outreach', 'email_outreach', 'multi_channel'];
+  if (campaign_type && !validTypes.includes(campaign_type)) {
+    return res.status(400).json({
+      success: false,
+      error: `Invalid campaign_type. Must be one of: ${validTypes.join(', ')}`
+    });
+  }
+  
+  // Validate status if provided
+  const validStatuses = ['draft', 'active', 'paused', 'completed', 'stopped'];
+  if (status && !validStatuses.includes(status)) {
+    return res.status(400).json({
+      success: false,
+      error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+    });
+  }
+  
+  // Validate steps if provided
+  if (steps && !Array.isArray(steps)) {
+    return res.status(400).json({
+      success: false,
+      error: 'steps must be an array'
+    });
+  }
+  
+  next();
+};
+
+/**
+ * Validate lead IDs
+ */
+const validateLeadIds = (req, res, next) => {
+  const { leadIds } = req.body;
+  
+  if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'leadIds must be a non-empty array'
+    });
+  }
+  
+  // Validate each leadId is a UUID
+  for (const leadId of leadIds) {
+    if (!isValidUUID(leadId)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid leadId: ${leadId}. Each leadId must be a valid UUID`
+      });
+    }
+  }
+  
+  next();
+};
 
 module.exports = {
-  validateCampaignCreation,
-  validateCampaignUpdate,
   validateUuidParam,
   validatePagination,
+  validateCampaignCreation,
+  validateCampaignUpdate,
   validateLeadIds
 };

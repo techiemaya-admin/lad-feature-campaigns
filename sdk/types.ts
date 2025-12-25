@@ -1,75 +1,27 @@
 /**
- * Campaign Types
+ * Campaigns Feature - TypeScript Types
  * 
- * Type definitions for the Campaigns feature SDK
+ * All type definitions for the campaigns feature.
+ * These types are shared between SDK and web layers.
  */
 
-export type CampaignType = 'email' | 'voice' | 'linkedin' | 'sms' | 'multi-channel';
-export type CampaignStatus = 'draft' | 'active' | 'paused' | 'completed' | 'archived';
-export type StepType = 'send' | 'wait' | 'condition';
-export type Channel = 'email' | 'voice' | 'linkedin' | 'sms';
+export type CampaignStatus = 'draft' | 'running' | 'paused' | 'completed' | 'stopped';
 
 export interface Campaign {
   id: string;
   name: string;
-  description?: string;
-  type: CampaignType;
   status: CampaignStatus;
-  organization_id: string;
-  user_id: string;
-  settings?: Record<string, any>;
+  leads_count: number;
+  sent_count: number;
+  delivered_count: number;
+  connected_count: number;
+  replied_count: number;
+  opened_count: number;
+  clicked_count: number;
   created_at: string;
   updated_at: string;
-}
-
-export interface CampaignStep {
-  id: string;
-  campaign_id: string;
-  step_order: number;
-  step_type: StepType;
-  channel?: Channel;
-  content?: {
-    subject?: string;
-    body?: string;
-    message?: string;
-    template_id?: string;
-  };
-  conditions?: {
-    type: 'and' | 'or';
-    rules: Array<{
-      field: string;
-      operator: string;
-      value: any;
-    }>;
-  };
-  delay_minutes?: number;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface CampaignLead {
-  id: string;
-  campaign_id: string;
-  lead_id: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'paused';
-  current_step?: number;
-  last_contact_at?: string;
-  completed_at?: string;
-  metadata?: Record<string, any>;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface CampaignLeadActivity {
-  id: string;
-  campaign_lead_id: string;
-  campaign_step_id: string;
-  activity_type: 'email_sent' | 'email_opened' | 'email_clicked' | 'linkedin_sent' | 'voice_called' | 'sms_sent' | 'replied';
-  channel: Channel;
-  status: 'success' | 'failed' | 'pending';
-  metadata?: Record<string, any>;
-  created_at: string;
+  created_by: string;
+  steps?: Array<{ type: string; [key: string]: any }>;
 }
 
 export interface CampaignStats {
@@ -82,31 +34,101 @@ export interface CampaignStats {
   total_replied: number;
   avg_connection_rate: number;
   avg_reply_rate: number;
+  instagram_connection_rate?: number;
+  whatsapp_connection_rate?: number;
+  voice_agent_connection_rate?: number;
 }
 
-export interface CampaignCreateInput {
-  name: string;
-  description?: string;
-  type: CampaignType;
-  settings?: Record<string, any>;
-  steps?: Omit<CampaignStep, 'id' | 'campaign_id' | 'created_at' | 'updated_at'>[];
-}
-
-export interface CampaignUpdateInput {
-  name?: string;
-  description?: string;
-  type?: CampaignType;
-  settings?: Record<string, any>;
-}
-
-export interface AddLeadsInput {
-  leadIds: string[];
-}
-
-export interface CampaignListParams {
-  status?: CampaignStatus;
-  type?: CampaignType;
+export interface CampaignFilters {
   search?: string;
-  page?: number;
-  limit?: number;
+  status?: CampaignStatus | 'all';
 }
+
+export interface CreateCampaignRequest {
+  name: string;
+  status?: CampaignStatus;
+  steps?: Array<{ type: string; [key: string]: any }>;
+}
+
+export interface UpdateCampaignRequest {
+  name?: string;
+  status?: CampaignStatus;
+  steps?: Array<{ type: string; [key: string]: any }>;
+}
+
+export interface CampaignAnalytics {
+  campaign: {
+    id: string;
+    name: string;
+    status: string;
+    created_at: string;
+  };
+  overview: {
+    total_leads: number;
+    active_leads: number;
+    completed_leads: number;
+    stopped_leads: number;
+    sent: number;
+    delivered: number;
+    opened: number;
+    clicked: number;
+    connected: number;
+    replied: number;
+  };
+  metrics: {
+    delivery_rate: number;
+    open_rate: number;
+    click_rate: number;
+    connection_rate: number;
+    reply_rate: number;
+    // Step-specific metrics
+    leads_generated?: number;
+    connection_requests_sent?: number;
+    connection_requests_accepted?: number;
+    linkedin_messages_sent?: number;
+    linkedin_messages_replied?: number;
+    voice_calls_made?: number;
+    voice_calls_answered?: number;
+    emails_sent?: number;
+    emails_opened?: number;
+    whatsapp_messages_sent?: number;
+    whatsapp_messages_replied?: number;
+    errors?: number;
+  };
+  timeline: Array<{
+    date: string;
+    sent: number;
+    delivered: number;
+    opened: number;
+    clicked: number;
+    connected: number;
+    replied: number;
+  }>;
+  step_analytics?: Array<{
+    id: string;
+    type: string;
+    title: string;
+    order: number;
+    total_executions: number;
+    sent: number;
+    delivered: number;
+    connected: number;
+    replied: number;
+    errors: number;
+  }>;
+}
+
+export interface CampaignLead {
+  id: string;
+  campaign_id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  linkedin_url?: string;
+  status: string;
+  connected: boolean;
+  replied: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
