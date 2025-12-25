@@ -23,7 +23,9 @@ jobs:
           
       - name: Install backend dependencies
         run: |
-          if [ -f backend/package.json ]; then
+          if [ -f backend/features/campaigns/package.json ]; then
+            cd backend/features/campaigns && npm ci
+          elif [ -f backend/package.json ]; then
             cd backend && npm ci
           else
             echo "No backend package.json found, skipping"
@@ -32,9 +34,9 @@ jobs:
       - name: Check for required files
         run: |
           echo "Checking required files..."
-          test -f backend/manifest.js || (echo "❌ backend/manifest.js is required" && exit 1)
-          test -d backend/services || (echo "❌ backend/services directory is required" && exit 1)
-          test -d backend/routes || (echo "❌ backend/routes directory is required" && exit 1)
+          test -f backend/features/campaigns/manifest.js || (echo "❌ backend/features/campaigns/manifest.js is required" && exit 1)
+          test -d backend/features/campaigns/services || (echo "❌ backend/features/campaigns/services directory is required" && exit 1)
+          test -d backend/features/campaigns/routes || (echo "❌ backend/features/campaigns/routes directory is required" && exit 1)
           echo "✅ All required files present"
 
       - name: Validate backend structure
@@ -43,8 +45,8 @@ jobs:
           
           # Check for key backend files
           files=(
-            "backend/routes/index.js"
-            "backend/manifest.js"
+            "backend/features/campaigns/routes/index.js"
+            "backend/features/campaigns/manifest.js"
           )
           
           for file in "${files[@]}"; do
@@ -58,10 +60,10 @@ jobs:
           
           # Check optional files
           optional_files=(
-            "backend/services/"
-            "backend/controllers/"
-            "backend/middleware/"
-            "backend/models/"
+            "backend/features/campaigns/services/"
+            "backend/features/campaigns/controllers/"
+            "backend/features/campaigns/middleware/"
+            "backend/features/campaigns/models/"
           )
           
           for file in "${optional_files[@]}"; do
@@ -76,19 +78,19 @@ jobs:
         run: |
           echo "Validating frontend structure..."
           
-          if [ -d "frontend/sdk" ]; then
+          if [ -d "frontend/sdk/features/campaigns" ]; then
             echo "✅ Frontend SDK directory exists"
-            test -f frontend/sdk/index.ts && echo "✅ SDK index.ts exists" || echo "⚠️  No index.ts"
-            test -f frontend/sdk/types.ts && echo "✅ SDK types.ts exists" || echo "⚠️  No types.ts"
+            test -f frontend/sdk/features/campaigns/index.ts && echo "✅ SDK index.ts exists" || echo "⚠️  No index.ts"
+            test -f frontend/sdk/features/campaigns/types.ts && echo "✅ SDK types.ts exists" || echo "⚠️  No types.ts"
           else
-            echo "⚠️  No frontend/sdk directory (may be backend-only feature)"
+            echo "⚠️  No frontend/sdk/features/campaigns directory (may be backend-only feature)"
           fi
 
       - name: Check code syntax
         run: |
           echo "Checking JavaScript syntax..."
           # Check all JS files for syntax errors
-          find backend -name "*.js" -type f -exec node --check {} \; 2>&1 || true
+          find backend/features/campaigns -name "*.js" -type f -exec node --check {} \; 2>&1 || true
           echo "✅ JavaScript syntax check complete"
 
       - name: Validate migrations
@@ -119,12 +121,12 @@ jobs:
           echo "Checking for accidentally committed secrets..."
           
           # Check for common secret patterns (excluding node_modules and vendor directories)
-          if grep -r -i "api[_-]key.*=.*['\"][a-zA-Z0-9]{20,}['\"]" backend/ --exclude-dir=node_modules --exclude-dir=vendor 2>/dev/null; then
+          if grep -r -i "api[_-]key.*=.*['\"][a-zA-Z0-9]{20,}['\"]" backend/features/campaigns/ --exclude-dir=node_modules --exclude-dir=vendor 2>/dev/null; then
             echo "❌ Possible API keys found in code"
             exit 1
           fi
           
-          if grep -r -i "password.*=.*['\"][^'\"]*['\"]" backend/ --exclude-dir=node_modules --exclude-dir=vendor 2>/dev/null | grep -v "password.*process.env" | grep -v "password.*config\." | grep -v "// password" | grep -v "* password"; then
+          if grep -r -i "password.*=.*['\"][^'\"]*['\"]" backend/features/campaigns/ --exclude-dir=node_modules --exclude-dir=vendor 2>/dev/null | grep -v "password.*process.env" | grep -v "password.*config\." | grep -v "// password" | grep -v "* password"; then
             echo "❌ Possible hardcoded passwords found"
             exit 1
           fi
@@ -191,10 +193,10 @@ jobs:
             const labels = new Set();
             
             for (const file of files) {
-              if (file.filename.startsWith('backend/')) {
+              if (file.filename.startsWith('backend/features/campaigns/')) {
                 labels.add('backend');
               }
-              if (file.filename.startsWith('frontend/')) {
+              if (file.filename.startsWith('frontend/sdk/features/campaigns/')) {
                 labels.add('frontend');
               }
               if (file.filename.startsWith('migrations/')) {
