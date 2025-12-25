@@ -29,12 +29,19 @@ router.get('/status', jwtAuth, async (req, res) => {
   }
 });
 
-// POST /api/campaigns/linkedin/connect - Connect LinkedIn account
+// POST /api/campaigns/linkedin/connect - Connect LinkedIn account (OAuth or credentials)
 router.post('/connect', jwtAuth, async (req, res) => {
   try {
-    const userId = req.user.userId;
-    const { redirectUri } = req.body;
+    const { method, email, password, redirectUri, li_at, li_a, user_agent } = req.body;
     
+    // If method is provided (credentials or cookies), use credentials-based connection
+    if (method && (method === 'credentials' || method === 'cookies')) {
+      const LinkedInAuthController = require('../controllers/LinkedInAuthController');
+      return LinkedInAuthController.connect(req, res);
+    }
+    
+    // Otherwise, use OAuth flow (backward compatibility)
+    const userId = req.user.userId;
     const result = await linkedInIntegrationService.startLinkedInConnection(userId, redirectUri);
     
     res.json({
@@ -48,6 +55,18 @@ router.post('/connect', jwtAuth, async (req, res) => {
       error: error.message
     });
   }
+});
+
+// POST /api/campaigns/linkedin/verify-otp - Verify OTP for checkpoint
+router.post('/verify-otp', jwtAuth, async (req, res) => {
+  const LinkedInAuthController = require('../controllers/LinkedInAuthController');
+  return LinkedInAuthController.verifyOTP(req, res);
+});
+
+// POST /api/campaigns/linkedin/solve-checkpoint - Solve checkpoint (Yes/No validation)
+router.post('/solve-checkpoint', jwtAuth, async (req, res) => {
+  const LinkedInAuthController = require('../controllers/LinkedInAuthController');
+  return LinkedInAuthController.solveCheckpoint(req, res);
 });
 
 // GET /api/campaigns/linkedin/callback - OAuth callback handler

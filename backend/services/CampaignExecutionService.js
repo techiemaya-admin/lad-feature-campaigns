@@ -7,9 +7,9 @@
 // Import all functions from split modules
 const { 
   executeStepForLead, 
-  processCampaign, 
-  processLeadThroughWorkflow 
+  processCampaign 
 } = require('./CampaignProcessor');
+const { processLeadThroughWorkflow } = require('./WorkflowProcessor');
 
 const { 
   getRequiredFieldsForStepType,
@@ -34,10 +34,11 @@ const {
 const { executeLinkedInStep } = require('./LinkedInStepExecutor');
 
 // Re-export all functions for backward compatibility
+// Note: processCampaign now accepts authToken as third parameter
 module.exports = {
   // Main processing functions
   executeStepForLead,
-  processCampaign,
+  processCampaign, // Now accepts (campaignId, tenantId, authToken)
   processLeadThroughWorkflow,
   
   // Validation functions

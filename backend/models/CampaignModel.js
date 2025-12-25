@@ -17,9 +17,10 @@ class CampaignModel {
       config = {}
     } = campaignData;
 
+    // Per TDD: Use lad_dev schema and created_by_user_id
     const query = `
-      INSERT INTO campaigns (
-        tenant_id, name, status, created_by, config, created_at, updated_at
+      INSERT INTO lad_dev.campaigns (
+        tenant_id, name, status, created_by_user_id, config, created_at, updated_at
       )
       VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       RETURNING *
@@ -41,8 +42,9 @@ class CampaignModel {
    * Get campaign by ID
    */
   static async getById(campaignId, tenantId) {
+    // Per TDD: Use lad_dev schema
     const query = `
-      SELECT * FROM campaigns
+      SELECT * FROM lad_dev.campaigns
       WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
     `;
 
@@ -66,9 +68,10 @@ class CampaignModel {
         COUNT(DISTINCT CASE WHEN cla.status = 'replied' THEN cla.id END) as replied_count,
         COUNT(DISTINCT CASE WHEN cla.status = 'opened' THEN cla.id END) as opened_count,
         COUNT(DISTINCT CASE WHEN cla.status = 'clicked' THEN cla.id END) as clicked_count
-      FROM campaigns c
-      LEFT JOIN campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1
-      LEFT JOIN campaign_lead_activities cla ON cl.id = cla.campaign_lead_id
+      // Per TDD: Use lad_dev schema
+      FROM lad_dev.campaigns c
+      LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1
+      LEFT JOIN lad_dev.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id
       WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
     `;
 
@@ -114,8 +117,9 @@ class CampaignModel {
 
     setClause.push(`updated_at = CURRENT_TIMESTAMP`);
 
+    // Per TDD: Use lad_dev schema
     const query = `
-      UPDATE campaigns
+      UPDATE lad_dev.campaigns
       SET ${setClause.join(', ')}
       WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
       RETURNING *
@@ -129,8 +133,9 @@ class CampaignModel {
    * Soft delete campaign
    */
   static async delete(campaignId, tenantId) {
+    // Per TDD: Use lad_dev schema
     const query = `
-      UPDATE campaigns
+      UPDATE lad_dev.campaigns
       SET is_deleted = TRUE, updated_at = CURRENT_TIMESTAMP
       WHERE id = $1 AND tenant_id = $2
       RETURNING id
@@ -153,9 +158,10 @@ class CampaignModel {
         COUNT(DISTINCT CASE WHEN cla.status = 'delivered' THEN cla.id END) as total_delivered,
         COUNT(DISTINCT CASE WHEN cla.status = 'connected' THEN cla.id END) as total_connected,
         COUNT(DISTINCT CASE WHEN cla.status = 'replied' THEN cla.id END) as total_replied
-      FROM campaigns c
-      LEFT JOIN campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1
-      LEFT JOIN campaign_lead_activities cla ON cl.id = cla.campaign_lead_id
+      // Per TDD: Use lad_dev schema
+      FROM lad_dev.campaigns c
+      LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1
+      LEFT JOIN lad_dev.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id
       WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
     `;
 
@@ -167,8 +173,9 @@ class CampaignModel {
    * Get running campaigns
    */
   static async getRunningCampaigns(tenantId) {
+    // Per TDD: Use lad_dev schema
     const query = `
-      SELECT * FROM campaigns
+      SELECT * FROM lad_dev.campaigns
       WHERE tenant_id = $1 AND status = 'running' AND is_deleted = FALSE
       ORDER BY created_at DESC
     `;

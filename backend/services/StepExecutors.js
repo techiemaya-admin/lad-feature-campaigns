@@ -12,10 +12,11 @@ const BACKEND_URL = process.env.BACKEND_INTERNAL_URL || process.env.NEXT_PUBLIC_
  * Helper function to get lead data from campaign_leads table
  * Tries lead_data first, falls back to custom_fields if lead_data doesn't exist
  */
+// Per TDD: Use lad_dev schema
 async function getLeadData(campaignLeadId) {
   try {
     const leadDataResult = await pool.query(
-      `SELECT lead_data FROM campaign_leads WHERE id = $1`,
+      `SELECT lead_data, snapshot FROM lad_dev.campaign_leads WHERE id = $1 AND is_deleted = FALSE`,
       [campaignLeadId]
     );
     
@@ -23,31 +24,14 @@ async function getLeadData(campaignLeadId) {
       return null;
     }
     
-    const leadData = typeof leadDataResult.rows[0].lead_data === 'string'
-      ? JSON.parse(leadDataResult.rows[0].lead_data)
-      : leadDataResult.rows[0].lead_data;
+    const row = leadDataResult.rows[0];
+    // Prefer lead_data, fallback to snapshot
+    const leadData = row.lead_data || row.snapshot || {};
     
-    return leadData;
+    return typeof leadData === 'string' ? JSON.parse(leadData) : leadData;
   } catch (err) {
-    // If lead_data column doesn't exist, use custom_fields instead
-    if (err.code === '42703' && err.message.includes('lead_data')) {
-      const leadDataResult = await pool.query(
-        `SELECT custom_fields FROM campaign_leads WHERE id = $1`,
-        [campaignLeadId]
-      );
-      
-      if (leadDataResult.rows.length === 0) {
-        return null;
-      }
-      
-      const leadData = typeof leadDataResult.rows[0].custom_fields === 'string'
-        ? JSON.parse(leadDataResult.rows[0].custom_fields)
-        : leadDataResult.rows[0].custom_fields;
-      
-      return leadData;
-    } else {
-      throw err;
-    }
+    console.error('[StepExecutors] Error getting lead data:', err);
+    throw err;
   }
 }
 
@@ -207,10 +191,10 @@ async function executeDelayStep(stepConfig) {
 async function executeConditionStep(stepConfig, campaignLead) {
   const conditionType = stepConfig.condition || stepConfig.conditionType;
   
-  // Check if condition is met
+  // Per TDD: Use lad_dev schema
   const activitiesResult = await pool.query(
-    `SELECT status FROM campaign_lead_activities 
-     WHERE campaign_lead_id = $1 
+    `SELECT status FROM lad_dev.campaign_lead_activities 
+     WHERE campaign_lead_id = $1 AND is_deleted = FALSE
      ORDER BY created_at DESC LIMIT 10`,
     [campaignLead.id]
   );

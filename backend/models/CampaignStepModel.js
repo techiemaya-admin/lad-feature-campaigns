@@ -19,9 +19,10 @@ class CampaignStepModel {
       config = {}
     } = stepData;
 
+    // Per TDD: Use lad_dev schema, step_type and step_order columns
     const query = `
-      INSERT INTO campaign_steps (
-        tenant_id, campaign_id, type, "order", title, description, config, created_at, updated_at
+      INSERT INTO lad_dev.campaign_steps (
+        tenant_id, campaign_id, step_type, step_order, title, description, config, created_at, updated_at
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       RETURNING *
@@ -45,10 +46,17 @@ class CampaignStepModel {
    * Get steps for a campaign
    */
   static async getStepsByCampaignId(campaignId, tenantId) {
+    // Per TDD: Use lad_dev schema and step_order column, alias for compatibility
     const query = `
-      SELECT * FROM campaign_steps
+      SELECT 
+        id, tenant_id, campaign_id,
+        step_type as type,
+        step_order as "order",
+        title, description, config,
+        is_deleted, created_at, updated_at
+      FROM lad_dev.campaign_steps
       WHERE campaign_id = $1 AND tenant_id = $2
-      ORDER BY "order" ASC
+      ORDER BY step_order ASC
     `;
 
     const result = await pool.query(query, [campaignId, tenantId]);
@@ -59,8 +67,15 @@ class CampaignStepModel {
    * Get step by ID
    */
   static async getById(stepId, tenantId) {
+    // Per TDD: Use lad_dev schema, alias for compatibility
     const query = `
-      SELECT * FROM campaign_steps
+      SELECT 
+        id, tenant_id, campaign_id,
+        step_type as type,
+        step_order as "order",
+        title, description, config,
+        is_deleted, created_at, updated_at
+      FROM lad_dev.campaign_steps
       WHERE id = $1 AND tenant_id = $2
     `;
 
@@ -72,6 +87,15 @@ class CampaignStepModel {
    * Update campaign step
    */
   static async update(stepId, tenantId, updates) {
+    // Per TDD: Map JavaScript field names to database column names
+    const fieldMapping = {
+      'type': 'step_type',
+      'order': 'step_order',
+      'title': 'title',
+      'description': 'description',
+      'config': 'config'
+    };
+    
     const allowedFields = ['type', 'order', 'title', 'description', 'config'];
     const setClause = [];
     const values = [stepId, tenantId];
@@ -79,7 +103,8 @@ class CampaignStepModel {
 
     for (const [key, value] of Object.entries(updates)) {
       if (allowedFields.includes(key)) {
-        setClause.push(`${key} = $${paramIndex++}`);
+        const dbColumn = fieldMapping[key] || key;
+        setClause.push(`${dbColumn} = $${paramIndex++}`);
         values.push(key === 'config' ? JSON.stringify(value) : value);
       }
     }
@@ -90,8 +115,9 @@ class CampaignStepModel {
 
     setClause.push(`updated_at = CURRENT_TIMESTAMP`);
 
+    // Per TDD: Use lad_dev schema
     const query = `
-      UPDATE campaign_steps
+      UPDATE lad_dev.campaign_steps
       SET ${setClause.join(', ')}
       WHERE id = $1 AND tenant_id = $2
       RETURNING *
@@ -105,8 +131,9 @@ class CampaignStepModel {
    * Delete campaign step
    */
   static async delete(stepId, tenantId) {
+    // Per TDD: Use lad_dev schema
     const query = `
-      DELETE FROM campaign_steps
+      DELETE FROM lad_dev.campaign_steps
       WHERE id = $1 AND tenant_id = $2
       RETURNING id
     `;
@@ -119,8 +146,9 @@ class CampaignStepModel {
    * Delete all steps for a campaign
    */
   static async deleteByCampaignId(campaignId, tenantId) {
+    // Per TDD: Use lad_dev schema
     const query = `
-      DELETE FROM campaign_steps
+      DELETE FROM lad_dev.campaign_steps
       WHERE campaign_id = $1 AND tenant_id = $2
       RETURNING id
     `;
@@ -160,9 +188,10 @@ class CampaignStepModel {
 
     paramIndex += steps.length * 7;
 
+    // Per TDD: Use lad_dev schema, step_type and step_order columns
     const query = `
-      INSERT INTO campaign_steps (
-        tenant_id, campaign_id, type, "order", title, description, config
+      INSERT INTO lad_dev.campaign_steps (
+        tenant_id, campaign_id, step_type, step_order, title, description, config
       )
       VALUES ${placeholders.join(', ')}
       RETURNING *

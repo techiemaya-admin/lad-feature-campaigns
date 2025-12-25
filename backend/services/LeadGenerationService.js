@@ -5,11 +5,25 @@
 
 const { pool } = require('../../../shared/database/connection');
 const { searchEmployees } = require('./LeadSearchService');
+const {
+  checkLeadExists,
+  extractLeadFields,
+  createSnapshot,
+  saveLeadToCampaign,
+  updateCampaignConfig,
+  updateStepConfig
+} = require('./LeadGenerationHelpers');
 
 /**
  * Execute lead generation step with daily limit support
+ * @param {string} campaignId - Campaign ID
+ * @param {Object} step - Step object
+ * @param {Object} stepConfig - Step configuration
+ * @param {string} userId - User ID
+ * @param {string} orgId - Organization ID
+ * @param {string} authToken - Optional JWT token for API authentication
  */
-async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId) {
+async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId, authToken = null) {
   try {
     console.log('[Campaign Execution] Executing lead generation...');
     
@@ -23,8 +37,9 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
     let campaignConfig = {};
     let configColumnExists = false;
     try {
+      // Per TDD: Use lad_dev schema
       const campaignResult = await pool.query(
-        `SELECT config FROM campaigns WHERE id = $1`,
+        `SELECT config FROM lad_dev.campaigns WHERE id = $1`,
         [campaignId]
       );
       
@@ -143,15 +158,58 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
     
     console.log(`[Campaign Execution] Daily limit: ${dailyLimit}, Current offset: ${currentOffset}, Page: ${page}, Offset in page: ${offsetInPage}`);
     
-    // Search for employees using LeadSearchService
-    const { employees, fromSource } = await searchEmployees(searchParams, page, offsetInPage, dailyLimit);
+    // Log search parameters for debugging
+    console.log(`[Campaign Execution] Calling LeadSearchService with filters:`, {
+      person_titles: searchParams.person_titles,
+      organization_industries: searchParams.organization_industries,
+      organization_locations: searchParams.organization_locations,
+      page,
+      offsetInPage,
+      dailyLimit
+    });
     
-    console.log(`[Campaign Execution] Total leads to process today: ${employees.length} (from ${fromSource})`);
+    // Search for employees using LeadSearchService
+    console.log(`[Campaign Execution] 🔍 Calling searchEmployees with params:`, JSON.stringify(searchParams, null, 2));
+    console.log(`[Campaign Execution] 🔑 Using auth token: ${authToken ? 'Yes (provided)' : 'No (will try env var)'}`);
+    const searchResult = await searchEmployees(searchParams, page, offsetInPage, dailyLimit, authToken);
+    const { employees, fromSource, error } = searchResult || {};
+    
+    console.log(`[Campaign Execution] 📊 Search result:`, {
+      employeesCount: employees?.length || 0,
+      fromSource: fromSource || 'unknown',
+      hasError: !!error,
+      error: error || 'none'
+    });
+    
+    if (error) {
+      console.error(`[Campaign Execution] ❌ Lead search returned error: ${error}`);
+      console.error(`[Campaign Execution] This likely means Apollo/database endpoints are not available`);
+      console.error(`[Campaign Execution] Backend URL: ${require('./LeadSearchService').BACKEND_URL || 'not set'}`);
+      // Return error so caller knows what happened
+      return {
+        success: false,
+        error: `Lead search failed: ${error}`,
+        leadsFound: 0,
+        leadsSaved: 0,
+        source: 'error'
+      };
+    }
+    
+    if (!employees || employees.length === 0) {
+      console.warn(`[Campaign Execution] ⚠️  No employees found! Possible reasons:`);
+      console.warn(`   - Apollo/database endpoints not available (check backend URL)`);
+      console.warn(`   - No leads match the filters (too specific)`);
+      console.warn(`   - Database is empty`);
+      console.warn(`   - Network/connection issues`);
+      console.warn(`[Campaign Execution] Search params used:`, JSON.stringify(searchParams, null, 2));
+    }
+    
+    const employeesList = employees || [];
       
     // Save leads to campaign_leads table (only the daily limit)
     let savedCount = 0;
     let firstGeneratedLeadId = null; // Track first lead ID for activity creation
-    for (const employee of employees) {
+    for (const employee of employeesList) {
       try {
         // Apollo person IDs are hex strings, not UUIDs, so we can't use them in lead_id column
         // Instead, check if lead exists by querying the lead_data JSONB field
@@ -162,33 +220,12 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
           continue;
         }
         
-        // Check if lead already exists for this campaign by Apollo ID
-        // Try lead_data first, fallback to custom_fields if lead_data doesn't exist
-        let existingLead;
-        try {
-          existingLead = await pool.query(
-            `SELECT id FROM campaign_leads 
-             WHERE campaign_id = $1 AND lead_data->>'apollo_person_id' = $2`,
-            [campaignId, String(apolloPersonId)]
-          );
-        } catch (err) {
-          // If lead_data column doesn't exist, use custom_fields instead
-          if (err.code === '42703' && err.message.includes('lead_data')) {
-            console.log(`[Campaign Execution] lead_data column not found in duplicate check, using custom_fields`);
-            existingLead = await pool.query(
-              `SELECT id FROM campaign_leads 
-               WHERE campaign_id = $1 AND custom_fields->>'apollo_person_id' = $2`,
-              [campaignId, String(apolloPersonId)]
-          );
-          } else {
-            console.error(`[Campaign Execution] Error checking for existing lead:`, err.message);
-            throw err;
-          }
-        }
-          
-          if (existingLead.rows.length === 0) {
+        // Check if lead already exists
+        const existingLead = await checkLeadExists(campaignId, apolloPersonId);
+        
+        if (!existingLead) {
           // Generate a UUID for lead_id (Apollo IDs are hex strings, not UUIDs)
-              const { randomUUID } = require('crypto');
+          const { randomUUID } = require('crypto');
           const leadId = randomUUID();
           
           // Ensure apollo_person_id is stored for future lookups
@@ -197,98 +234,43 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
             apollo_person_id: apolloPersonId
           };
           
-          // Extract individual fields from employee data for database columns
-          const nameParts = (employee.name || employee.employee_name || '').split(' ');
-          const firstName = nameParts[0] || employee.first_name || null;
-          const lastName = nameParts.slice(1).join(' ') || employee.last_name || null;
-          const email = employee.email || employee.employee_email || employee.work_email || null;
-          const linkedinUrl = employee.linkedin_url || employee.employee_linkedin_url || employee.linkedin || null;
-          const companyName = employee.company_name || employee.organization?.name || employee.company?.name || null;
-          const title = employee.title || employee.job_title || employee.employee_title || employee.headline || null;
-          const phone = employee.phone || employee.employee_phone || employee.phone_number || null;
+          // Extract fields and create snapshot
+          const fields = extractLeadFields(employee);
+          const snapshot = createSnapshot(fields);
           
-          // Try inserting with lead_data column, fallback to custom_fields if column doesn't exist
+          // Get tenant_id from campaign
+          const campaignQuery = await pool.query(
+            `SELECT tenant_id FROM lad_dev.campaigns WHERE id = $1 AND is_deleted = FALSE`,
+            [campaignId]
+          );
+          const tenantId = campaignQuery.rows[0]?.tenant_id;
+          
+          if (!tenantId) {
+            throw new Error(`Campaign ${campaignId} not found or missing tenant_id`);
+          }
+          
+          // Save lead to campaign
           try {
-            const insertResult = await pool.query(
-              `INSERT INTO campaign_leads 
-               (campaign_id, lead_id, status, first_name, last_name, email, linkedin_url, company_name, title, phone, lead_data, created_at)
-               VALUES ($1, $2, 'active', $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP)
-               RETURNING id`,
-              [campaignId, leadId, firstName, lastName, email, linkedinUrl, companyName, title, phone, JSON.stringify(leadData)]
-            );
-            const insertedLeadId = insertResult.rows[0].id;
+            const insertedLeadId = await saveLeadToCampaign(campaignId, tenantId, leadId, snapshot, leadData);
             savedCount++;
             // Track first generated lead ID (primary key) for activity creation
             if (!firstGeneratedLeadId) {
               firstGeneratedLeadId = insertedLeadId;
             }
             console.log(`[Campaign Execution] ✅ Successfully saved lead ${apolloPersonId} to campaign (UUID: ${insertedLeadId}, lead_id: ${leadId})`);
-            
-            // Verify the insert worked (using the returned primary key id)
-            const verifyResult = await pool.query(
-              `SELECT id, first_name, last_name, email FROM campaign_leads WHERE id = $1`,
-              [insertedLeadId]
-            );
-            if (verifyResult.rows.length > 0) {
-              console.log(`[Campaign Execution] ✅ Verification: Lead confirmed in database - ${verifyResult.rows[0].first_name} ${verifyResult.rows[0].last_name}`);
-            } else {
-              console.error(`[Campaign Execution] ❌ WARNING: Lead ${insertedLeadId} was not found after INSERT!`);
-            }
           } catch (err) {
-            // If lead_data column doesn't exist, use custom_fields instead
-            if (err.code === '42703' && err.message.includes('lead_data')) {
-              console.log(`[Campaign Execution] lead_data column not found, using custom_fields instead`);
-              try {
-            const insertResult = await pool.query(
-              `INSERT INTO campaign_leads 
-                   (campaign_id, lead_id, status, first_name, last_name, email, linkedin_url, company_name, title, phone, custom_fields, created_at)
-                   VALUES ($1, $2, 'active', $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP)
-                   RETURNING id`,
-                  [campaignId, leadId, firstName, lastName, email, linkedinUrl, companyName, title, phone, JSON.stringify(leadData)]
-                );
-                const insertedLeadId = insertResult.rows[0].id;
-                savedCount++;
-                // Track first generated lead ID (primary key) for activity creation
-                if (!firstGeneratedLeadId) {
-                  firstGeneratedLeadId = insertedLeadId;
-                }
-                console.log(`[Campaign Execution] ✅ Successfully saved lead ${apolloPersonId} to campaign (UUID: ${insertedLeadId}, lead_id: ${leadId}) - using custom_fields`);
-                
-                // Verify the insert worked (using the returned primary key id)
-                const verifyResult = await pool.query(
-                  `SELECT id, first_name, last_name, email FROM campaign_leads WHERE id = $1`,
-                  [insertedLeadId]
-            );
-                if (verifyResult.rows.length > 0) {
-                  console.log(`[Campaign Execution] ✅ Verification: Lead confirmed in database - ${verifyResult.rows[0].first_name} ${verifyResult.rows[0].last_name}`);
-                } else {
-                  console.error(`[Campaign Execution] ❌ WARNING: Lead ${insertedLeadId} was not found after INSERT!`);
-                }
-              } catch (fallbackErr) {
-                console.error(`[Campaign Execution] ❌ Error saving lead with custom_fields:`, {
-                  message: fallbackErr.message,
-                  code: fallbackErr.code,
-                  detail: fallbackErr.detail,
-                  constraint: fallbackErr.constraint
-                });
-                throw fallbackErr;
-              }
-            } else {
-              console.error(`[Campaign Execution] ❌ Error saving lead:`, {
-                message: err.message,
-                code: err.code,
-                detail: err.detail,
-                constraint: err.constraint,
-                column: err.column,
-                table: err.table
-              });
-              throw err;
-            }
+            console.error(`[Campaign Execution] ❌ Error saving lead:`, {
+              message: err.message,
+              code: err.code,
+              detail: err.detail,
+              constraint: err.constraint
+            });
+            throw err;
           }
         } else {
-          console.log(`[Campaign Execution] ⏭️ Skipping lead ${apolloPersonId} - already exists in campaign (existing ID: ${existingLead.rows[0].id})`);
-          }
-        } catch (err) {
+          console.log(`[Campaign Execution] ⏭️ Skipping lead ${apolloPersonId} - already exists in campaign (existing ID: ${existingLead.id})`);
+        }
+      } catch (err) {
         console.error(`[Campaign Execution] ❌ Error processing lead ${apolloPersonId}:`, {
           message: err.message,
           code: err.code,
@@ -308,10 +290,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
     
     // Try to update config column (may not exist in all schemas)
     try {
-      await pool.query(
-        `UPDATE campaigns SET config = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-        [JSON.stringify(updatedConfig), campaignId]
-      );
+      await updateCampaignConfig(campaignId, updatedConfig);
     } catch (updateError) {
       // If config column doesn't exist, store offset in step config as fallback
       console.log('[Campaign Execution] Config column not available, storing offset in step config');
@@ -324,10 +303,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
           leads_per_day: leadsPerDay
         };
         
-        await pool.query(
-          `UPDATE campaign_steps SET config = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-          [JSON.stringify(updatedStepConfig), step.id]
-        );
+        await updateStepConfig(step.id, updatedStepConfig);
         console.log('[Campaign Execution] ✅ Stored offset in step config:', { offset: newOffset, date: today });
       } catch (stepUpdateErr) {
         console.error('[Campaign Execution] Error storing offset in step config:', stepUpdateErr);
@@ -335,8 +311,9 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
       
       // Also update campaign updated_at timestamp
       try {
+        // Per TDD: Use lad_dev schema
         await pool.query(
-          `UPDATE campaigns SET updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+          `UPDATE lad_dev.campaigns SET updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
           [campaignId]
         );
       } catch (err) {
@@ -353,12 +330,22 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
         // Create activity with 'sent' status first (consistent with other steps)
         // The analytics query looks for status='sent' for lead_generation
         const activityStatus = 'sent'; // Always 'sent' for lead generation (represents successful execution)
-        await pool.query(
-          `INSERT INTO campaign_lead_activities 
-           (campaign_lead_id, step_id, step_type, action_type, status, channel, created_at, updated_at)
-           VALUES ($1, $2, 'lead_generation', 'lead_generation', $3, 'campaign', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-          [firstGeneratedLeadId, step.id, activityStatus]
+        // Get tenant_id and campaign_id from the lead
+        const leadInfo = await pool.query(
+          `SELECT tenant_id, campaign_id FROM lad_dev.campaign_leads WHERE id = $1`,
+          [firstGeneratedLeadId]
         );
+        const { tenant_id, campaign_id } = leadInfo.rows[0] || {};
+        
+        if (tenant_id && campaign_id) {
+          // Per TDD: Use lad_dev schema
+          await pool.query(
+            `INSERT INTO lad_dev.campaign_lead_activities 
+             (tenant_id, campaign_id, campaign_lead_id, step_id, step_type, action_type, status, channel, created_at)
+             VALUES ($1, $2, $3, $4, 'lead_generation', 'lead_generation', $5, 'web', CURRENT_TIMESTAMP)`,
+            [tenant_id, campaign_id, firstGeneratedLeadId, step.id, activityStatus]
+          );
+        }
         console.log(`[Campaign Execution] ✅ Created lead generation activity record for ${savedCount} leads`);
       } catch (activityErr) {
         // Don't fail the whole process if activity creation fails
@@ -368,7 +355,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
     
     return { 
       success: true, 
-      leadsFound: employees.length,
+      leadsFound: employeesList.length,
       leadsSaved: savedCount,
       dailyLimit: dailyLimit,
       currentOffset: newOffset,

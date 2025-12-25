@@ -51,3 +51,12 @@ backend/middleware/auth.js
 backend/package.json
 backend/package-lock.json
 backend/node_modules/
+
+# Test files and tokens
+test-*.js
+get-token.js
+.token
+TEST_INSTRUCTIONS.md
+
+# Ignore local auth middleware changes
+backend/features/<feature-key>/middleware/auth.js
