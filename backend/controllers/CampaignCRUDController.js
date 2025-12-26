@@ -62,10 +62,12 @@ class CampaignCRUDController {
       });
     } catch (error) {
       console.error('[Campaign CRUD] Error listing campaigns:', error);
+      console.error('[Campaign CRUD] Error stack:', error.stack);
       res.status(500).json({
         success: false,
         error: 'Failed to list campaigns',
-        message: error.message
+        message: error.message,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
       });
     }
   }
@@ -110,10 +112,12 @@ class CampaignCRUDController {
       });
     } catch (error) {
       console.error('[Campaign CRUD] Error getting stats:', error);
+      console.error('[Campaign CRUD] Error stack:', error.stack);
       res.status(500).json({
         success: false,
         error: 'Failed to get campaign stats',
-        message: error.message
+        message: error.message,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
       });
     }
   }
@@ -162,12 +166,29 @@ class CampaignCRUDController {
    */
   static async createCampaign(req, res) {
     try {
-      const tenantId = req.user.tenantId;
-      const userId = req.user.userId || req.user.user_id || req.user.id;
+      const tenantId = req.user?.tenantId || req.user?.organization_id;
+      const userId = req.user?.userId || req.user?.user_id || req.user?.id;
       
       console.log('[Campaign CRUD] Creating campaign for user:', userId, 'tenant:', tenantId);
+      console.log('[Campaign CRUD] Request body:', JSON.stringify(req.body, null, 2));
+      console.log('[Campaign CRUD] User object:', JSON.stringify(req.user, null, 2));
       
-      const { name, status, config, steps, campaign_type } = req.body;
+      // Validate authentication
+      if (!tenantId) {
+        return res.status(401).json({
+          success: false,
+          error: 'Tenant ID is required. Please ensure you are authenticated.'
+        });
+      }
+      
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          error: 'User ID is required. Please ensure you are authenticated.'
+        });
+      }
+      
+      const { name, status, config, steps, campaign_type, leads_per_day } = req.body;
 
       // Validate required fields
       if (!name) {
@@ -181,6 +202,11 @@ class CampaignCRUDController {
       const campaignConfig = config || {};
       if (campaign_type) {
         campaignConfig.campaign_type = campaign_type;
+      }
+      
+      // Merge leads_per_day from top level if provided (for backwards compatibility)
+      if (leads_per_day !== undefined) {
+        campaignConfig.leads_per_day = leads_per_day;
       }
 
       // Create campaign

@@ -22,7 +22,7 @@ class CampaignModel {
       INSERT INTO lad_dev.campaigns (
         tenant_id, name, status, created_by_user_id, config, created_at, updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      VALUES ($1, $2, $3, $4, $5::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       RETURNING *
     `;
 
@@ -34,8 +34,76 @@ class CampaignModel {
       JSON.stringify(config)
     ];
 
-    const result = await pool.query(query, values);
-    return result.rows[0];
+    try {
+      const result = await pool.query(query, values);
+      return result.rows[0];
+    } catch (error) {
+      const errorMsg = error.message?.toLowerCase() || '';
+      
+      // If created_by_user_id column doesn't exist, try created_by
+      if (errorMsg.includes('created_by_user_id') && errorMsg.includes('does not exist')) {
+        console.warn('[CampaignModel] created_by_user_id column not found, trying created_by:', error.message);
+        try {
+          const fallbackQuery = `
+            INSERT INTO lad_dev.campaigns (
+              tenant_id, name, status, created_by, config, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            RETURNING *
+          `;
+          const result = await pool.query(fallbackQuery, values);
+          return result.rows[0];
+        } catch (fallbackError) {
+          // If config column also doesn't exist, try without config
+          if (fallbackError.message && (fallbackError.message.includes('column "config"') || fallbackError.message.includes('jsonb'))) {
+            console.warn('[CampaignModel] Config column also not found, trying without config:', fallbackError.message);
+            const simpleQuery = `
+              INSERT INTO lad_dev.campaigns (
+                tenant_id, name, status, created_by, created_at, updated_at
+              )
+              VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+              RETURNING *
+            `;
+            const simpleValues = [tenantId, name, status, createdBy];
+            const result = await pool.query(simpleQuery, simpleValues);
+            return result.rows[0];
+          }
+          throw fallbackError;
+        }
+      }
+      
+      // If config column doesn't exist or there's a JSONB casting issue, try without config
+      if (errorMsg.includes('column "config"') || errorMsg.includes('jsonb')) {
+        console.warn('[CampaignModel] Config column issue, trying insert without config:', error.message);
+        const fallbackQuery = `
+          INSERT INTO lad_dev.campaigns (
+            tenant_id, name, status, created_by_user_id, created_at, updated_at
+          )
+          VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          RETURNING *
+        `;
+        const fallbackValues = [tenantId, name, status, createdBy];
+        try {
+          const result = await pool.query(fallbackQuery, fallbackValues);
+          return result.rows[0];
+        } catch (fallbackError2) {
+          // Try with created_by instead
+          if (fallbackError2.message && fallbackError2.message.includes('created_by_user_id')) {
+            const simpleQuery = `
+              INSERT INTO lad_dev.campaigns (
+                tenant_id, name, status, created_by, created_at, updated_at
+              )
+              VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+              RETURNING *
+            `;
+            const result = await pool.query(simpleQuery, fallbackValues);
+            return result.rows[0];
+          }
+          throw fallbackError2;
+        }
+      }
+      throw error;
+    }
   }
 
   /**
@@ -68,10 +136,9 @@ class CampaignModel {
         COUNT(DISTINCT CASE WHEN cla.status = 'replied' THEN cla.id END) as replied_count,
         COUNT(DISTINCT CASE WHEN cla.status = 'opened' THEN cla.id END) as opened_count,
         COUNT(DISTINCT CASE WHEN cla.status = 'clicked' THEN cla.id END) as clicked_count
-      // Per TDD: Use lad_dev schema
       FROM lad_dev.campaigns c
-      LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1
-      LEFT JOIN lad_dev.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id
+      LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND cl.is_deleted = FALSE
+      LEFT JOIN lad_dev.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id AND cla.tenant_id = $1
       WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
     `;
 
@@ -91,8 +158,50 @@ class CampaignModel {
     query += ` GROUP BY c.id ORDER BY c.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
     params.push(limit, offset);
 
-    const result = await pool.query(query, params);
-    return result.rows;
+    try {
+      const result = await pool.query(query, params);
+      return result.rows;
+    } catch (error) {
+      // If activities table doesn't exist, fallback to simpler query
+      const errorMsg = error.message?.toLowerCase() || '';
+      if (errorMsg.includes('campaign_lead_activities') || errorMsg.includes('does not exist') || errorMsg.includes('relation') || errorMsg.includes('undefined table')) {
+        console.warn('[CampaignModel] Activities table not available, using simplified query:', error.message);
+        let fallbackQuery = `
+          SELECT 
+            c.*,
+            COUNT(DISTINCT cl.id) as leads_count,
+            0 as sent_count,
+            0 as delivered_count,
+            0 as connected_count,
+            0 as replied_count,
+            0 as opened_count,
+            0 as clicked_count
+          FROM lad_dev.campaigns c
+          LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND cl.is_deleted = FALSE
+          WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
+        `;
+        
+        const fallbackParams = [tenantId];
+        let fallbackParamIndex = 2;
+        
+        if (status && status !== 'all') {
+          fallbackQuery += ` AND c.status = $${fallbackParamIndex++}`;
+          fallbackParams.push(status);
+        }
+        
+        if (search) {
+          fallbackQuery += ` AND c.name ILIKE $${fallbackParamIndex++}`;
+          fallbackParams.push(`%${search}%`);
+        }
+        
+        fallbackQuery += ` GROUP BY c.id ORDER BY c.created_at DESC LIMIT $${fallbackParamIndex++} OFFSET $${fallbackParamIndex++}`;
+        fallbackParams.push(limit, offset);
+        
+        const result = await pool.query(fallbackQuery, fallbackParams);
+        return result.rows;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -106,8 +215,13 @@ class CampaignModel {
 
     for (const [key, value] of Object.entries(updates)) {
       if (allowedFields.includes(key)) {
-        setClause.push(`${key} = $${paramIndex++}`);
-        values.push(key === 'config' ? JSON.stringify(value) : value);
+        if (key === 'config') {
+          setClause.push(`${key} = $${paramIndex++}::jsonb`);
+          values.push(JSON.stringify(value));
+        } else {
+          setClause.push(`${key} = $${paramIndex++}`);
+          values.push(value);
+        }
       }
     }
 
@@ -158,15 +272,38 @@ class CampaignModel {
         COUNT(DISTINCT CASE WHEN cla.status = 'delivered' THEN cla.id END) as total_delivered,
         COUNT(DISTINCT CASE WHEN cla.status = 'connected' THEN cla.id END) as total_connected,
         COUNT(DISTINCT CASE WHEN cla.status = 'replied' THEN cla.id END) as total_replied
-      // Per TDD: Use lad_dev schema
       FROM lad_dev.campaigns c
-      LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1
-      LEFT JOIN lad_dev.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id
+      LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND cl.is_deleted = FALSE
+      LEFT JOIN lad_dev.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id AND cla.tenant_id = $1
       WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
     `;
 
-    const result = await pool.query(query, [tenantId]);
-    return result.rows[0];
+    try {
+      const result = await pool.query(query, [tenantId]);
+      return result.rows[0];
+    } catch (error) {
+      // If activities table doesn't exist, fallback to simpler query
+      const errorMsg = error.message?.toLowerCase() || '';
+      if (errorMsg.includes('campaign_lead_activities') || errorMsg.includes('does not exist') || errorMsg.includes('relation') || errorMsg.includes('undefined table')) {
+        console.warn('[CampaignModel] Activities table not available for stats, using simplified query:', error.message);
+        const fallbackQuery = `
+          SELECT
+            COUNT(DISTINCT c.id) as total_campaigns,
+            COUNT(DISTINCT CASE WHEN c.status = 'running' THEN c.id END) as active_campaigns,
+            COUNT(DISTINCT cl.id) as total_leads,
+            0 as total_sent,
+            0 as total_delivered,
+            0 as total_connected,
+            0 as total_replied
+          FROM lad_dev.campaigns c
+          LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND cl.is_deleted = FALSE
+          WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
+        `;
+        const result = await pool.query(fallbackQuery, [tenantId]);
+        return result.rows[0];
+      }
+      throw error;
+    }
   }
 
   /**
