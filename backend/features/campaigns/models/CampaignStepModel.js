@@ -3,7 +3,7 @@
  * Handles database operations for campaign steps (workflow builder)
  */
 
-const { pool } = require('../../../shared/database/connection');
+const { pool } = require('../../../../shared/database/connection');
 
 class CampaignStepModel {
   /**
@@ -47,7 +47,8 @@ class CampaignStepModel {
    */
   static async getStepsByCampaignId(campaignId, tenantId) {
     // Per TDD: Use lad_dev schema and step_order column, alias for compatibility
-    const query = `
+    // Try with step_type/step_order first, fallback to type/order if columns don't exist
+    let query = `
       SELECT 
         id, tenant_id, campaign_id,
         step_type as type,
@@ -59,8 +60,90 @@ class CampaignStepModel {
       ORDER BY step_order ASC
     `;
 
-    const result = await pool.query(query, [campaignId, tenantId]);
-    return result.rows;
+    try {
+      const result = await pool.query(query, [campaignId, tenantId]);
+      return result.rows;
+    } catch (error) {
+      const errorMsg = error.message?.toLowerCase() || '';
+      // If step_type or step_order columns don't exist, try with type and order
+      if (errorMsg.includes('column "step_type"') || errorMsg.includes('column "step_order"')) {
+        console.warn('[CampaignStepModel] step_type/step_order columns not found, trying type/order:', error.message);
+        query = `
+          SELECT 
+            id, tenant_id, campaign_id,
+            type,
+            "order",
+            title, description, config,
+            is_deleted, created_at, updated_at
+          FROM lad_dev.campaign_steps
+          WHERE campaign_id = $1 AND tenant_id = $2
+          ORDER BY "order" ASC
+        `;
+        try {
+          const result = await pool.query(query, [campaignId, tenantId]);
+          return result.rows;
+        } catch (fallbackError) {
+          const fallbackErrorMsg = fallbackError.message?.toLowerCase() || '';
+          // If is_deleted column also doesn't exist, try without it
+          if (fallbackErrorMsg.includes('column "is_deleted"')) {
+            console.warn('[CampaignStepModel] is_deleted column not found, trying without it:', fallbackError.message);
+            query = `
+              SELECT 
+                id, tenant_id, campaign_id,
+                type,
+                "order",
+                title, description, config,
+                created_at, updated_at
+              FROM lad_dev.campaign_steps
+              WHERE campaign_id = $1 AND tenant_id = $2
+              ORDER BY "order" ASC
+            `;
+            const result = await pool.query(query, [campaignId, tenantId]);
+            return result.rows;
+          }
+          throw fallbackError;
+        }
+      } else if (errorMsg.includes('column "is_deleted"')) {
+        // If only is_deleted is missing, try without it but keep step_type/step_order
+        console.warn('[CampaignStepModel] is_deleted column not found, trying without it:', error.message);
+        query = `
+          SELECT 
+            id, tenant_id, campaign_id,
+            step_type as type,
+            step_order as "order",
+            title, description, config,
+            created_at, updated_at
+          FROM lad_dev.campaign_steps
+          WHERE campaign_id = $1 AND tenant_id = $2
+          ORDER BY step_order ASC
+        `;
+        try {
+          const result = await pool.query(query, [campaignId, tenantId]);
+          return result.rows;
+        } catch (fallbackError) {
+          const fallbackErrorMsg = fallbackError.message?.toLowerCase() || '';
+          // If step_type/step_order also don't exist, try with type/order
+          if (fallbackErrorMsg.includes('column "step_type"') || fallbackErrorMsg.includes('column "step_order"')) {
+            console.warn('[CampaignStepModel] step_type/step_order also not found, trying type/order:', fallbackError.message);
+            query = `
+              SELECT 
+                id, tenant_id, campaign_id,
+                type,
+                "order",
+                title, description, config,
+                created_at, updated_at
+              FROM lad_dev.campaign_steps
+              WHERE campaign_id = $1 AND tenant_id = $2
+              ORDER BY "order" ASC
+            `;
+            const result = await pool.query(query, [campaignId, tenantId]);
+            return result.rows;
+          }
+          throw fallbackError;
+        }
+      }
+      throw error;
+    }
   }
 
   /**
@@ -68,7 +151,8 @@ class CampaignStepModel {
    */
   static async getById(stepId, tenantId) {
     // Per TDD: Use lad_dev schema, alias for compatibility
-    const query = `
+    // Try with step_type/step_order first, fallback to type/order if columns don't exist
+    let query = `
       SELECT 
         id, tenant_id, campaign_id,
         step_type as type,
@@ -79,8 +163,86 @@ class CampaignStepModel {
       WHERE id = $1 AND tenant_id = $2
     `;
 
-    const result = await pool.query(query, [stepId, tenantId]);
-    return result.rows[0];
+    try {
+      const result = await pool.query(query, [stepId, tenantId]);
+      return result.rows[0];
+    } catch (error) {
+      const errorMsg = error.message?.toLowerCase() || '';
+      // If step_type or step_order columns don't exist, try with type and order
+      if (errorMsg.includes('column "step_type"') || errorMsg.includes('column "step_order"')) {
+        console.warn('[CampaignStepModel] step_type/step_order columns not found, trying type/order:', error.message);
+        query = `
+          SELECT 
+            id, tenant_id, campaign_id,
+            type,
+            "order",
+            title, description, config,
+            is_deleted, created_at, updated_at
+          FROM lad_dev.campaign_steps
+          WHERE id = $1 AND tenant_id = $2
+        `;
+        try {
+          const result = await pool.query(query, [stepId, tenantId]);
+          return result.rows[0];
+        } catch (fallbackError) {
+          const fallbackErrorMsg = fallbackError.message?.toLowerCase() || '';
+          // If is_deleted column also doesn't exist, try without it
+          if (fallbackErrorMsg.includes('column "is_deleted"')) {
+            console.warn('[CampaignStepModel] is_deleted column not found, trying without it:', fallbackError.message);
+            query = `
+              SELECT 
+                id, tenant_id, campaign_id,
+                type,
+                "order",
+                title, description, config,
+                created_at, updated_at
+              FROM lad_dev.campaign_steps
+              WHERE id = $1 AND tenant_id = $2
+            `;
+            const result = await pool.query(query, [stepId, tenantId]);
+            return result.rows[0];
+          }
+          throw fallbackError;
+        }
+      } else if (errorMsg.includes('column "is_deleted"')) {
+        // If only is_deleted is missing, try without it but keep step_type/step_order
+        console.warn('[CampaignStepModel] is_deleted column not found, trying without it:', error.message);
+        query = `
+          SELECT 
+            id, tenant_id, campaign_id,
+            step_type as type,
+            step_order as "order",
+            title, description, config,
+            created_at, updated_at
+          FROM lad_dev.campaign_steps
+          WHERE id = $1 AND tenant_id = $2
+        `;
+        try {
+          const result = await pool.query(query, [stepId, tenantId]);
+          return result.rows[0];
+        } catch (fallbackError) {
+          const fallbackErrorMsg = fallbackError.message?.toLowerCase() || '';
+          // If step_type/step_order also don't exist, try with type/order
+          if (fallbackErrorMsg.includes('column "step_type"') || fallbackErrorMsg.includes('column "step_order"')) {
+            console.warn('[CampaignStepModel] step_type/step_order also not found, trying type/order:', fallbackError.message);
+            query = `
+              SELECT 
+                id, tenant_id, campaign_id,
+                type,
+                "order",
+                title, description, config,
+                created_at, updated_at
+              FROM lad_dev.campaign_steps
+              WHERE id = $1 AND tenant_id = $2
+            `;
+            const result = await pool.query(query, [stepId, tenantId]);
+            return result.rows[0];
+          }
+          throw fallbackError;
+        }
+      }
+      throw error;
+    }
   }
 
   /**
@@ -189,6 +351,7 @@ class CampaignStepModel {
     paramIndex += steps.length * 7;
 
     // Per TDD: Use lad_dev schema, step_type and step_order columns
+    // Try with step_type and step_order first, fallback to type and order if columns don't exist
     const query = `
       INSERT INTO lad_dev.campaign_steps (
         tenant_id, campaign_id, step_type, step_order, title, description, config
@@ -197,8 +360,91 @@ class CampaignStepModel {
       RETURNING *
     `;
 
-    const result = await pool.query(query, values);
-    return result.rows;
+    try {
+      const result = await pool.query(query, values);
+      return result.rows;
+    } catch (error) {
+      const errorMsg = error.message?.toLowerCase() || '';
+      
+      // If step_type or step_order columns don't exist, try with type and order
+      if (errorMsg.includes('column "step_type"') || errorMsg.includes('column "step_order"')) {
+        console.warn('[CampaignStepModel] step_type/step_order columns not found, trying type/order:', error.message);
+        
+        // Rebuild placeholders and values for type/order columns
+        const fallbackValues = [];
+        const fallbackPlaceholders = [];
+        let fallbackParamIndex = 1;
+        
+        steps.forEach((step, index) => {
+          const offset = index * 7;
+          fallbackPlaceholders.push(
+            `($${fallbackParamIndex + offset}, $${fallbackParamIndex + offset + 1}, $${fallbackParamIndex + offset + 2}, $${fallbackParamIndex + offset + 3}, $${fallbackParamIndex + offset + 4}, $${fallbackParamIndex + offset + 5}, $${fallbackParamIndex + offset + 6})`
+          );
+          
+          fallbackValues.push(
+            tenantId,
+            campaignId,
+            step.type,
+            step.order,
+            step.title,
+            step.description || '',
+            JSON.stringify(step.config || {})
+          );
+        });
+        
+        const fallbackQuery = `
+          INSERT INTO lad_dev.campaign_steps (
+            tenant_id, campaign_id, type, "order", title, description, config
+          )
+          VALUES ${fallbackPlaceholders.join(', ')}
+          RETURNING *
+        `;
+        
+        try {
+          const result = await pool.query(fallbackQuery, fallbackValues);
+          return result.rows;
+        } catch (fallbackError) {
+          // If config column also doesn't exist, try without it
+          if (fallbackError.message && (fallbackError.message.includes('column "config"') || fallbackError.message.includes('jsonb'))) {
+            console.warn('[CampaignStepModel] Config column also not found, trying without config:', fallbackError.message);
+            
+            const simpleValues = [];
+            const simplePlaceholders = [];
+            let simpleParamIndex = 1;
+            
+            steps.forEach((step, index) => {
+              const offset = index * 6;
+              simplePlaceholders.push(
+                `($${simpleParamIndex + offset}, $${simpleParamIndex + offset + 1}, $${simpleParamIndex + offset + 2}, $${simpleParamIndex + offset + 3}, $${simpleParamIndex + offset + 4}, $${simpleParamIndex + offset + 5})`
+              );
+              
+              simpleValues.push(
+                tenantId,
+                campaignId,
+                step.type,
+                step.order,
+                step.title,
+                step.description || ''
+              );
+            });
+            
+            const simpleQuery = `
+              INSERT INTO lad_dev.campaign_steps (
+                tenant_id, campaign_id, type, "order", title, description
+              )
+              VALUES ${simplePlaceholders.join(', ')}
+              RETURNING *
+            `;
+            
+            const result = await pool.query(simpleQuery, simpleValues);
+            return result.rows;
+          }
+          throw fallbackError;
+        }
+      }
+      
+      throw error;
+    }
   }
 }
 

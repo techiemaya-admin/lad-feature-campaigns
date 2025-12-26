@@ -5,6 +5,7 @@
 
 const CampaignModel = require('../models/CampaignModel');
 const CampaignStepModel = require('../models/CampaignStepModel');
+const CampaignExecutionService = require('../services/CampaignExecutionService');
 
 class CampaignCRUDController {
   /**
@@ -209,10 +210,15 @@ class CampaignCRUDController {
         campaignConfig.leads_per_day = leads_per_day;
       }
 
+      // Map frontend status 'active' to database status 'running'
+      // Frontend uses: draft, active, paused, completed, stopped
+      // Database uses: draft, running, paused, completed, stopped
+      const dbStatus = status === 'active' ? 'running' : (status || 'draft');
+      
       // Create campaign
       const campaign = await CampaignModel.create({
         name,
-        status: status || 'draft',
+        status: dbStatus,
         createdBy: userId,
         config: campaignConfig
       }, tenantId);
@@ -221,6 +227,38 @@ class CampaignCRUDController {
       let createdSteps = [];
       if (steps && Array.isArray(steps) && steps.length > 0) {
         createdSteps = await CampaignStepModel.bulkCreate(campaign.id, tenantId, steps);
+      }
+
+      // If campaign is created with status='running' (mapped from 'active'), trigger immediate lead generation
+      // This ensures leads are scraped right away when campaign is created and started
+      if (campaign.status === 'running' || status === 'active') {
+        console.log(`[Campaign CRUD] 🚀 Campaign created with status='running', triggering immediate lead generation`);
+        console.log(`[Campaign CRUD] Campaign ID: ${campaign.id}, Tenant: ${tenantId}`);
+        
+        // Set execution_state to active for immediate processing
+        try {
+          await CampaignModel.updateExecutionState(campaign.id, 'active', {
+            lastExecutionReason: 'Campaign created and started immediately'
+          });
+        } catch (stateError) {
+          // If execution_state columns don't exist, continue anyway
+          console.warn('[Campaign CRUD] Could not set execution state:', stateError.message);
+        }
+        
+        // Extract auth token from request headers
+        const authToken = req.headers.authorization 
+          ? req.headers.authorization.replace('Bearer ', '').trim()
+          : null;
+        
+        // Trigger campaign execution immediately (fire and forget)
+        CampaignExecutionService.processCampaign(campaign.id, tenantId, authToken)
+          .then(() => {
+            console.log(`[Campaign CRUD] ✅ Immediate lead generation completed for campaign ${campaign.id}`);
+          })
+          .catch(err => {
+            console.error(`[Campaign CRUD] ❌ Error in immediate lead generation for campaign ${campaign.id}:`, err.message);
+            // Don't fail the creation - campaign is created, just log the error
+          });
       }
 
       res.status(201).json({

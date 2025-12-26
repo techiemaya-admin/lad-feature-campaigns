@@ -7,7 +7,7 @@ const express = require('express');
 const router = express.Router();
 const CampaignController = require('../controllers/CampaignController');
 const linkedInRoutes = require('./linkedin');
-const { authenticateToken: jwtAuth } = require('../../../core/middleware/auth');
+const { authenticateToken: jwtAuth } = require('../../../../core/middleware/auth');
 const {
   validateCampaignCreation,
   validateCampaignUpdate,
@@ -30,6 +30,8 @@ router.delete('/:id', jwtAuth, validateUuidParam('id'), CampaignController.delet
 // Campaign leads
 router.get('/:id/leads', jwtAuth, validateUuidParam('id'), validatePagination, CampaignController.getCampaignLeads);
 router.post('/:id/leads', jwtAuth, validateUuidParam('id'), validateLeadIds, CampaignController.addLeadsToCampaign);
+router.get('/:id/leads/:leadId/summary', jwtAuth, validateUuidParam('id'), validateUuidParam('leadId'), CampaignController.getLeadSummary);
+router.post('/:id/leads/:leadId/summary', jwtAuth, validateUuidParam('id'), validateUuidParam('leadId'), CampaignController.generateLeadSummary);
 
 // Campaign analytics
 router.get('/:id/analytics', jwtAuth, validateUuidParam('id'), CampaignController.getCampaignAnalytics);

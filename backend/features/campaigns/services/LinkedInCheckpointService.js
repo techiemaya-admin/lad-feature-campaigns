@@ -1,79 +1,46 @@
 /**
  * LinkedIn Checkpoint Service
- * Handles checkpoint solving and OTP verification
+ * Handles checkpoint detection and processing for LinkedIn OAuth
  */
 
-const UnipileBaseService = require('./UnipileBaseService');
-const axios = require('axios');
+const { extractCheckpointInfo } = require('./LinkedInProfileHelper');
 
-class LinkedInCheckpointService {
-  constructor() {
-    this.baseService = new UnipileBaseService();
+/**
+ * Handle checkpoint response from Unipile SDK
+ */
+async function handleCheckpointResponse(account, unipile, email = null) {
+  if (!account || account.object !== 'Checkpoint' || !account.checkpoint) {
+    return null;
   }
-
-  /**
-   * Solve checkpoint (Yes/No validation)
-   * @param {string} unipileAccountId - Unipile account ID
-   * @param {string} answer - YES or NO
-   * @param {string} checkpointType - Checkpoint type
-   * @returns {Object} Result
-   */
-  async solveCheckpoint(unipileAccountId, answer, checkpointType = 'IN_APP_VALIDATION') {
-    try {
-      if (!this.baseService.isConfigured()) {
-        throw new Error('Unipile is not configured');
-      }
-
-      const baseUrl = this.baseService.getBaseUrl();
-      const headers = this.baseService.getAuthHeaders();
-
-      const response = await axios.post(
-        `${baseUrl}/accounts/${unipileAccountId}/solve-checkpoint`,
-        {
-          type: checkpointType,
-          answer: answer
-        },
-        { headers, timeout: 30000 }
-      );
-
-      return response.data;
-    } catch (error) {
-      console.error('[LinkedIn Checkpoint] Error solving checkpoint:', error);
-      throw error;
-    }
+  
+  // Extract account ID from checkpoint response
+  const accountId = account.account_id || account.id || account._id;
+  
+  if (!accountId) {
+    throw new Error('LinkedIn requires verification, but no account ID was returned.');
   }
-
-  /**
-   * Verify OTP for checkpoint
-   * @param {string} unipileAccountId - Unipile account ID
-   * @param {string} otp - OTP code
-   * @returns {Object} Result
-   */
-  async verifyOTP(unipileAccountId, otp) {
-    try {
-      if (!this.baseService.isConfigured()) {
-        throw new Error('Unipile is not configured');
-      }
-
-      const baseUrl = this.baseService.getBaseUrl();
-      const headers = this.baseService.getAuthHeaders();
-
-      const response = await axios.post(
-        `${baseUrl}/accounts/${unipileAccountId}/solve-checkpoint`,
-        {
-          type: 'OTP',
-          code: otp
-        },
-        { headers, timeout: 30000 }
-      );
-
-      return response.data;
-    } catch (error) {
-      console.error('[LinkedIn Checkpoint] Error verifying OTP:', error);
-      throw error;
-    }
+  
+  console.log('[LinkedIn Checkpoint] ⚠️ Checkpoint required:', account.checkpoint.type);
+  
+  // Extract checkpoint information
+  const checkpointInfo = await extractCheckpointInfo(account, unipile, accountId);
+  
+  if (!checkpointInfo) {
+    throw new Error('Failed to extract checkpoint information');
   }
+  
+  // Add email and profileName if provided
+  if (email) {
+    checkpointInfo.email = email;
+    checkpointInfo.profileName = email.split('@')[0];
+  } else if (account.profile_name) {
+    checkpointInfo.profileName = account.profile_name;
+    checkpointInfo.email = account.email || null;
+  }
+  
+  return checkpointInfo;
 }
 
-module.exports = new LinkedInCheckpointService();
-
+module.exports = {
+  handleCheckpointResponse
+};

@@ -3,9 +3,21 @@
  * Handles OAuth flow and account connection
  */
 
-const { pool } = require('../../../shared/database/connection');
+const { pool } = require('../../../../shared/database/connection');
 const UnipileBaseService = require('./UnipileBaseService');
 const axios = require('axios');
+const { extractLinkedInProfileUrl } = require('./LinkedInProfileHelper');
+const { handleCheckpointResponse } = require('./LinkedInCheckpointService');
+
+// Try to load Unipile SDK (optional dependency)
+let UnipileClient = null;
+try {
+  UnipileClient = require('unipile-node-sdk').UnipileClient;
+  console.log('[LinkedIn OAuth] ✅ Unipile SDK loaded successfully');
+} catch (sdkError) {
+  console.warn('[LinkedIn OAuth] ⚠️ Unipile SDK not available:', sdkError.message);
+  console.warn('[LinkedIn OAuth] Install with: npm install unipile-node-sdk');
+}
 
 class LinkedInOAuthService {
   constructor() {
@@ -167,6 +179,7 @@ class LinkedInOAuthService {
 
   /**
    * Connect account with credentials or cookies
+   * Uses Unipile SDK (like pluto_campaigns) instead of direct HTTP API
    * @param {Object} params - Connection parameters
    * @returns {Object} Result
    */
@@ -176,29 +189,130 @@ class LinkedInOAuthService {
         throw new Error('Unipile is not configured');
       }
 
-      const baseUrl = this.baseService.getBaseUrl();
-      const headers = this.baseService.getAuthHeaders();
-
       const { method, email, password, li_at, li_a, user_agent } = params;
 
-      let payload = {};
-      if (method === 'credentials') {
-        payload = { username: email, password };
-      } else if (method === 'cookies') {
-        payload = { li_at, li_a, user_agent };
-      } else {
+      if (!method || (method !== 'credentials' && method !== 'cookies')) {
         throw new Error('Invalid method. Must be "credentials" or "cookies"');
       }
 
-      const response = await axios.post(
-        `${baseUrl}/accounts/linkedin/connect`,
-        payload,
-        { headers, timeout: 60000 }
-      );
+      // Get base URL and prepare SDK base URL (SDK expects URL without /api/v1)
+      const baseUrl = this.baseService.getBaseUrl();
+      let sdkBaseUrl = baseUrl;
+      if (sdkBaseUrl.endsWith('/api/v1')) {
+        sdkBaseUrl = sdkBaseUrl.replace(/\/api\/v1$/, '');
+      } else if (sdkBaseUrl.endsWith('/api/v1/')) {
+        sdkBaseUrl = sdkBaseUrl.replace(/\/api\/v1\/$/, '');
+      }
 
-      return response.data;
+      console.log('[LinkedIn OAuth] Using Unipile SDK for connection');
+      console.log('[LinkedIn OAuth] SDK Base URL:', sdkBaseUrl);
+
+      // Try SDK first (preferred method like pluto_campaigns)
+      if (UnipileClient) {
+        try {
+          // Get token from baseService or environment
+          const token = (this.baseService.dsn && this.baseService.token) 
+            ? this.baseService.token.trim() 
+            : (process.env.UNIPILE_TOKEN || '').trim();
+          
+          if (!token) {
+            throw new Error('UNIPILE_TOKEN is not configured');
+          }
+          
+          console.log('[LinkedIn OAuth] Initializing Unipile SDK with token (length:', token.length, ')');
+          const unipile = new UnipileClient(sdkBaseUrl, token);
+          
+          if (method === 'credentials') {
+            if (!email || !password) {
+              throw new Error('Email and password are required for credentials method');
+            }
+
+            console.log('[LinkedIn OAuth] Connecting via SDK with credentials...');
+            const account = await unipile.account.connectLinkedin({
+              username: email,
+              password: password
+            });
+
+            // Check if response is a checkpoint (OTP/2FA required)
+            if (account && account.object === 'Checkpoint' && account.checkpoint) {
+              return await handleCheckpointResponse(account, unipile, email);
+            }
+
+            console.log('[LinkedIn OAuth] ✅ SDK connection successful');
+            return account;
+          } else if (method === 'cookies') {
+            if (!li_at) {
+              throw new Error('li_at cookie is required for cookies method');
+            }
+
+            console.log('[LinkedIn OAuth] Connecting via SDK with cookies...');
+            const account = await unipile.account.connectLinkedin({
+              cookies: {
+                li_at: li_at,
+                li_a: li_a || undefined
+              },
+              user_agent: user_agent || 'your-app/1.0'
+            });
+
+            // Check if response is a checkpoint (OTP/2FA required) - same logic as credentials
+            if (account && account.object === 'Checkpoint' && account.checkpoint) {
+              return await handleCheckpointResponse(account, unipile, account.email);
+            }
+
+            console.log('[LinkedIn OAuth] ✅ SDK cookie connection successful');
+            return account;
+          }
+        } catch (sdkError) {
+          console.error('[LinkedIn OAuth] SDK connection failed:', sdkError.message);
+          // Fall through to HTTP fallback
+          throw sdkError;
+        }
+      } else {
+        // SDK not available, try HTTP API (fallback)
+        console.warn('[LinkedIn OAuth] ⚠️ Unipile SDK not available, using HTTP API fallback');
+        const headers = this.baseService.getAuthHeaders();
+
+        let payload = {};
+        if (method === 'credentials') {
+          payload = { username: email, password };
+        } else if (method === 'cookies') {
+          payload = { 
+            provider: 'LINKEDIN',
+            cookies: {
+              li_at: li_at,
+              li_a: li_a || undefined
+            },
+            user_agent: user_agent || 'your-app/1.0'
+          };
+        }
+
+        try {
+          const response = await axios.post(
+            `${baseUrl}/accounts`,
+            payload,
+            { headers, timeout: 60000 }
+          );
+
+          return response.data;
+        } catch (apiError) {
+          // Handle 404 - endpoint doesn't exist
+          if (apiError.response?.status === 404) {
+            console.warn('[LinkedIn OAuth] ⚠️ Unipile endpoint not found (404)');
+            throw new Error(
+              'LinkedIn connection endpoint not found. Please install unipile-node-sdk: npm install unipile-node-sdk'
+            );
+          }
+          
+          // Re-throw other errors
+          throw apiError;
+        }
+      }
     } catch (error) {
-      console.error('[LinkedIn OAuth] Error connecting account:', error);
+      console.error('[LinkedIn OAuth] Error connecting account:', error.message);
+      if (error.response) {
+        console.error('[LinkedIn OAuth] Response status:', error.response.status);
+        console.error('[LinkedIn OAuth] Response data:', error.response.data);
+      }
       throw error;
     }
   }
@@ -232,6 +346,7 @@ class LinkedInOAuthService {
 
   /**
    * Get account details from Unipile
+   * Uses SDK (like pluto_campaigns) instead of HTTP API
    * @param {string} unipileAccountId - Unipile account ID
    * @returns {Object} Account details
    */
@@ -241,6 +356,42 @@ class LinkedInOAuthService {
         throw new Error('Unipile is not configured');
       }
 
+      // Try SDK first (preferred method like pluto_campaigns)
+      if (UnipileClient) {
+        try {
+          const baseUrl = this.baseService.getBaseUrl();
+          let sdkBaseUrl = baseUrl;
+          if (sdkBaseUrl.endsWith('/api/v1')) {
+            sdkBaseUrl = sdkBaseUrl.replace(/\/api\/v1$/, '');
+          } else if (sdkBaseUrl.endsWith('/api/v1/')) {
+            sdkBaseUrl = sdkBaseUrl.replace(/\/api\/v1\/$/, '');
+          }
+
+          const token = (this.baseService.dsn && this.baseService.token) 
+            ? this.baseService.token.trim() 
+            : (process.env.UNIPILE_TOKEN || '').trim();
+          
+          if (!token) {
+            throw new Error('UNIPILE_TOKEN is not configured');
+          }
+
+          const unipile = new UnipileClient(sdkBaseUrl, token);
+          
+          if (unipile.account && typeof unipile.account.getOne === 'function') {
+            console.log('[LinkedIn OAuth] Getting account details via SDK...');
+            const accountDetails = await unipile.account.getOne(unipileAccountId);
+            console.log('[LinkedIn OAuth] ✅ Account details retrieved via SDK');
+            return accountDetails;
+          } else {
+            throw new Error('SDK account.getOne method not available');
+          }
+        } catch (sdkError) {
+          console.warn('[LinkedIn OAuth] SDK getAccountDetails failed, trying HTTP fallback:', sdkError.message);
+          // Fall through to HTTP fallback
+        }
+      }
+
+      // Fallback to HTTP API if SDK not available or failed
       const baseUrl = this.baseService.getBaseUrl();
       const headers = this.baseService.getAuthHeaders();
 
@@ -260,5 +411,8 @@ class LinkedInOAuthService {
   }
 }
 
-module.exports = new LinkedInOAuthService();
+// Export the service instance and the helper function
+const serviceInstance = new LinkedInOAuthService();
+serviceInstance.extractLinkedInProfileUrl = extractLinkedInProfileUrl; // For backward compatibility
+module.exports = serviceInstance;
 

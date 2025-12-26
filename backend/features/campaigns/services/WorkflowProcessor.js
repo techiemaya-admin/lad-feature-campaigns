@@ -3,9 +3,12 @@
  * Handles processing leads through workflow steps
  */
 
-const { pool } = require('../../../shared/database/connection');
+const { pool } = require('../../../../shared/database/connection');
 const { validateStepConfig } = require('./StepValidators');
-const { executeStepForLead } = require('./CampaignProcessor');
+// Lazy load executeStepForLead to avoid circular dependency with CampaignProcessor
+// CampaignProcessor imports processLeadThroughWorkflow from this file,
+// so we can't import executeStepForLead at the top level
+let executeStepForLead = null;
 const { executeConditionStep } = require('./StepExecutors');
 
 /**
@@ -161,6 +164,11 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     }
     
     // Execute the step
+    // Lazy load executeStepForLead to avoid circular dependency
+    if (!executeStepForLead) {
+      const CampaignProcessor = require('./CampaignProcessor');
+      executeStepForLead = CampaignProcessor.executeStepForLead;
+    }
     await executeStepForLead(campaign.id, nextStep, campaignLead, userId, orgId, authToken);
     
   } catch (error) {

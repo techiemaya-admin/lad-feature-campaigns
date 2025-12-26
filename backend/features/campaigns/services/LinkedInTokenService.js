@@ -3,7 +3,7 @@
  * Handles token refresh and management
  */
 
-const { pool } = require('../../../shared/database/connection');
+const { pool } = require('../../../../shared/database/connection');
 const UnipileBaseService = require('./UnipileBaseService');
 const axios = require('axios');
 

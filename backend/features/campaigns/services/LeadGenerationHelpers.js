@@ -3,7 +3,7 @@
  * Helper functions for lead generation service
  */
 
-const { pool } = require('../../../shared/database/connection');
+const { pool } = require('../../../../shared/database/connection');
 
 /**
  * Check if lead already exists in campaign

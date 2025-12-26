@@ -12,12 +12,29 @@ class CampaignActionsController {
    * Start/resume a campaign
    */
   static async startCampaign(req, res) {
+    console.log('[Campaign Actions] ========================================');
+    console.log('[Campaign Actions] 🎯 startCampaign METHOD CALLED');
+    console.log('[Campaign Actions] Request method:', req.method);
+    console.log('[Campaign Actions] Request URL:', req.url);
+    console.log('[Campaign Actions] Request originalUrl:', req.originalUrl);
+    console.log('[Campaign Actions] Request params:', JSON.stringify(req.params, null, 2));
+    console.log('[Campaign Actions] Request body:', JSON.stringify(req.body, null, 2));
+    console.log('[Campaign Actions] User object:', JSON.stringify(req.user, null, 2));
+    console.log('[Campaign Actions] ========================================');
+    
     try {
       const tenantId = req.user.tenantId;
       const { id } = req.params;
+      
+      console.log('[Campaign Actions] Campaign ID from params:', id);
+      console.log('[Campaign Actions] Tenant ID from user:', tenantId);
 
-      // Update campaign status to running
-      const campaign = await CampaignModel.update(id, tenantId, { status: 'running' });
+      // Update campaign status to running and reset execution_state to active
+      // This ensures immediate lead generation when campaign is started
+      const campaign = await CampaignModel.update(id, tenantId, { 
+        status: 'running',
+        execution_state: 'active' // Reset to active when manually started
+      });
 
       if (!campaign) {
         return res.status(404).json({
@@ -26,9 +43,22 @@ class CampaignActionsController {
         });
       }
 
-      // Trigger campaign execution (fire and forget, but log errors)
-      console.log(`[Campaign Actions] 🚀 Triggering campaign execution for ${id} (tenant: ${tenantId || 'none'})`);
+      // Also clear next_run_at and last_execution_reason when manually starting
+      try {
+        await CampaignModel.updateExecutionState(id, 'active', {
+          nextRunAt: null,
+          lastExecutionReason: 'Campaign manually started by user'
+        });
+      } catch (stateError) {
+        // If execution_state columns don't exist, continue anyway
+        console.warn('[Campaign Actions] Could not update execution state:', stateError.message);
+      }
+
+      // Trigger campaign execution IMMEDIATELY (fire and forget, but log errors)
+      // This ensures leads are scraped right away when campaign is started
+      console.log(`[Campaign Actions] 🚀 Triggering IMMEDIATE campaign execution for ${id} (tenant: ${tenantId || 'none'})`);
       console.log(`[Campaign Actions] ⏰ Start time: ${new Date().toISOString()}`);
+      console.log(`[Campaign Actions] 📊 This will scrape leads immediately, not wait for scheduled service`);
       
       // Extract auth token from request to pass to processCampaign
       // The token is available via req.headers.authorization (Bearer token)

@@ -45,6 +45,14 @@ class CampaignController {
     return CampaignLeadsController.addLeadsToCampaign(req, res);
   }
 
+  static async getLeadSummary(req, res) {
+    return CampaignLeadsController.getLeadSummary(req, res);
+  }
+
+  static async generateLeadSummary(req, res) {
+    return CampaignLeadsController.generateLeadSummary(req, res);
+  }
+
   static async getCampaignActivities(req, res) {
     return CampaignLeadsController.getCampaignActivities(req, res);
   }

@@ -1,0 +1,100 @@
+/**
+ * Campaign Activity Service
+ * Handles campaign lead activity creation and updates
+ */
+
+const { pool } = require('../../../../shared/database/connection');
+const { getChannelForStepType } = require('./StepValidators');
+
+/**
+ * Create activity record for a step execution
+ */
+async function createActivity(campaignId, tenantId, campaignLeadId, stepId, stepType) {
+  if (!campaignLeadId || !stepId) {
+    return null;
+  }
+  
+  try {
+    // Try with campaign_id first (TDD schema)
+    const activityResult = await pool.query(
+      `INSERT INTO lad_dev.campaign_lead_activities 
+       (tenant_id, campaign_id, campaign_lead_id, step_id, step_type, action_type, status, channel, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'sent', $7, CURRENT_TIMESTAMP)
+       RETURNING id`,
+      [tenantId, campaignId, campaignLeadId, stepId, stepType, stepType, getChannelForStepType(stepType)]
+    );
+    
+    return activityResult.rows[0].id;
+  } catch (insertError) {
+    // Fallback: If campaign_id column doesn't exist, try without it
+    if (insertError.message && insertError.message.includes('campaign_id')) {
+      console.warn(`[Campaign Activity] campaign_id column not found, trying without it:`, insertError.message);
+      try {
+        const activityResult = await pool.query(
+          `INSERT INTO lad_dev.campaign_lead_activities 
+           (tenant_id, campaign_lead_id, step_id, step_type, action_type, status, channel, created_at)
+           VALUES ($1, $2, $3, $4, $5, 'sent', $6, CURRENT_TIMESTAMP)
+           RETURNING id`,
+          [tenantId, campaignLeadId, stepId, stepType, stepType, getChannelForStepType(stepType)]
+        );
+        
+        return activityResult.rows[0].id;
+      } catch (fallbackError) {
+        console.error(`[Campaign Activity] Failed to create activity record:`, fallbackError.message);
+        return null;
+      }
+    } else {
+      throw insertError;
+    }
+  }
+}
+
+/**
+ * Update activity status
+ */
+async function updateActivityStatus(activityId, status, errorMessage = null) {
+  if (!activityId) {
+    return;
+  }
+  
+  try {
+    await pool.query(
+      `UPDATE lad_dev.campaign_lead_activities 
+       SET status = $1, 
+           error_message = $2,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $3`,
+      [status, errorMessage, activityId]
+    );
+  } catch (updateErr) {
+    console.error(`[Campaign Activity] Error updating activity status:`, updateErr);
+  }
+}
+
+/**
+ * Create lead generation activity record
+ */
+async function createLeadGenerationActivity(tenantId, campaignId, campaignLeadId, stepId) {
+  if (!campaignLeadId || !stepId) {
+    return;
+  }
+  
+  try {
+    const activityStatus = 'sent'; // Always 'sent' for lead generation (represents successful execution)
+    await pool.query(
+      `INSERT INTO lad_dev.campaign_lead_activities 
+       (tenant_id, campaign_id, campaign_lead_id, step_id, step_type, action_type, status, channel, created_at)
+       VALUES ($1, $2, $3, $4, 'lead_generation', 'lead_generation', $5, 'web', CURRENT_TIMESTAMP)`,
+      [tenantId, campaignId, campaignLeadId, stepId, activityStatus]
+    );
+  } catch (activityErr) {
+    console.error(`[Campaign Activity] Warning: Failed to create lead generation activity:`, activityErr.message);
+  }
+}
+
+module.exports = {
+  createActivity,
+  updateActivityStatus,
+  createLeadGenerationActivity
+};
+
