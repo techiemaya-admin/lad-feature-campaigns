@@ -1,5 +1,5 @@
 const unipileService = require('../services/unipileService');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const { pool } = require('../../utils/dbConnection');
 
 /**
