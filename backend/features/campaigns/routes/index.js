@@ -7,7 +7,7 @@ const express = require('express');
 const router = express.Router();
 const CampaignController = require('../controllers/CampaignController');
 const linkedInRoutes = require('./linkedin');
-const { authenticateToken: jwtAuth } = require('../../../../core/middleware/auth');
+const { authenticateToken: jwtAuth } = require('../../../core/middleware/auth');
 const {
   validateCampaignCreation,
   validateCampaignUpdate,
