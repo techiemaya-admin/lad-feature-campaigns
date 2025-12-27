@@ -3,7 +3,7 @@
  * Handles database operations for campaign lead activities (tracking actions)
  */
 
-const { getSchema } = require('../../../../core/utils/schemaHelper');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const { pool } = require('../utils/dbConnection');
 
 class CampaignLeadActivityModel {

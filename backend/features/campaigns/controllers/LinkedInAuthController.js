@@ -4,7 +4,7 @@
  */
 
 const linkedInService = require('../services/LinkedInIntegrationService');
-const { getSchema } = require('../../../../core/utils/schemaHelper');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const linkedInAccountStorage = require('../services/LinkedInAccountStorageService');
 
 class LinkedInAuthController {

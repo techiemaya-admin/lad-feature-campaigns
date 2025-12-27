@@ -4,7 +4,7 @@
  */
 
 const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../../core/utils/schemaHelper');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const { validateStepConfig } = require('./StepValidators');
 // Lazy load executeStepForLead to avoid circular dependency with CampaignProcessor
 // CampaignProcessor imports processLeadThroughWorkflow from this file,
