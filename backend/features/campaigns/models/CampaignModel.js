@@ -3,7 +3,8 @@
  * Handles database operations for campaigns
  */
 
-const { pool } = require('../../../../shared/database/connection');
+// Use helper to resolve database connection path for both local and production
+const { pool } = require('../utils/dbConnection');
 
 class CampaignModel {
   /**
