@@ -5,9 +5,8 @@
 
 const axios = require('axios');
 
-// Use the actual backend URL - prioritize internal URL, then public URL, then default
-// For remote servers, this should be the same backend URL as the API calls
-// When running locally, try localhost first
+// Use the actual backend URL - prioritize internal URL, then public URL
+// No hardcoded fallback - must be set via environment variables
 function getBackendUrl() {
   // If explicitly set, use it
   if (process.env.BACKEND_INTERNAL_URL) return process.env.BACKEND_INTERNAL_URL;
