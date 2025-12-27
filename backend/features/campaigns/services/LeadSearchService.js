@@ -5,21 +5,16 @@
 
 const axios = require('axios');
 
-// Use the actual backend URL - prioritize internal URL, then public URL, then default
-// For remote servers, this should be the same backend URL as the API calls
-// When running locally, try localhost first
+// Use the actual backend URL - prioritize internal URL, then public URL
+// No hardcoded fallback - must be set via environment variables
 function getBackendUrl() {
   // If explicitly set, use it
   if (process.env.BACKEND_INTERNAL_URL) return process.env.BACKEND_INTERNAL_URL;
   if (process.env.BACKEND_URL) return process.env.BACKEND_URL;
   if (process.env.NEXT_PUBLIC_BACKEND_URL) return process.env.NEXT_PUBLIC_BACKEND_URL;
   
-  // When running locally, try localhost first
-  const port = process.env.PORT || 3004;
-  const localhostUrl = `http://localhost:${port}`;
-  
-  // Return localhost for local development, production URL as fallback
-  return localhostUrl;
+  // No hardcoded fallback - must be set via environment variables
+  throw new Error('BACKEND_URL, BACKEND_INTERNAL_URL, or NEXT_PUBLIC_BACKEND_URL must be set');
 }
 
 const BACKEND_URL = getBackendUrl();
