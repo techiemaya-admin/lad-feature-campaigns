@@ -1,11 +1,13 @@
 /**
  * Campaign Leads Controller
  * Handles lead management for campaigns
+ * LAD Architecture Compliant - No SQL in controllers, uses logger instead of console
  */
 
 const CampaignLeadModel = require('../models/CampaignLeadModel');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const CampaignLeadActivityModel = require('../models/CampaignLeadActivityModel');
+const logger = require('../../../core/utils/logger');
 
 class CampaignLeadsController {
   /**
@@ -17,40 +19,16 @@ class CampaignLeadsController {
       const tenantId = req.user.tenantId;
       const { id } = req.params;
       const { status, limit, offset } = req.query;
-      const { pool } = require('../utils/dbConnection');
-
-      // First, try to get leads with joined data from leads table (if it exists)
-      // If that fails, fall back to just campaign_leads data
-      let query = `
-        SELECT 
-          cl.id,
-          cl.campaign_id,
-          cl.lead_id,
-          cl.status,
-          cl.snapshot,
-          cl.lead_data,
-          cl.created_at,
-          cl.updated_at
-        const schema = getSchema(req);
-        FROM ${schema}.campaign_leads cl
-        WHERE cl.campaign_id = $1 AND cl.tenant_id = $2 AND cl.is_deleted = FALSE
-      `;
-
-      const params = [id, tenantId];
-      let paramIndex = 3;
-
-      if (status && status !== 'all') {
-        query += ` AND cl.status = $${paramIndex++}`;
-        params.push(status);
-      }
-
-      query += ` ORDER BY cl.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
-      params.push(parseInt(limit) || 100, parseInt(offset) || 0);
-
-      const result = await pool.query(query, params);
+      // LAD Architecture: Use model layer instead of direct SQL in controller
+      const schema = getSchema(req);
+      const leads = await CampaignLeadModel.getByCampaignId(id, tenantId, {
+        status,
+        limit: parseInt(limit) || 100,
+        offset: parseInt(offset) || 0
+      }, req);
       
       // Format leads for frontend
-      const formattedLeads = result.rows.map(row => {
+      const formattedLeads = leads.map(row => {
         try {
           // Parse JSONB fields safely
           let snapshot = {};
@@ -61,7 +39,7 @@ class CampaignLeadsController {
               ? JSON.parse(row.snapshot || '{}') 
               : (row.snapshot || {});
           } catch (e) {
-            console.warn('[Campaign Leads] Error parsing snapshot:', e.message);
+            logger.warn('[Campaign Leads] Error parsing snapshot', { error: e.message });
             snapshot = {};
           }
           
@@ -70,12 +48,15 @@ class CampaignLeadsController {
               ? JSON.parse(row.lead_data || '{}') 
               : (row.lead_data || {});
           } catch (e) {
-            console.warn('[Campaign Leads] Error parsing lead_data:', e.message);
+            logger.warn('[Campaign Leads] Error parsing lead_data', { error: e.message });
             leadData = {};
           }
           
           // Extract profile summary from lead_data if it exists
           const profileSummary = leadData.profile_summary || null;
+          
+          // Extract apollo_person_id from lead_data (needed for reveal email/phone)
+          const apolloPersonId = leadData.apollo_person_id || leadData.id || leadData.apollo_id || null;
           
           // Extract name fields - Priority: snapshot > lead_data
           const firstName = snapshot.first_name || leadData.first_name || leadData.employee_name?.split(' ')[0] || '';
@@ -108,11 +89,12 @@ class CampaignLeadsController {
             linkedin_url: snapshot.linkedin_url || leadData.linkedin_url || leadData.employee_linkedin_url || leadData.linkedin || null,
             photo_url: leadData.photo_url || leadData.employee_photo_url || leadData.avatar || snapshot.photo_url || null,
             profile_summary: profileSummary,
+            apollo_person_id: apolloPersonId, // Include apollo_person_id for reveal functionality
             created_at: row.created_at,
             updated_at: row.updated_at
           };
         } catch (formatError) {
-          console.error('[Campaign Leads] Error formatting lead:', formatError);
+          logger.error('[Campaign Leads] Error formatting lead', { error: formatError.message, stack: formatError.stack });
           // Return minimal data if formatting fails
           return {
             id: row.id,
@@ -140,7 +122,7 @@ class CampaignLeadsController {
         data: formattedLeads
       });
     } catch (error) {
-      console.error('[Campaign Leads] Error getting campaign leads:', error);
+      logger.error('[Campaign Leads] Error getting campaign leads', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to get campaign leads',
@@ -173,7 +155,7 @@ class CampaignLeadsController {
         data: createdLeads
       });
     } catch (error) {
-      console.error('[Campaign Leads] Error adding leads:', error);
+      logger.error('[Campaign Leads] Error adding leads', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to add leads to campaign',
@@ -204,7 +186,7 @@ class CampaignLeadsController {
         data: activities
       });
     } catch (error) {
-      console.error('[Campaign Leads] Error getting activities:', error);
+      logger.error('[Campaign Leads] Error getting activities', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to get campaign activities',
@@ -223,15 +205,11 @@ class CampaignLeadsController {
       const { id: campaignId, leadId } = req.params;
       const { pool } = require('../utils/dbConnection');
 
-      // Get lead data from campaign_leads
-      const leadResult = await pool.query(
-        const schema = getSchema(req);
-        `SELECT lead_data FROM ${schema}.campaign_leads 
-         WHERE id = $1 AND campaign_id = $2 AND tenant_id = $3 AND is_deleted = FALSE`,
-        [leadId, campaignId, tenantId]
-      );
+      // LAD Architecture: Use model layer instead of direct SQL in controller
+      const schema = getSchema(req);
+      const leadResult = await CampaignLeadModel.getLeadData(leadId, campaignId, tenantId, schema);
 
-      if (leadResult.rows.length === 0) {
+      if (!leadResult) {
         return res.status(404).json({
           success: false,
           error: 'Lead not found'
@@ -239,7 +217,7 @@ class CampaignLeadsController {
       }
 
       // Extract summary from lead_data
-      const leadData = leadResult.rows[0].lead_data;
+      const leadData = leadResult.lead_data;
       const parsedLeadData = typeof leadData === 'string' ? JSON.parse(leadData) : (leadData || {});
       const summary = parsedLeadData.profile_summary || null;
 
@@ -249,7 +227,7 @@ class CampaignLeadsController {
         exists: !!summary
       });
     } catch (error) {
-      console.error('[Campaign Leads] Error getting lead summary:', error);
+      logger.error('[Campaign Leads] Error getting lead summary', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to get lead summary',
@@ -279,7 +257,7 @@ class CampaignLeadsController {
           genAI = new GoogleGenerativeAI(geminiApiKey);
         }
       } catch (error) {
-        console.warn('[Profile Summary] Gemini AI package not available:', error.message);
+        logger.warn('[Profile Summary] Gemini AI package not available', { error: error.message });
       }
 
       if (!genAI) {
@@ -290,24 +268,18 @@ class CampaignLeadsController {
       }
 
       // Get lead data from database
+      // LAD Architecture: Use model layer instead of direct SQL in controller
       let lead = profileData;
       if (!lead) {
-        const leadResult = await pool.query(
-          `SELECT cl.*, cl.lead_data as lead_data_full
-           const schema = getSchema(req);
-           FROM ${schema}.campaign_leads cl
-           WHERE cl.id = $1 AND cl.campaign_id = $2 AND cl.tenant_id = $3 AND cl.is_deleted = FALSE`,
-          [leadId, campaignId, tenantId]
-        );
+        const schema = getSchema(req);
+        const dbLead = await CampaignLeadModel.getLeadById(leadId, campaignId, tenantId, schema);
 
-        if (leadResult.rows.length === 0) {
+        if (!dbLead) {
           return res.status(404).json({
             success: false,
             error: 'Lead not found'
           });
         }
-
-        const dbLead = leadResult.rows[0];
         const leadDataFull = dbLead.lead_data_full || {};
         
         lead = {
@@ -349,7 +321,7 @@ ${profileInfo}
 
 Summary:`;
 
-      console.log('[Profile Summary] Generating summary for:', lead.name);
+      logger.info('[Profile Summary] Generating summary', { leadName: lead.name });
 
       const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
       const result = await model.generateContent(prompt);
@@ -357,35 +329,17 @@ Summary:`;
       const summary = response.text().trim();
 
       // Save summary to lead_data
+      // LAD Architecture: Use model layer instead of direct SQL in controller
       try {
-        const leadDataResult = await pool.query(
-          `SELECT lead_data FROM ${schema}.campaign_leads 
-           WHERE id = $1 AND campaign_id = $2 AND tenant_id = $3 AND is_deleted = FALSE`,
-          [leadId, campaignId, tenantId]
-        );
+        const schema = getSchema(req);
+        await CampaignLeadModel.updateLeadData(leadId, campaignId, tenantId, schema, {
+          profile_summary: summary,
+          profile_summary_generated_at: new Date().toISOString()
+        });
 
-        if (leadDataResult.rows.length > 0) {
-          let currentLeadData = {};
-          if (leadDataResult.rows[0].lead_data) {
-            currentLeadData = typeof leadDataResult.rows[0].lead_data === 'string' 
-              ? JSON.parse(leadDataResult.rows[0].lead_data)
-              : leadDataResult.rows[0].lead_data;
-          }
-
-          currentLeadData.profile_summary = summary;
-          currentLeadData.profile_summary_generated_at = new Date().toISOString();
-
-          await pool.query(
-            `UPDATE ${schema}.campaign_leads 
-             SET lead_data = $1, updated_at = CURRENT_TIMESTAMP 
-             WHERE id = $2 AND campaign_id = $3 AND tenant_id = $4 AND is_deleted = FALSE`,
-            [JSON.stringify(currentLeadData), leadId, campaignId, tenantId]
-          );
-
-          console.log('[Profile Summary] Summary saved to database');
-        }
+        logger.info('[Profile Summary] Summary saved to database', { leadId, campaignId });
       } catch (saveError) {
-        console.error('[Profile Summary] Error saving summary to database:', saveError);
+        logger.error('[Profile Summary] Error saving summary to database', { error: saveError.message, stack: saveError.stack });
         // Don't fail the request if save fails
       }
 
@@ -395,7 +349,7 @@ Summary:`;
         generated_at: new Date().toISOString()
       });
     } catch (error) {
-      console.error('[Campaign Leads] Error generating lead summary:', error);
+      logger.error('[Campaign Leads] Error generating lead summary', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to generate lead summary',

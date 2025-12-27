@@ -1,11 +1,13 @@
 /**
  * Workflow Processor
  * Handles processing leads through workflow steps
+ * LAD Architecture Compliant - Uses logger instead of console
  */
 
 const { pool } = require('../utils/dbConnection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const { validateStepConfig } = require('./StepValidators');
+const logger = require('../../../core/utils/logger');
 // Lazy load executeStepForLead to avoid circular dependency with CampaignProcessor
 // CampaignProcessor imports processLeadThroughWorkflow from this file,
 // so we can't import executeStepForLead at the top level
@@ -19,9 +21,9 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
   try {
     // Find the last successfully completed step for this lead
     // This ensures we don't re-execute steps that were already completed
-    // Per TDD: Use lad_dev schema
+    // LAD Architecture: Get schema from request context
+    const schema = getSchema(req);
     const lastSuccessfulActivityResult = await pool.query(
-      const schema = getSchema(req);
       `SELECT step_id, status, created_at FROM ${schema}.campaign_lead_activities 
        WHERE campaign_lead_id = $1 
        AND status IN ('delivered', 'connected', 'replied')
@@ -36,11 +38,11 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
       if (lastSuccessfulStepIndex >= 0) {
         // Advance to the step after the last successfully completed step
         nextStepIndex = lastSuccessfulStepIndex + 1;
-        console.log(`[Campaign Execution] Last successful step for lead ${campaignLead.id}: step ${lastSuccessfulStepIndex} (${lastSuccessfulActivity.step_id}), advancing to step ${nextStepIndex}`);
+        logger.info('[Campaign Execution] Last successful step found', { leadId: campaignLead.id, lastStepIndex: lastSuccessfulStepIndex, stepId: lastSuccessfulActivity.step_id, nextStepIndex });
       }
     } else {
       // No successful activities yet, start from the beginning
-      console.log(`[Campaign Execution] No successful activities found for lead ${campaignLead.id}, starting from step 0`);
+      logger.info('[Campaign Execution] No successful activities found, starting from step 0', { leadId: campaignLead.id });
     }
     
     if (nextStepIndex >= steps.length) {
@@ -69,7 +71,7 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     
     if (existingActivityResult.rows.length > 0) {
       const existingActivity = existingActivityResult.rows[0];
-      console.log(`[Campaign Execution] ⏭️  Step ${nextStep.id} (${nextStep.type}) already completed for lead ${campaignLead.id} with status: ${existingActivity.status}. Skipping duplicate execution.`);
+      logger.info('[Campaign Execution] Step already completed, skipping', { stepId: nextStep.id, stepType: nextStep.type, leadId: campaignLead.id, status: existingActivity.status });
       
       // Step already completed successfully, advance to next step
       const currentStepIndex = steps.findIndex(s => s.id === nextStep.id);
@@ -87,10 +89,7 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     
     if (!validation.valid) {
       // Step validation failed - required fields not filled by user
-      console.error(`[Campaign Execution] Step ${nextStep.id} (${nextStep.type}) validation failed for lead ${campaignLead.id}`);
-      console.error(`[Campaign Execution] Error: ${validation.error}`);
-      console.error(`[Campaign Execution] Missing required fields: ${validation.missingFields.join(', ')}`);
-      console.error(`[Campaign Execution] User must fill all required fields in step settings before execution`);
+      logger.error('[Campaign Execution] Step validation failed', { stepId: nextStep.id, stepType: nextStep.type, leadId: campaignLead.id, error: validation.error, missingFields: validation.missingFields });
       
       // Record validation error in activity
       // Per TDD: Use lad_dev schema and include tenant_id and campaign_id
@@ -124,11 +123,11 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
         [campaignLead.id]
       );
       
-      console.log(`[Campaign Execution] Lead ${campaignLead.id} stopped due to incomplete step configuration. User must complete step settings.`);
+      logger.warn('[Campaign Execution] Lead stopped due to incomplete step configuration', { leadId: campaignLead.id });
       return;
     }
     
-    console.log(`[Campaign Execution] Step ${nextStep.id} (${nextStep.type}) validation passed - all required fields configured`);
+    logger.debug('[Campaign Execution] Step validation passed', { stepId: nextStep.id, stepType: nextStep.type });
     
     // Check if this is a delay step - if so, check if delay has passed
     // (stepConfig already parsed above during validation)
@@ -174,7 +173,7 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     await executeStepForLead(campaign.id, nextStep, campaignLead, userId, orgId, authToken);
     
   } catch (error) {
-    console.error(`[Campaign Execution] Error processing lead ${campaignLead.id}:`, error);
+    logger.error('[Campaign Execution] Error processing lead', { leadId: campaignLead.id, error: error.message, stack: error.stack });
   }
 }
 

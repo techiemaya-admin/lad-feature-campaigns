@@ -196,22 +196,77 @@ class CampaignLeadModel {
   /**
    * Get lead data (handles both lead_data and custom_fields columns)
    */
-  static async getLeadData(campaignLeadId, tenantId, req = null) {
-    const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema
+  static async getLeadData(leadId, campaignId, tenantId, schema) {
+    // LAD Architecture: SQL in model layer, not controller
     const query = `
       SELECT lead_data FROM ${schema}.campaign_leads
-      WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
+      WHERE id = $1 AND campaign_id = $2 AND tenant_id = $3 AND is_deleted = FALSE
     `;
 
-    const result = await pool.query(query, [campaignLeadId, tenantId]);
+    const result = await pool.query(query, [leadId, campaignId, tenantId]);
     
     if (result.rows.length === 0) {
       return null;
     }
 
-    const leadData = result.rows[0].lead_data;
-    return typeof leadData === 'string' ? JSON.parse(leadData) : leadData;
+    return result.rows[0];
+  }
+
+  /**
+   * Get lead by ID with campaign ID
+   */
+  static async getLeadById(leadId, campaignId, tenantId, schema) {
+    // LAD Architecture: SQL in model layer, not controller
+    const query = `
+      SELECT cl.*, cl.lead_data as lead_data_full
+      FROM ${schema}.campaign_leads cl
+      WHERE cl.id = $1 AND cl.campaign_id = $2 AND cl.tenant_id = $3 AND cl.is_deleted = FALSE
+    `;
+
+    const result = await pool.query(query, [leadId, campaignId, tenantId]);
+    
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    return result.rows[0];
+  }
+
+  /**
+   * Update lead_data JSONB field
+   */
+  static async updateLeadData(leadId, campaignId, tenantId, schema, updates) {
+    // LAD Architecture: SQL in model layer, not controller
+    // Get current lead_data
+    const selectResult = await pool.query(
+      `SELECT lead_data FROM ${schema}.campaign_leads 
+       WHERE id = $1 AND campaign_id = $2 AND tenant_id = $3 AND is_deleted = FALSE`,
+      [leadId, campaignId, tenantId]
+    );
+
+    if (selectResult.rows.length === 0) {
+      throw new Error('Lead not found');
+    }
+
+    let currentLeadData = {};
+    if (selectResult.rows[0].lead_data) {
+      currentLeadData = typeof selectResult.rows[0].lead_data === 'string' 
+        ? JSON.parse(selectResult.rows[0].lead_data)
+        : selectResult.rows[0].lead_data;
+    }
+
+    // Merge updates
+    const updatedLeadData = { ...currentLeadData, ...updates };
+
+    // Update
+    await pool.query(
+      `UPDATE ${schema}.campaign_leads 
+       SET lead_data = $1, updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $2 AND campaign_id = $3 AND tenant_id = $4 AND is_deleted = FALSE`,
+      [JSON.stringify(updatedLeadData), leadId, campaignId, tenantId]
+    );
+
+    return updatedLeadData;
   }
 
   /**

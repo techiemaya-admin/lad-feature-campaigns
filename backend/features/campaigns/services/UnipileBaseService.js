@@ -1,10 +1,12 @@
 /**
  * Unipile Base Service
  * Handles base configuration, authentication, and utility methods
+ * LAD Architecture Compliant - Uses logger instead of console
  */
 
 const path = require('path');
 const fs = require('fs');
+const logger = require('../../../core/utils/logger');
 
 // Load .env file from project root (lad-feature-campaigns/.env)
 try {
@@ -28,7 +30,7 @@ class UnipileBaseService {
         this.token = process.env.UNIPILE_TOKEN;
         
         if (!this.dsn || !this.token) {
-            console.warn('[Unipile] Warning: UNIPILE_DSN or UNIPILE_TOKEN not set. Unipile features will be disabled.');
+            logger.warn('[Unipile] UNIPILE_DSN or UNIPILE_TOKEN not set. Unipile features will be disabled.');
         }
     }
 
@@ -75,7 +77,7 @@ class UnipileBaseService {
     getAuthHeaders() {
         const trimmedToken = (this.token || '').trim();
         if (!trimmedToken) {
-            console.warn('[Unipile Service] ⚠️ UNIPILE_TOKEN is not set or is empty!');
+            logger.warn('[Unipile Service] UNIPILE_TOKEN is not set or is empty');
             throw new Error('UNIPILE_TOKEN is not configured');
         }
 
@@ -117,7 +119,7 @@ class UnipileBaseService {
                 }
             }
 
-            console.log(`[Unipile] Looking up provider_id for: ${providerPublicId}`);
+            logger.debug('[Unipile] Looking up provider_id', { providerPublicId });
 
             const response = await axios.get(
                 `${baseUrl}/users/${providerPublicId}`,
@@ -138,15 +140,16 @@ class UnipileBaseService {
                 throw new Error('No provider_id found in lookup response');
             }
 
-            console.log(`[Unipile] ✅ Found provider_id: ${providerId}`);
+            logger.info('[Unipile] Found provider_id', { providerId });
 
             return providerId;
         } catch (error) {
-            console.error(`[Unipile] Error looking up LinkedIn URN:`, error.message);
-            if (error.response) {
-                console.error(`[Unipile] Response status: ${error.response.status}`);
-                console.error(`[Unipile] Response data:`, error.response.data);
-            }
+            logger.error('[Unipile] Error looking up LinkedIn URN', { 
+                error: error.message, 
+                status: error.response?.status,
+                responseData: error.response?.data,
+                stack: error.stack 
+            });
             throw error;
         }
     }
