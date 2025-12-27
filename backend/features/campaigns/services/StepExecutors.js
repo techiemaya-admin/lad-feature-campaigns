@@ -3,7 +3,8 @@
  * Handles execution of various campaign step types
  */
 
-const { pool } = require('../../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const axios = require('axios');
 
 const BACKEND_URL = process.env.BACKEND_INTERNAL_URL || process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL;
@@ -19,7 +20,8 @@ if (!BACKEND_URL) {
 async function getLeadData(campaignLeadId) {
   try {
     const leadDataResult = await pool.query(
-      `SELECT lead_data, snapshot FROM lad_dev.campaign_leads WHERE id = $1 AND is_deleted = FALSE`,
+      const schema = getSchema(req);
+      `SELECT lead_data, snapshot FROM ${schema}.campaign_leads WHERE id = $1 AND is_deleted = FALSE`,
       [campaignLeadId]
     );
     
@@ -196,7 +198,8 @@ async function executeConditionStep(stepConfig, campaignLead) {
   
   // Per TDD: Use lad_dev schema
   const activitiesResult = await pool.query(
-    `SELECT status FROM lad_dev.campaign_lead_activities 
+    const schema = getSchema(req);
+    `SELECT status FROM ${schema}.campaign_lead_activities 
      WHERE campaign_lead_id = $1 AND is_deleted = FALSE
      ORDER BY created_at DESC LIMIT 10`,
     [campaignLead.id]

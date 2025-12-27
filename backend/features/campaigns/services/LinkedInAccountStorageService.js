@@ -1,15 +1,16 @@
 /**
  * LinkedIn Account Storage Service
  * Handles database operations for LinkedIn account storage
- * Uses TDD schema: lad_dev.linkedin_accounts with tenant_id (UUID)
+ * Uses TDD schema: ${schema}.linkedin_accounts with tenant_id (UUID)
  */
 
-const { pool } = require('../../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 
 class LinkedInAccountStorageService {
   /**
    * Save LinkedIn account credentials to database
-   * Uses TDD schema: lad_dev.linkedin_accounts
+   * Uses TDD schema: ${schema}.linkedin_accounts
    * @param {string} tenantId - Tenant ID (UUID)
    * @param {Object} credentials - Account credentials with unipile_account_id, profile_name, etc.
    */
@@ -19,11 +20,12 @@ class LinkedInAccountStorageService {
       throw new Error('unipile_account_id is required');
     }
 
-    // Use TDD schema: lad_dev.linkedin_accounts
+    const schema = getSchema(req);
+    // Use TDD schema: ${schema}.linkedin_accounts
     // First try TDD schema, fallback to old schema if needed
     try {
       const query = `
-        INSERT INTO lad_dev.linkedin_accounts
+        INSERT INTO ${schema}.linkedin_accounts
           (tenant_id, unipile_account_id, account_name, is_active, metadata, created_at, updated_at)
         VALUES ($1, $2, $3, $4, $5::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT (tenant_id, unipile_account_id) DO UPDATE
@@ -50,7 +52,7 @@ class LinkedInAccountStorageService {
         JSON.stringify(metadata)
       ]);
 
-      console.log('[LinkedIn Storage] ✅ Account saved to lad_dev.linkedin_accounts');
+      console.log('[LinkedIn Storage] ✅ Account saved to ${schema}.linkedin_accounts');
     } catch (tddError) {
       // Fallback to old schema if TDD table doesn't exist
       console.warn('[LinkedIn Storage] TDD table not found, using fallback:', tddError.message);

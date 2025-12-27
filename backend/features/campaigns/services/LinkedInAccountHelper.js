@@ -3,7 +3,8 @@
  * Handles LinkedIn account lookup and connection request fallback logic
  */
 
-const { pool } = require('../../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const unipileService = require('./unipileService');
 
 /**
@@ -13,7 +14,8 @@ async function getAllLinkedInAccountsForTenant(orgId, userId) {
   const accounts = [];
   
   try {
-    // Try TDD schema first (lad_dev.linkedin_accounts)
+    const schema = getSchema(req);
+    // Try TDD schema first (${schema}.linkedin_accounts)
     try {
       // Get tenant_id from orgId or userId
       let tenantId = orgId || userId;
@@ -36,7 +38,7 @@ async function getAllLinkedInAccountsForTenant(orgId, userId) {
       
       const query = `
         SELECT id, tenant_id, account_name, unipile_account_id, is_active
-        FROM lad_dev.linkedin_accounts
+        FROM ${schema}.linkedin_accounts
         WHERE tenant_id = $1 
         AND is_active = TRUE
         AND unipile_account_id IS NOT NULL
@@ -97,7 +99,7 @@ async function getAllLinkedInAccountsForTenant(orgId, userId) {
       try {
         const globalQuery = await pool.query(
           `SELECT id, unipile_account_id, account_name
-           FROM lad_dev.linkedin_accounts
+           FROM ${schema}.linkedin_accounts
            WHERE is_active = TRUE
            AND unipile_account_id IS NOT NULL
            ORDER BY created_at DESC`
@@ -180,17 +182,18 @@ async function verifyAccountHealth(unipileAccountId) {
 async function getLinkedInAccountForExecution(orgId, userId) {
   let accountResult;
   
-  // Strategy 1: Try lad_dev.linkedin_accounts table by tenant_id (TDD schema)
+  const schema = getSchema(req);
+  // Strategy 1: Try ${schema}.linkedin_accounts table by tenant_id (TDD schema)
   try {
     accountResult = await pool.query(
-      `SELECT id, unipile_account_id FROM lad_dev.linkedin_accounts 
+      `SELECT id, unipile_account_id FROM ${schema}.linkedin_accounts 
        WHERE tenant_id = $1 
        AND is_active = TRUE
        AND unipile_account_id IS NOT NULL
        ORDER BY created_at DESC LIMIT 1`,
       [orgId]
     );
-    console.log(`[LinkedIn Account Helper] Found ${accountResult.rows.length} LinkedIn account(s) in lad_dev.linkedin_accounts for tenant ${orgId}`);
+    console.log(`[LinkedIn Account Helper] Found ${accountResult.rows.length} LinkedIn account(s) in ${schema}.linkedin_accounts for tenant ${orgId}`);
   } catch (tddError) {
     // Fallback to old schema if TDD table doesn't exist
     console.log(`[LinkedIn Account Helper] TDD schema not found, trying old schema:`, tddError.message);
@@ -309,12 +312,12 @@ async function getLinkedInAccountForExecution(orgId, userId) {
     console.log(`[LinkedIn Account Helper] No account found for org/user, searching for any active account in linkedin_accounts...`);
     try {
       accountResult = await pool.query(
-        `SELECT id, unipile_account_id FROM lad_dev.linkedin_accounts 
+        `SELECT id, unipile_account_id FROM ${schema}.linkedin_accounts 
          WHERE is_active = TRUE
          AND unipile_account_id IS NOT NULL
          ORDER BY created_at DESC LIMIT 1`
       );
-      console.log(`[LinkedIn Account Helper] Found ${accountResult.rows.length} active LinkedIn account(s) globally in lad_dev.linkedin_accounts`);
+      console.log(`[LinkedIn Account Helper] Found ${accountResult.rows.length} active LinkedIn account(s) globally in ${schema}.linkedin_accounts`);
     } catch (tddError) {
       // Fallback to old schema if TDD table doesn't exist
       try {

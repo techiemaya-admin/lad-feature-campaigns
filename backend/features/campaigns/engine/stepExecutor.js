@@ -1,4 +1,5 @@
-const { pool } = require('../../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const linkedinDispatcher = require('./channelDispatchers/linkedin');
 const voiceDispatcher = require('./channelDispatchers/voice');
 const emailDispatcher = require('./channelDispatchers/email');
@@ -108,7 +109,8 @@ class StepExecutor {
 
     // Per TDD: Use lad_dev schema (note: TDD schema uses executed_at, not scheduled_at)
     await pool.query(
-      `UPDATE lad_dev.campaign_lead_activities 
+      const schema = getSchema(req);
+      `UPDATE ${schema}.campaign_lead_activities 
        SET executed_at = $1, status = 'pending', updated_at = CURRENT_TIMESTAMP
        WHERE id = $2 AND is_deleted = FALSE`,
       [scheduledAt, activityId]
@@ -139,7 +141,8 @@ class StepExecutor {
   async markLeadCompleted(leadId) {
     // Per TDD: Use lad_dev schema
     await pool.query(
-      `UPDATE lad_dev.campaign_leads 
+      const schema = getSchema(req);
+      `UPDATE ${schema}.campaign_leads 
        SET status = 'completed', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
        WHERE id = $1 AND is_deleted = FALSE`,
       [leadId]
@@ -153,7 +156,8 @@ class StepExecutor {
     // Per TDD: Use lad_dev schema - need tenant_id and campaign_lead_id
     // Get tenant_id from campaign
     const campaignResult = await pool.query(
-      `SELECT tenant_id FROM lad_dev.campaigns WHERE id = $1 AND is_deleted = FALSE`,
+      const schema = getSchema(req);
+      `SELECT tenant_id FROM ${schema}.campaigns WHERE id = $1 AND is_deleted = FALSE`,
       [campaignId]
     );
     
@@ -163,7 +167,7 @@ class StepExecutor {
     
     const tenantId = campaignResult.rows[0].tenant_id;
     const result = await pool.query(
-      `INSERT INTO lad_dev.campaign_lead_activities 
+      `INSERT INTO ${schema}.campaign_lead_activities 
        (tenant_id, campaign_id, campaign_lead_id, step_id, step_type, action_type, status, channel, created_at)
        VALUES ($1, $2, $3, $4, $5, $5, 'pending', $6, CURRENT_TIMESTAMP)
        RETURNING id`,
@@ -186,7 +190,8 @@ class StepExecutor {
   async updateActivityStatus(activityId, status, errorMessage = null) {
     // Per TDD: Use lad_dev schema
     await pool.query(
-      `UPDATE lad_dev.campaign_lead_activities 
+      const schema = getSchema(req);
+      `UPDATE ${schema}.campaign_lead_activities 
        SET status = $1, error_message = $2, updated_at = CURRENT_TIMESTAMP
        WHERE id = $3 AND is_deleted = FALSE`,
       [status, errorMessage, activityId]

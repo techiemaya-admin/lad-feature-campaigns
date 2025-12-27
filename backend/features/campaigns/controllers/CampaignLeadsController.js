@@ -4,6 +4,7 @@
  */
 
 const CampaignLeadModel = require('../models/CampaignLeadModel');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const CampaignLeadActivityModel = require('../models/CampaignLeadActivityModel');
 
 class CampaignLeadsController {
@@ -16,7 +17,7 @@ class CampaignLeadsController {
       const tenantId = req.user.tenantId;
       const { id } = req.params;
       const { status, limit, offset } = req.query;
-      const { pool } = require('../../../../shared/database/connection');
+      const { pool } = require('../utils/dbConnection');
 
       // First, try to get leads with joined data from leads table (if it exists)
       // If that fails, fall back to just campaign_leads data
@@ -30,7 +31,8 @@ class CampaignLeadsController {
           cl.lead_data,
           cl.created_at,
           cl.updated_at
-        FROM lad_dev.campaign_leads cl
+        const schema = getSchema(req);
+        FROM ${schema}.campaign_leads cl
         WHERE cl.campaign_id = $1 AND cl.tenant_id = $2 AND cl.is_deleted = FALSE
       `;
 
@@ -219,11 +221,12 @@ class CampaignLeadsController {
     try {
       const tenantId = req.user.tenantId;
       const { id: campaignId, leadId } = req.params;
-      const { pool } = require('../../../../shared/database/connection');
+      const { pool } = require('../utils/dbConnection');
 
       // Get lead data from campaign_leads
       const leadResult = await pool.query(
-        `SELECT lead_data FROM lad_dev.campaign_leads 
+        const schema = getSchema(req);
+        `SELECT lead_data FROM ${schema}.campaign_leads 
          WHERE id = $1 AND campaign_id = $2 AND tenant_id = $3 AND is_deleted = FALSE`,
         [leadId, campaignId, tenantId]
       );
@@ -264,7 +267,7 @@ class CampaignLeadsController {
       const tenantId = req.user.tenantId;
       const { id: campaignId, leadId } = req.params;
       const { profileData } = req.body;
-      const { pool } = require('../../../../shared/database/connection');
+      const { pool } = require('../utils/dbConnection');
 
       // Initialize Gemini AI
       let genAI = null;
@@ -291,7 +294,8 @@ class CampaignLeadsController {
       if (!lead) {
         const leadResult = await pool.query(
           `SELECT cl.*, cl.lead_data as lead_data_full
-           FROM lad_dev.campaign_leads cl
+           const schema = getSchema(req);
+           FROM ${schema}.campaign_leads cl
            WHERE cl.id = $1 AND cl.campaign_id = $2 AND cl.tenant_id = $3 AND cl.is_deleted = FALSE`,
           [leadId, campaignId, tenantId]
         );
@@ -355,7 +359,7 @@ Summary:`;
       // Save summary to lead_data
       try {
         const leadDataResult = await pool.query(
-          `SELECT lead_data FROM lad_dev.campaign_leads 
+          `SELECT lead_data FROM ${schema}.campaign_leads 
            WHERE id = $1 AND campaign_id = $2 AND tenant_id = $3 AND is_deleted = FALSE`,
           [leadId, campaignId, tenantId]
         );
@@ -372,7 +376,7 @@ Summary:`;
           currentLeadData.profile_summary_generated_at = new Date().toISOString();
 
           await pool.query(
-            `UPDATE lad_dev.campaign_leads 
+            `UPDATE ${schema}.campaign_leads 
              SET lead_data = $1, updated_at = CURRENT_TIMESTAMP 
              WHERE id = $2 AND campaign_id = $3 AND tenant_id = $4 AND is_deleted = FALSE`,
             [JSON.stringify(currentLeadData), leadId, campaignId, tenantId]

@@ -3,7 +3,8 @@
  * Handles campaign lead activity creation and updates
  */
 
-const { pool } = require('../../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const { getChannelForStepType } = require('./StepValidators');
 
 /**
@@ -17,7 +18,8 @@ async function createActivity(campaignId, tenantId, campaignLeadId, stepId, step
   try {
     // Try with campaign_id first (TDD schema)
     const activityResult = await pool.query(
-      `INSERT INTO lad_dev.campaign_lead_activities 
+      const schema = getSchema(req);
+      `INSERT INTO ${schema}.campaign_lead_activities 
        (tenant_id, campaign_id, campaign_lead_id, step_id, step_type, action_type, status, channel, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, 'sent', $7, CURRENT_TIMESTAMP)
        RETURNING id`,
@@ -31,7 +33,7 @@ async function createActivity(campaignId, tenantId, campaignLeadId, stepId, step
       console.warn(`[Campaign Activity] campaign_id column not found, trying without it:`, insertError.message);
       try {
         const activityResult = await pool.query(
-          `INSERT INTO lad_dev.campaign_lead_activities 
+          `INSERT INTO ${schema}.campaign_lead_activities 
            (tenant_id, campaign_lead_id, step_id, step_type, action_type, status, channel, created_at)
            VALUES ($1, $2, $3, $4, $5, 'sent', $6, CURRENT_TIMESTAMP)
            RETURNING id`,
@@ -59,7 +61,8 @@ async function updateActivityStatus(activityId, status, errorMessage = null) {
   
   try {
     await pool.query(
-      `UPDATE lad_dev.campaign_lead_activities 
+      const schema = getSchema(req);
+      `UPDATE ${schema}.campaign_lead_activities 
        SET status = $1, 
            error_message = $2,
            updated_at = CURRENT_TIMESTAMP
@@ -82,7 +85,8 @@ async function createLeadGenerationActivity(tenantId, campaignId, campaignLeadId
   try {
     const activityStatus = 'sent'; // Always 'sent' for lead generation (represents successful execution)
     await pool.query(
-      `INSERT INTO lad_dev.campaign_lead_activities 
+      const schema = getSchema(req);
+      `INSERT INTO ${schema}.campaign_lead_activities 
        (tenant_id, campaign_id, campaign_lead_id, step_id, step_type, action_type, status, channel, created_at)
        VALUES ($1, $2, $3, $4, 'lead_generation', 'lead_generation', $5, 'web', CURRENT_TIMESTAMP)`,
       [tenantId, campaignId, campaignLeadId, stepId, activityStatus]

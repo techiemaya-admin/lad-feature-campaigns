@@ -5,12 +5,13 @@
 
 // Use helper to resolve database connection path for both local and production
 const { pool } = require('../utils/dbConnection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 
 class CampaignModel {
   /**
    * Create a new campaign
    */
-  static async create(campaignData, tenantId) {
+  static async create(campaignData, tenantId, req = null) {
     const {
       name,
       status = 'draft',
@@ -18,9 +19,9 @@ class CampaignModel {
       config = {}
     } = campaignData;
 
-    // Per TDD: Use lad_dev schema and created_by_user_id
+    const schema = getSchema(req);
     const query = `
-      INSERT INTO lad_dev.campaigns (
+      INSERT INTO ${schema}.campaigns (
         tenant_id, name, status, created_by_user_id, config, created_at, updated_at
       )
       VALUES ($1, $2, $3, $4, $5::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -46,7 +47,7 @@ class CampaignModel {
         console.warn('[CampaignModel] created_by_user_id column not found, trying created_by:', error.message);
         try {
           const fallbackQuery = `
-            INSERT INTO lad_dev.campaigns (
+            INSERT INTO ${schema}.campaigns (
               tenant_id, name, status, created_by, config, created_at, updated_at
             )
             VALUES ($1, $2, $3, $4, $5::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -59,7 +60,7 @@ class CampaignModel {
           if (fallbackError.message && (fallbackError.message.includes('column "config"') || fallbackError.message.includes('jsonb'))) {
             console.warn('[CampaignModel] Config column also not found, trying without config:', fallbackError.message);
             const simpleQuery = `
-              INSERT INTO lad_dev.campaigns (
+              INSERT INTO ${schema}.campaigns (
                 tenant_id, name, status, created_by, created_at, updated_at
               )
               VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -77,7 +78,7 @@ class CampaignModel {
       if (errorMsg.includes('column "config"') || errorMsg.includes('jsonb')) {
         console.warn('[CampaignModel] Config column issue, trying insert without config:', error.message);
         const fallbackQuery = `
-          INSERT INTO lad_dev.campaigns (
+          INSERT INTO ${schema}.campaigns (
             tenant_id, name, status, created_by_user_id, created_at, updated_at
           )
           VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -91,7 +92,7 @@ class CampaignModel {
           // Try with created_by instead
           if (fallbackError2.message && fallbackError2.message.includes('created_by_user_id')) {
             const simpleQuery = `
-              INSERT INTO lad_dev.campaigns (
+              INSERT INTO ${schema}.campaigns (
                 tenant_id, name, status, created_by, created_at, updated_at
               )
               VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -110,10 +111,10 @@ class CampaignModel {
   /**
    * Get campaign by ID
    */
-  static async getById(campaignId, tenantId) {
-    // Per TDD: Use lad_dev schema
+  static async getById(campaignId, tenantId, req = null) {
+    const schema = getSchema(req);
     const query = `
-      SELECT * FROM lad_dev.campaigns
+      SELECT * FROM ${schema}.campaigns
       WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
     `;
 
@@ -124,8 +125,9 @@ class CampaignModel {
   /**
    * List all campaigns for a tenant
    */
-  static async list(tenantId, filters = {}) {
+  static async list(tenantId, filters = {}, req = null) {
     const { status, search, limit = 50, offset = 0 } = filters;
+    const schema = getSchema(req);
 
     let query = `
       SELECT 
@@ -137,9 +139,9 @@ class CampaignModel {
         COUNT(DISTINCT CASE WHEN cla.status = 'replied' THEN cla.id END) as replied_count,
         COUNT(DISTINCT CASE WHEN cla.status = 'opened' THEN cla.id END) as opened_count,
         COUNT(DISTINCT CASE WHEN cla.status = 'clicked' THEN cla.id END) as clicked_count
-      FROM lad_dev.campaigns c
-      LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND COALESCE(cl.is_deleted, FALSE) = FALSE
-      LEFT JOIN lad_dev.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id AND cla.tenant_id = $1 AND COALESCE(cla.is_deleted, FALSE) = FALSE
+      FROM ${schema}.campaigns c
+      LEFT JOIN ${schema}.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND COALESCE(cl.is_deleted, FALSE) = FALSE
+      LEFT JOIN ${schema}.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id AND cla.tenant_id = $1 AND COALESCE(cla.is_deleted, FALSE) = FALSE
       WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
     `;
 
@@ -177,8 +179,8 @@ class CampaignModel {
             0 as replied_count,
             0 as opened_count,
             0 as clicked_count
-          FROM lad_dev.campaigns c
-          LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND COALESCE(cl.is_deleted, FALSE) = FALSE
+          FROM ${schema}.campaigns c
+          LEFT JOIN ${schema}.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND COALESCE(cl.is_deleted, FALSE) = FALSE
           WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
         `;
         
@@ -218,7 +220,7 @@ class CampaignModel {
                 0 as replied_count,
                 0 as opened_count,
                 0 as clicked_count
-              FROM lad_dev.campaigns c
+              FROM ${schema}.campaigns c
               WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
             `;
             const simpleParams = [tenantId];
@@ -250,7 +252,8 @@ class CampaignModel {
   /**
    * Update campaign
    */
-  static async update(campaignId, tenantId, updates) {
+  static async update(campaignId, tenantId, updates, req = null) {
+    const schema = getSchema(req);
     const allowedFields = ['name', 'status', 'config', 'execution_state', 'last_lead_check_at', 'next_run_at', 'last_execution_reason'];
     const setClause = [];
     const values = [campaignId, tenantId];
@@ -282,9 +285,8 @@ class CampaignModel {
 
     setClause.push(`updated_at = CURRENT_TIMESTAMP`);
 
-    // Per TDD: Use lad_dev schema
     const query = `
-      UPDATE lad_dev.campaigns
+      UPDATE ${schema}.campaigns
       SET ${setClause.join(', ')}
       WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
       RETURNING *
@@ -298,7 +300,8 @@ class CampaignModel {
    * Update campaign execution state (internal use, no tenant check)
    * Used by scheduled processor to update execution state
    */
-  static async updateExecutionState(campaignId, executionState, options = {}) {
+  static async updateExecutionState(campaignId, executionState, options = {}, req = null) {
+    const schema = getSchema(req);
     const { lastLeadCheckAt = null, nextRunAt = null, lastExecutionReason = null } = options;
     const setClause = [];
     const values = [campaignId];
@@ -332,10 +335,9 @@ class CampaignModel {
 
     setClause.push(`updated_at = CURRENT_TIMESTAMP`);
 
-    // Per TDD: Use lad_dev schema
     // No tenant check - this is for internal processor use
     const query = `
-      UPDATE lad_dev.campaigns
+      UPDATE ${schema}.campaigns
       SET ${setClause.join(', ')}
       WHERE id = $1
       RETURNING id, execution_state, last_lead_check_at, next_run_at, last_execution_reason
@@ -358,10 +360,10 @@ class CampaignModel {
   /**
    * Soft delete campaign
    */
-  static async delete(campaignId, tenantId) {
-    // Per TDD: Use lad_dev schema
+  static async delete(campaignId, tenantId, req = null) {
+    const schema = getSchema(req);
     const query = `
-      UPDATE lad_dev.campaigns
+      UPDATE ${schema}.campaigns
       SET is_deleted = TRUE, updated_at = CURRENT_TIMESTAMP
       WHERE id = $1 AND tenant_id = $2
       RETURNING id
@@ -374,7 +376,8 @@ class CampaignModel {
   /**
    * Get campaign statistics
    */
-  static async getStats(tenantId) {
+  static async getStats(tenantId, req = null) {
+    const schema = getSchema(req);
     const query = `
       SELECT
         COUNT(DISTINCT c.id) as total_campaigns,
@@ -384,9 +387,9 @@ class CampaignModel {
         COUNT(DISTINCT CASE WHEN cla.status = 'delivered' THEN cla.id END) as total_delivered,
         COUNT(DISTINCT CASE WHEN cla.status = 'connected' THEN cla.id END) as total_connected,
         COUNT(DISTINCT CASE WHEN cla.status = 'replied' THEN cla.id END) as total_replied
-      FROM lad_dev.campaigns c
-      LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1
-      LEFT JOIN lad_dev.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id AND cla.tenant_id = $1
+      FROM ${schema}.campaigns c
+      LEFT JOIN ${schema}.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1
+      LEFT JOIN ${schema}.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id AND cla.tenant_id = $1
       WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
     `;
 
@@ -407,8 +410,8 @@ class CampaignModel {
             0 as total_delivered,
             0 as total_connected,
             0 as total_replied
-          FROM lad_dev.campaigns c
-          LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1
+          FROM ${schema}.campaigns c
+          LEFT JOIN ${schema}.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1
           WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
         `;
         const result = await pool.query(fallbackQuery, [tenantId]);
@@ -421,10 +424,10 @@ class CampaignModel {
   /**
    * Get running campaigns
    */
-  static async getRunningCampaigns(tenantId) {
-    // Per TDD: Use lad_dev schema
+  static async getRunningCampaigns(tenantId, req = null) {
+    const schema = getSchema(req);
     const query = `
-      SELECT * FROM lad_dev.campaigns
+      SELECT * FROM ${schema}.campaigns
       WHERE tenant_id = $1 AND status = 'running' AND is_deleted = FALSE
       ORDER BY created_at DESC
     `;

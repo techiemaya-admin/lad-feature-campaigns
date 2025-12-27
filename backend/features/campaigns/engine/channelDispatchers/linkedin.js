@@ -1,5 +1,6 @@
 const unipileService = require('../services/unipileService');
-const { pool } = require('../../../../../shared/database/connection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
+const { pool } = require('../../utils/dbConnection');
 
 /**
  * LinkedIn Channel Dispatcher
@@ -187,7 +188,8 @@ Generate a concise, professional summary highlighting their role, expertise, and
             try {
               // Get current lead_data
               const leadDataQuery = await pool.query(
-                `SELECT lead_data FROM lad_dev.campaign_leads WHERE id = $1 AND is_deleted = FALSE`,
+                const schema = getSchema(req);
+                `SELECT lead_data FROM ${schema}.campaign_leads WHERE id = $1 AND is_deleted = FALSE`,
                 [lead.id]
               );
               
@@ -204,7 +206,7 @@ Generate a concise, professional summary highlighting their role, expertise, and
               
               // Update campaign_leads with summary
               await pool.query(
-                `UPDATE lad_dev.campaign_leads 
+                `UPDATE ${schema}.campaign_leads 
                  SET lead_data = $1, updated_at = CURRENT_TIMESTAMP 
                  WHERE id = $2 AND is_deleted = FALSE`,
                 [JSON.stringify(currentLeadData), lead.id]

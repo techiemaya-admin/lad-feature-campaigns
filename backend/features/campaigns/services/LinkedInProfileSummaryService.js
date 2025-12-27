@@ -3,7 +3,7 @@
  * Handles profile summary generation and saving
  */
 
-const { pool } = require('../../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
 
 /**
  * Generate and save profile summary for a LinkedIn visit

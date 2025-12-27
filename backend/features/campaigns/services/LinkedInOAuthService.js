@@ -3,7 +3,7 @@
  * Handles OAuth flow and account connection
  */
 
-const { pool } = require('../../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
 const UnipileBaseService = require('./UnipileBaseService');
 const axios = require('axios');
 const { extractLinkedInProfileUrl } = require('./LinkedInProfileHelper');

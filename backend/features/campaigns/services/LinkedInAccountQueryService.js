@@ -3,15 +3,17 @@
  * Handles database queries for LinkedIn accounts
  */
 
-const { pool } = require('../../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 
 /**
  * Get all connected LinkedIn accounts for a user/tenant
- * Uses TDD schema (lad_dev.linkedin_accounts) with fallback to old schema
+ * Uses TDD schema (${schema}.linkedin_accounts) with fallback to old schema
  */
 async function getUserLinkedInAccounts(userId) {
   try {
-    // Use lad_dev.linkedin_accounts table per TDD
+    const schema = getSchema(req);
+    // Use ${schema}.linkedin_accounts table per TDD
     // First try the TDD schema, fallback to old schema if needed
     let query = `
       SELECT 
@@ -23,7 +25,7 @@ async function getUserLinkedInAccounts(userId) {
         metadata,
         created_at,
         updated_at
-      FROM lad_dev.linkedin_accounts
+      FROM ${schema}.linkedin_accounts
       WHERE tenant_id = $1 
       AND is_active = TRUE
       ORDER BY created_at DESC
@@ -108,7 +110,8 @@ async function findAccountByUnipileId(tenantId, unipileAccountId) {
     try {
       const result = await pool.query(
         `SELECT id, unipile_account_id, is_active
-         FROM lad_dev.linkedin_accounts
+         const schema = getSchema(req);
+         FROM ${schema}.linkedin_accounts
          WHERE tenant_id = $1 
          AND unipile_account_id = $2
          LIMIT 1`,
