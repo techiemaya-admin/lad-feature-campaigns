@@ -4,7 +4,7 @@
  */
 
 const CampaignLeadModel = require('../models/CampaignLeadModel');
-const { getSchema } = require('../../../../core/utils/schemaHelper');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const CampaignLeadActivityModel = require('../models/CampaignLeadActivityModel');
 
 class CampaignLeadsController {

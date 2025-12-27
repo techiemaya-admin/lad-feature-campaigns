@@ -4,7 +4,7 @@
  */
 
 const express = require('express');
-const { getSchema } = require('../../../../core/utils/schemaHelper');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const router = express.Router();
 const { authenticateToken: jwtAuth } = require('../../../../core/middleware/auth');
 const linkedInIntegrationService = require('../services/LinkedInIntegrationService');
