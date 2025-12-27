@@ -3,7 +3,8 @@
  * Helper functions for lead generation service
  */
 
-const { pool } = require('../../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 
 /**
  * Check if lead already exists in campaign
@@ -12,7 +13,8 @@ async function checkLeadExists(campaignId, apolloPersonId) {
   try {
     // Per TDD: Use lad_dev schema
     const existingLead = await pool.query(
-      `SELECT id FROM lad_dev.campaign_leads 
+      const schema = getSchema(req);
+      `SELECT id FROM ${schema}.campaign_leads 
        WHERE campaign_id = $1 AND lead_data->>'apollo_person_id' = $2 AND is_deleted = FALSE`,
       [campaignId, String(apolloPersonId)]
     );
@@ -59,7 +61,8 @@ function createSnapshot(fields) {
  */
 async function saveLeadToCampaign(campaignId, tenantId, leadId, snapshot, leadData) {
   const insertResult = await pool.query(
-    `INSERT INTO lad_dev.campaign_leads 
+    const schema = getSchema(req);
+    `INSERT INTO ${schema}.campaign_leads 
      (tenant_id, campaign_id, lead_id, status, snapshot, lead_data, created_at)
      VALUES ($1, $2, $3, 'active', $4, $5, CURRENT_TIMESTAMP)
      RETURNING id`,
@@ -75,7 +78,8 @@ async function updateCampaignConfig(campaignId, config) {
   try {
     // Per TDD: Use lad_dev schema
     await pool.query(
-      `UPDATE lad_dev.campaigns SET config = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+      const schema = getSchema(req);
+      `UPDATE ${schema}.campaigns SET config = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
       [JSON.stringify(config), campaignId]
     );
   } catch (updateError) {
@@ -92,7 +96,8 @@ async function updateStepConfig(stepId, stepConfig) {
   try {
     // Per TDD: Use lad_dev schema
     await pool.query(
-      `UPDATE lad_dev.campaign_steps SET config = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+      const schema = getSchema(req);
+      `UPDATE ${schema}.campaign_steps SET config = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
       [JSON.stringify(stepConfig), stepId]
     );
   } catch (stepUpdateErr) {

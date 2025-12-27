@@ -4,6 +4,7 @@
  */
 
 const express = require('express');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const router = express.Router();
 const { authenticateToken: jwtAuth } = require('../../../../core/middleware/auth');
 const linkedInIntegrationService = require('../services/LinkedInIntegrationService');
@@ -212,17 +213,18 @@ router.post('/disconnect', jwtAuth, async (req, res) => {
       console.log('[LinkedIn Routes] connection_id provided, looking up unipile_account_id from database ID:', connectionId);
       
       try {
-        const { pool } = require('../../../../shared/database/connection');
+        const { pool } = require('../utils/dbConnection');
         
-        // Check if connection_id is a UUID (from lad_dev.linkedin_accounts) or integer
+        const schema = getSchema(req);
+        // Check if connection_id is a UUID (from ${schema}.linkedin_accounts) or integer
         const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(connectionId);
         
         if (isUUID) {
-          // UUID - query lad_dev.linkedin_accounts table (TDD schema)
-          console.log('[LinkedIn Routes] connection_id is UUID, querying lad_dev.linkedin_accounts table...');
+          // UUID - query ${schema}.linkedin_accounts table (TDD schema)
+          console.log('[LinkedIn Routes] connection_id is UUID, querying ${schema}.linkedin_accounts table...');
           const lookupQuery = `
             SELECT unipile_account_id
-            FROM lad_dev.linkedin_accounts
+            FROM ${schema}.linkedin_accounts
             WHERE id = $1
               AND tenant_id = $2
               AND unipile_account_id IS NOT NULL
@@ -233,9 +235,9 @@ router.post('/disconnect', jwtAuth, async (req, res) => {
           
           if (lookupResult.rows.length > 0) {
             targetUnipileAccountId = lookupResult.rows[0].unipile_account_id;
-            console.log('[LinkedIn Routes] ✅ Found unipile_account_id in lad_dev.linkedin_accounts:', targetUnipileAccountId, 'for UUID:', connectionId);
+            console.log('[LinkedIn Routes] ✅ Found unipile_account_id in ${schema}.linkedin_accounts:', targetUnipileAccountId, 'for UUID:', connectionId);
           } else {
-            console.warn('[LinkedIn Routes] ⚠️ No account found with UUID:', connectionId, 'in lad_dev.linkedin_accounts');
+            console.warn('[LinkedIn Routes] ⚠️ No account found with UUID:', connectionId, 'in ${schema}.linkedin_accounts');
           }
         } else {
           // Integer ID - try old schema (fallback)

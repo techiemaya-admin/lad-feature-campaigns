@@ -1,4 +1,5 @@
-const { pool } = require('../../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const stepExecutor = require('./stepExecutor');
 const conditionEvaluator = require('./conditionEvaluator');
 
@@ -16,7 +17,8 @@ class WorkflowEngine {
 
       // Per TDD: Use lad_dev schema
       const campaignResult = await pool.query(
-        'SELECT * FROM lad_dev.campaigns WHERE id = $1 AND is_deleted = FALSE',
+        const schema = getSchema(req);
+        'SELECT * FROM ${schema}.campaigns WHERE id = $1 AND is_deleted = FALSE',
         [campaignId]
       );
 
@@ -38,7 +40,7 @@ class WorkflowEngine {
 
       // Per TDD: Use lad_dev schema
       const leadsResult = await pool.query(
-        'SELECT * FROM lad_dev.campaign_leads WHERE campaign_id = $1 AND is_deleted = FALSE',
+        'SELECT * FROM ${schema}.campaign_leads WHERE campaign_id = $1 AND is_deleted = FALSE',
         [campaignId]
       );
 
@@ -118,7 +120,8 @@ class WorkflowEngine {
 
         // Per TDD: Use lad_dev schema
         await pool.query(
-          'UPDATE lad_dev.campaign_leads SET current_step_order = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND is_deleted = FALSE',
+          const schema = getSchema(req);
+          'UPDATE ${schema}.campaign_leads SET current_step_order = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND is_deleted = FALSE',
           [currentStepId, lead.id]
         );
 
@@ -174,9 +177,10 @@ class WorkflowEngine {
       // Per TDD: Use lad_dev schema
       const result = await pool.query(`
         SELECT DISTINCT cl.*, c.config as workflow, c.created_by_user_id as user_id, c.tenant_id as org_id
-        FROM lad_dev.campaign_leads cl
-        JOIN lad_dev.campaigns c ON cl.campaign_id = c.id
-        JOIN lad_dev.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id
+        const schema = getSchema(req);
+        FROM ${schema}.campaign_leads cl
+        JOIN ${schema}.campaigns c ON cl.campaign_id = c.id
+        JOIN ${schema}.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id
         WHERE cla.status = 'pending'
           AND cla.executed_at <= CURRENT_TIMESTAMP
           AND c.status = 'running'

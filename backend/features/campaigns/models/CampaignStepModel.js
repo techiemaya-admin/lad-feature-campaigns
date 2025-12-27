@@ -3,13 +3,15 @@
  * Handles database operations for campaign steps (workflow builder)
  */
 
-const { pool } = require('../../../../shared/database/connection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
+const { pool } = require('../utils/dbConnection');
 
 class CampaignStepModel {
   /**
    * Create a new campaign step
    */
-  static async create(stepData, tenantId) {
+  static async create(stepData, tenantId, req = null) {
+    const schema = getSchema(req);
     const {
       campaignId,
       type,
@@ -21,7 +23,7 @@ class CampaignStepModel {
 
     // Per TDD: Use lad_dev schema, step_type and step_order columns
     const query = `
-      INSERT INTO lad_dev.campaign_steps (
+      INSERT INTO ${schema}.campaign_steps (
         tenant_id, campaign_id, step_type, step_order, title, description, config, created_at, updated_at
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -45,7 +47,8 @@ class CampaignStepModel {
   /**
    * Get steps for a campaign
    */
-  static async getStepsByCampaignId(campaignId, tenantId) {
+  static async getStepsByCampaignId(campaignId, tenantId, req = null) {
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema and step_order column, alias for compatibility
     // Try with step_type/step_order first, fallback to type/order if columns don't exist
     let query = `
@@ -55,7 +58,7 @@ class CampaignStepModel {
         step_order as "order",
         title, description, config,
         is_deleted, created_at, updated_at
-      FROM lad_dev.campaign_steps
+      FROM ${schema}.campaign_steps
       WHERE campaign_id = $1 AND tenant_id = $2
       ORDER BY step_order ASC
     `;
@@ -75,7 +78,7 @@ class CampaignStepModel {
             "order",
             title, description, config,
             is_deleted, created_at, updated_at
-          FROM lad_dev.campaign_steps
+          FROM ${schema}.campaign_steps
           WHERE campaign_id = $1 AND tenant_id = $2
           ORDER BY "order" ASC
         `;
@@ -94,7 +97,7 @@ class CampaignStepModel {
                 "order",
                 title, description, config,
                 created_at, updated_at
-              FROM lad_dev.campaign_steps
+              FROM ${schema}.campaign_steps
               WHERE campaign_id = $1 AND tenant_id = $2
               ORDER BY "order" ASC
             `;
@@ -113,7 +116,7 @@ class CampaignStepModel {
             step_order as "order",
             title, description, config,
             created_at, updated_at
-          FROM lad_dev.campaign_steps
+          FROM ${schema}.campaign_steps
           WHERE campaign_id = $1 AND tenant_id = $2
           ORDER BY step_order ASC
         `;
@@ -132,7 +135,7 @@ class CampaignStepModel {
                 "order",
                 title, description, config,
                 created_at, updated_at
-              FROM lad_dev.campaign_steps
+              FROM ${schema}.campaign_steps
               WHERE campaign_id = $1 AND tenant_id = $2
               ORDER BY "order" ASC
             `;
@@ -149,7 +152,8 @@ class CampaignStepModel {
   /**
    * Get step by ID
    */
-  static async getById(stepId, tenantId) {
+  static async getById(stepId, tenantId, req = null) {
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema, alias for compatibility
     // Try with step_type/step_order first, fallback to type/order if columns don't exist
     let query = `
@@ -159,7 +163,7 @@ class CampaignStepModel {
         step_order as "order",
         title, description, config,
         is_deleted, created_at, updated_at
-      FROM lad_dev.campaign_steps
+      FROM ${schema}.campaign_steps
       WHERE id = $1 AND tenant_id = $2
     `;
 
@@ -178,7 +182,7 @@ class CampaignStepModel {
             "order",
             title, description, config,
             is_deleted, created_at, updated_at
-          FROM lad_dev.campaign_steps
+          FROM ${schema}.campaign_steps
           WHERE id = $1 AND tenant_id = $2
         `;
         try {
@@ -196,7 +200,7 @@ class CampaignStepModel {
                 "order",
                 title, description, config,
                 created_at, updated_at
-              FROM lad_dev.campaign_steps
+              FROM ${schema}.campaign_steps
               WHERE id = $1 AND tenant_id = $2
             `;
             const result = await pool.query(query, [stepId, tenantId]);
@@ -214,7 +218,7 @@ class CampaignStepModel {
             step_order as "order",
             title, description, config,
             created_at, updated_at
-          FROM lad_dev.campaign_steps
+          FROM ${schema}.campaign_steps
           WHERE id = $1 AND tenant_id = $2
         `;
         try {
@@ -232,7 +236,7 @@ class CampaignStepModel {
                 "order",
                 title, description, config,
                 created_at, updated_at
-              FROM lad_dev.campaign_steps
+              FROM ${schema}.campaign_steps
               WHERE id = $1 AND tenant_id = $2
             `;
             const result = await pool.query(query, [stepId, tenantId]);
@@ -248,7 +252,8 @@ class CampaignStepModel {
   /**
    * Update campaign step
    */
-  static async update(stepId, tenantId, updates) {
+  static async update(stepId, tenantId, updates, req = null) {
+    const schema = getSchema(req);
     // Per TDD: Map JavaScript field names to database column names
     const fieldMapping = {
       'type': 'step_type',
@@ -279,7 +284,7 @@ class CampaignStepModel {
 
     // Per TDD: Use lad_dev schema
     const query = `
-      UPDATE lad_dev.campaign_steps
+      UPDATE ${schema}.campaign_steps
       SET ${setClause.join(', ')}
       WHERE id = $1 AND tenant_id = $2
       RETURNING *
@@ -292,10 +297,11 @@ class CampaignStepModel {
   /**
    * Delete campaign step
    */
-  static async delete(stepId, tenantId) {
+  static async delete(stepId, tenantId, req = null) {
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema
     const query = `
-      DELETE FROM lad_dev.campaign_steps
+      DELETE FROM ${schema}.campaign_steps
       WHERE id = $1 AND tenant_id = $2
       RETURNING id
     `;
@@ -307,10 +313,11 @@ class CampaignStepModel {
   /**
    * Delete all steps for a campaign
    */
-  static async deleteByCampaignId(campaignId, tenantId) {
+  static async deleteByCampaignId(campaignId, tenantId, req = null) {
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema
     const query = `
-      DELETE FROM lad_dev.campaign_steps
+      DELETE FROM ${schema}.campaign_steps
       WHERE campaign_id = $1 AND tenant_id = $2
       RETURNING id
     `;
@@ -322,7 +329,8 @@ class CampaignStepModel {
   /**
    * Bulk create steps (for workflow builder)
    */
-  static async bulkCreate(campaignId, tenantId, steps) {
+  static async bulkCreate(campaignId, tenantId, steps, req = null) {
+    const schema = getSchema(req);
     if (!steps || steps.length === 0) {
       return [];
     }
@@ -353,7 +361,7 @@ class CampaignStepModel {
     // Per TDD: Use lad_dev schema, step_type and step_order columns
     // Try with step_type and step_order first, fallback to type and order if columns don't exist
     const query = `
-      INSERT INTO lad_dev.campaign_steps (
+      INSERT INTO ${schema}.campaign_steps (
         tenant_id, campaign_id, step_type, step_order, title, description, config
       )
       VALUES ${placeholders.join(', ')}
@@ -393,7 +401,7 @@ class CampaignStepModel {
         });
         
         const fallbackQuery = `
-          INSERT INTO lad_dev.campaign_steps (
+          INSERT INTO ${schema}.campaign_steps (
             tenant_id, campaign_id, type, "order", title, description, config
           )
           VALUES ${fallbackPlaceholders.join(', ')}
@@ -429,7 +437,7 @@ class CampaignStepModel {
             });
             
             const simpleQuery = `
-              INSERT INTO lad_dev.campaign_steps (
+              INSERT INTO ${schema}.campaign_steps (
                 tenant_id, campaign_id, type, "order", title, description
               )
               VALUES ${simplePlaceholders.join(', ')}

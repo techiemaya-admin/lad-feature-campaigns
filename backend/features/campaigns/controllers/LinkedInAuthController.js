@@ -4,6 +4,7 @@
  */
 
 const linkedInService = require('../services/LinkedInIntegrationService');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const linkedInAccountStorage = require('../services/LinkedInAccountStorageService');
 
 class LinkedInAuthController {
@@ -243,7 +244,8 @@ class LinkedInAuthController {
           }
         }
         
-        // Use tenantId for TDD schema (lad_dev.linkedin_accounts uses tenant_id)
+        const schema = getSchema(req);
+        // Use tenantId for TDD schema (${schema}.linkedin_accounts uses tenant_id)
         const tenantId = req.user.tenantId || req.user.userId || req.user.user_id;
         
         if (tenantId) {
@@ -387,13 +389,14 @@ class LinkedInAuthController {
       // Get checkpoint type from database (default: IN_APP_VALIDATION)
       let checkpointType = 'IN_APP_VALIDATION';
       try {
-        const { pool } = require('../../../../shared/database/connection');
+        const { pool } = require('../utils/dbConnection');
         const tenantId = req.user.tenantId || userId;
         
         // Try TDD schema first
         const checkpointQuery = `
           SELECT metadata
-          FROM lad_dev.linkedin_accounts
+          const schema = getSchema(req);
+          FROM ${schema}.linkedin_accounts
           WHERE unipile_account_id = $1 AND tenant_id = $2 AND is_active = TRUE
           ORDER BY created_at DESC
           LIMIT 1

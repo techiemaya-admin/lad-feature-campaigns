@@ -3,7 +3,8 @@
  * Handles lead generation with daily limits and offset tracking
  */
 
-const { pool } = require('../../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const { searchEmployees, searchEmployeesFromDatabase } = require('./LeadSearchService');
 const {
   updateCampaignConfig,
@@ -38,7 +39,8 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
     try {
       // Per TDD: Use lad_dev schema
       const campaignResult = await pool.query(
-        `SELECT config FROM lad_dev.campaigns WHERE id = $1`,
+        const schema = getSchema(req);
+        `SELECT config FROM ${schema}.campaigns WHERE id = $1`,
         [campaignId]
       );
       
@@ -306,7 +308,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
     
     // Get tenant_id from campaign
     const campaignQuery = await pool.query(
-      `SELECT tenant_id FROM lad_dev.campaigns WHERE id = $1 AND is_deleted = FALSE`,
+      `SELECT tenant_id FROM ${schema}.campaigns WHERE id = $1 AND is_deleted = FALSE`,
       [campaignId]
     );
     const tenantId = campaignQuery.rows[0]?.tenant_id;
@@ -356,7 +358,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
       try {
         // Per TDD: Use lad_dev schema
         await pool.query(
-          `UPDATE lad_dev.campaigns SET updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+          `UPDATE ${schema}.campaigns SET updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
           [campaignId]
         );
       } catch (err) {
@@ -393,7 +395,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
       try {
         // Get tenant_id and campaign_id from the lead
         const leadInfo = await pool.query(
-          `SELECT tenant_id, campaign_id FROM lad_dev.campaign_leads WHERE id = $1`,
+          `SELECT tenant_id, campaign_id FROM ${schema}.campaign_leads WHERE id = $1`,
           [firstGeneratedLeadId]
         );
         const { tenant_id, campaign_id } = leadInfo.rows[0] || {};

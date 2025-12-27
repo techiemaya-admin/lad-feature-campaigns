@@ -3,7 +3,8 @@
  * Handles account management operations
  */
 
-const { pool } = require('../../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const UnipileBaseService = require('./UnipileBaseService');
 const axios = require('axios');
 const { getUserLinkedInAccounts, findAccountByUnipileId } = require('./LinkedInAccountQueryService');
@@ -15,7 +16,7 @@ class LinkedInAccountService {
 
   /**
    * Disconnect a specific LinkedIn account
-   * Uses TDD schema: lad_dev.linkedin_accounts with tenant_id (UUID)
+   * Uses TDD schema: ${schema}.linkedin_accounts with tenant_id (UUID)
    * @param {string} tenantId - Tenant ID (UUID)
    * @param {string} unipileAccountId - Unipile account ID to disconnect
    * @returns {Object} Result
@@ -24,7 +25,8 @@ class LinkedInAccountService {
     try {
       console.log('[LinkedIn Account] Disconnecting account:', unipileAccountId, 'for tenant:', tenantId);
       
-      // Try TDD schema first (lad_dev.linkedin_accounts)
+      const schema = getSchema(req);
+      // Try TDD schema first (${schema}.linkedin_accounts)
       const accountResult = await findAccountByUnipileId(tenantId, unipileAccountId);
       
       if (!accountResult || !accountResult.account) {
@@ -77,7 +79,7 @@ class LinkedInAccountService {
       // Mark as inactive/disconnected in database
       if (schema === 'tdd') {
         await pool.query(
-          `UPDATE lad_dev.linkedin_accounts
+          `UPDATE ${schema}.linkedin_accounts
            SET is_active = FALSE,
                updated_at = CURRENT_TIMESTAMP
            WHERE id = $1`,

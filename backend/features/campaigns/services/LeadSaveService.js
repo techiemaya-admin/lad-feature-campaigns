@@ -3,7 +3,8 @@
  * Handles saving leads to database (leads and campaign_leads tables)
  */
 
-const { pool } = require('../../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const {
   checkLeadExists,
   extractLeadFields,
@@ -91,7 +92,8 @@ async function findOrCreateLead(tenantId, apolloPersonId, fields, leadData) {
   try {
     // Find existing lead by source_id (Apollo person ID)
     const findLeadResult = await pool.query(
-      `SELECT id FROM lad_dev.leads 
+      const schema = getSchema(req);
+      `SELECT id FROM ${schema}.leads 
        WHERE tenant_id = $1 AND source_id = $2 AND source = 'apollo_io'
        LIMIT 1`,
       [tenantId, apolloPersonId]
@@ -106,7 +108,7 @@ async function findOrCreateLead(tenantId, apolloPersonId, fields, leadData) {
       leadId = randomUUID();
       
       await pool.query(
-        `INSERT INTO lad_dev.leads (
+        `INSERT INTO ${schema}.leads (
           id, tenant_id, source, source_id, 
           first_name, last_name, email, phone, 
           company_name, title, linkedin_url, 
@@ -148,7 +150,7 @@ async function findOrCreateLead(tenantId, apolloPersonId, fields, leadData) {
         const { randomUUID } = require('crypto');
         leadId = randomUUID();
         await pool.query(
-          `INSERT INTO lad_dev.leads (id, tenant_id, first_name, last_name, email, created_at, updated_at)
+          `INSERT INTO ${schema}.leads (id, tenant_id, first_name, last_name, email, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
            ON CONFLICT (id, tenant_id) DO NOTHING`,
           [

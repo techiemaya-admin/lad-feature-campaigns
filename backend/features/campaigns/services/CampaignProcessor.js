@@ -4,7 +4,8 @@
  * Note: processLeadThroughWorkflow has been moved to WorkflowProcessor.js
  */
 
-const { pool } = require('../../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const { validateStepConfig } = require('./StepValidators');
 const { createActivity, updateActivityStatus } = require('./CampaignActivityService');
 const { executeLeadGeneration } = require('./LeadGenerationService');
@@ -54,7 +55,8 @@ async function executeStepForLead(campaignId, step, campaignLead, userId, orgId,
     if (stepType !== 'lead_generation' && campaignLead && campaignLead.id) {
       // Get tenant_id from campaign
       const campaignQuery = await pool.query(
-        `SELECT tenant_id FROM lad_dev.campaigns WHERE id = $1 AND is_deleted = FALSE`,
+        const schema = getSchema(req);
+        `SELECT tenant_id FROM ${schema}.campaigns WHERE id = $1 AND is_deleted = FALSE`,
         [campaignId]
       );
       
@@ -140,7 +142,8 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
     // Get campaign - don't filter by tenantId here, use the campaign's own tenant_id from DB
     // This allows scheduled service to process all running campaigns regardless of tenantId passed
     // Per TDD: Use lad_dev schema
-    let query = `SELECT * FROM lad_dev.campaigns WHERE id = $1 AND status = 'running'`;
+    const schema = getSchema(req);
+    let query = `SELECT * FROM ${schema}.campaigns WHERE id = $1 AND status = 'running'`;
     let params = [campaignId];
 
     // Try with is_deleted first, fallback without it
@@ -160,7 +163,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       // If is_deleted column doesn't exist, try without it
       if (error.message && error.message.includes('is_deleted')) {
         console.warn('[Campaign Execution] is_deleted column not found, trying without it');
-        query = `SELECT * FROM lad_dev.campaigns WHERE id = $1 AND status = 'running'`;
+        query = `SELECT * FROM ${schema}.campaigns WHERE id = $1 AND status = 'running'`;
         campaignResult = await pool.query(query, params);
       } else {
         throw error;
@@ -271,7 +274,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
     try {
       // First try with step_order
       stepsResult = await pool.query(
-        `SELECT * FROM lad_dev.campaign_steps 
+        `SELECT * FROM ${schema}.campaign_steps 
          WHERE campaign_id = $1 
          ORDER BY step_order ASC`,
         [campaignId]
@@ -282,7 +285,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
         console.warn('[Campaign Execution] step_order column not found, trying order:', error.message);
         try {
           stepsResult = await pool.query(
-            `SELECT * FROM lad_dev.campaign_steps 
+            `SELECT * FROM ${schema}.campaign_steps 
              WHERE campaign_id = $1 
              ORDER BY "order" ASC`,
             [campaignId]
@@ -292,7 +295,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
           if (orderError.message && orderError.message.includes('order')) {
             console.warn('[Campaign Execution] order column also not found, trying without ORDER BY:', orderError.message);
             stepsResult = await pool.query(
-              `SELECT * FROM lad_dev.campaign_steps 
+              `SELECT * FROM ${schema}.campaign_steps 
                WHERE campaign_id = $1`,
               [campaignId]
             );
@@ -314,7 +317,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       // Debug: Check if steps exist with different tenant_id
       try {
         const debugResult = await pool.query(
-          `SELECT COUNT(*) as count, tenant_id FROM lad_dev.campaign_steps WHERE campaign_id = $1 GROUP BY tenant_id`,
+          `SELECT COUNT(*) as count, tenant_id FROM ${schema}.campaign_steps WHERE campaign_id = $1 GROUP BY tenant_id`,
           [campaignId]
         );
         if (debugResult.rows.length > 0) {
@@ -396,7 +399,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       // Try with all columns first
       leadsResult = await pool.query(
         `SELECT id, campaign_id, lead_id, status, snapshot, lead_data 
-         FROM lad_dev.campaign_leads 
+         FROM ${schema}.campaign_leads 
          WHERE campaign_id = $1 
          AND status = 'active' 
          AND is_deleted = FALSE`,
@@ -410,7 +413,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
         try {
           leadsResult = await pool.query(
             `SELECT id, campaign_id, lead_id, status, lead_data 
-             FROM lad_dev.campaign_leads 
+             FROM ${schema}.campaign_leads 
              WHERE campaign_id = $1 
              AND status = 'active' 
              AND is_deleted = FALSE`,
@@ -422,7 +425,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
             console.warn('[Campaign Execution] is_deleted column also not found, trying without both:', error2.message);
             leadsResult = await pool.query(
               `SELECT id, campaign_id, lead_id, status, lead_data 
-               FROM lad_dev.campaign_leads 
+               FROM ${schema}.campaign_leads 
                WHERE campaign_id = $1 
                AND status = 'active'`,
               [campaignId]
@@ -437,7 +440,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
         try {
           leadsResult = await pool.query(
             `SELECT id, campaign_id, lead_id, status, snapshot, lead_data 
-             FROM lad_dev.campaign_leads 
+             FROM ${schema}.campaign_leads 
              WHERE campaign_id = $1 
              AND status = 'active'`,
             [campaignId]
@@ -448,7 +451,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
             console.warn('[Campaign Execution] snapshot column also not found, trying without both:', error2.message);
             leadsResult = await pool.query(
               `SELECT id, campaign_id, lead_id, status, lead_data 
-               FROM lad_dev.campaign_leads 
+               FROM ${schema}.campaign_leads 
                WHERE campaign_id = $1 
                AND status = 'active'`,
               [campaignId]

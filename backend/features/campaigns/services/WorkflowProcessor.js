@@ -3,7 +3,8 @@
  * Handles processing leads through workflow steps
  */
 
-const { pool } = require('../../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const { validateStepConfig } = require('./StepValidators');
 // Lazy load executeStepForLead to avoid circular dependency with CampaignProcessor
 // CampaignProcessor imports processLeadThroughWorkflow from this file,
@@ -20,7 +21,8 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     // This ensures we don't re-execute steps that were already completed
     // Per TDD: Use lad_dev schema
     const lastSuccessfulActivityResult = await pool.query(
-      `SELECT step_id, status, created_at FROM lad_dev.campaign_lead_activities 
+      const schema = getSchema(req);
+      `SELECT step_id, status, created_at FROM ${schema}.campaign_lead_activities 
        WHERE campaign_lead_id = $1 
        AND status IN ('delivered', 'connected', 'replied')
        ORDER BY created_at DESC LIMIT 1`,
@@ -45,7 +47,7 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
       // All steps completed, mark lead as completed
       // Per TDD: Use lad_dev schema
       await pool.query(
-        `UPDATE lad_dev.campaign_leads SET status = 'completed' WHERE id = $1`,
+        `UPDATE ${schema}.campaign_leads SET status = 'completed' WHERE id = $1`,
         [campaignLead.id]
       );
       return;
@@ -57,7 +59,7 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     // This prevents duplicate execution of steps like "Visit LinkedIn Profile" or "Send Connection Request"
     // Per TDD: Use lad_dev schema
     const existingActivityResult = await pool.query(
-      `SELECT id, status FROM lad_dev.campaign_lead_activities 
+      `SELECT id, status FROM ${schema}.campaign_lead_activities 
        WHERE campaign_lead_id = $1 
        AND step_id = $2 
        AND status IN ('delivered', 'connected', 'replied')
@@ -93,14 +95,14 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
       // Record validation error in activity
       // Per TDD: Use lad_dev schema and include tenant_id and campaign_id
       const leadInfo = await pool.query(
-        `SELECT tenant_id, campaign_id FROM lad_dev.campaign_leads WHERE id = $1`,
+        `SELECT tenant_id, campaign_id FROM ${schema}.campaign_leads WHERE id = $1`,
         [campaignLead.id]
       );
       const { tenant_id, campaign_id } = leadInfo.rows[0] || {};
       
       if (tenant_id && campaign_id) {
         await pool.query(
-          `INSERT INTO lad_dev.campaign_lead_activities 
+          `INSERT INTO ${schema}.campaign_lead_activities 
            (tenant_id, campaign_id, campaign_lead_id, step_id, step_type, action_type, status, error_message, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, 'failed', $7, CURRENT_TIMESTAMP)`,
           [
@@ -118,7 +120,7 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
       // Mark lead as stopped because step configuration is incomplete
       // Per TDD: Use lad_dev schema
       await pool.query(
-        `UPDATE lad_dev.campaign_leads SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+        `UPDATE ${schema}.campaign_leads SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
         [campaignLead.id]
       );
       
@@ -156,7 +158,7 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
         // Condition not met, mark lead as stopped
         // Per TDD: Use lad_dev schema
         await pool.query(
-          `UPDATE lad_dev.campaign_leads SET status = 'stopped' WHERE id = $1`,
+          `UPDATE ${schema}.campaign_leads SET status = 'stopped' WHERE id = $1`,
           [campaignLead.id]
         );
         return;

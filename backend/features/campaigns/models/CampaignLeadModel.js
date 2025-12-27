@@ -3,14 +3,15 @@
  * Handles database operations for campaign leads
  */
 
-const { pool } = require('../../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const { randomUUID } = require('crypto');
 
 class CampaignLeadModel {
   /**
    * Create a new campaign lead
    */
-  static async create(leadData, tenantId) {
+  static async create(leadData, tenantId, req = null) {
     const {
       campaignId,
       leadId = randomUUID(),
@@ -37,7 +38,7 @@ class CampaignLeadModel {
     };
     
     const query = `
-      INSERT INTO lad_dev.campaign_leads (
+      INSERT INTO ${schema}.campaign_leads (
         tenant_id, campaign_id, lead_id, snapshot, lead_data, status,
         created_at, updated_at
       )
@@ -61,10 +62,11 @@ class CampaignLeadModel {
   /**
    * Get lead by ID
    */
-  static async getById(leadId, tenantId) {
+  static async getById(leadId, tenantId, req = null) {
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema
     const query = `
-      SELECT * FROM lad_dev.campaign_leads
+      SELECT * FROM ${schema}.campaign_leads
       WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
     `;
 
@@ -75,12 +77,13 @@ class CampaignLeadModel {
   /**
    * Get leads by campaign ID
    */
-  static async getByCampaignId(campaignId, tenantId, filters = {}) {
+  static async getByCampaignId(campaignId, tenantId, filters = {}, req = null) {
+    const schema = getSchema(req);
     const { status, limit = 100, offset = 0 } = filters;
 
     // Per TDD: Use lad_dev schema
     let query = `
-      SELECT * FROM lad_dev.campaign_leads
+      SELECT * FROM ${schema}.campaign_leads
       WHERE campaign_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
     `;
 
@@ -102,10 +105,11 @@ class CampaignLeadModel {
   /**
    * Check if lead exists by Apollo ID
    */
-  static async existsByApolloId(campaignId, tenantId, apolloPersonId) {
+  static async existsByApolloId(campaignId, tenantId, apolloPersonId, req = null) {
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema
     const query = `
-      SELECT id FROM lad_dev.campaign_leads
+      SELECT id FROM ${schema}.campaign_leads
       WHERE campaign_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
       AND lead_data->>'apollo_person_id' = $3
     `;
@@ -117,7 +121,8 @@ class CampaignLeadModel {
   /**
    * Update campaign lead
    */
-  static async update(leadId, tenantId, updates) {
+  static async update(leadId, tenantId, updates, req = null) {
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema, update snapshot JSONB or other direct columns
     const allowedFields = [
       'snapshot', 'lead_data', 'status',
@@ -144,7 +149,7 @@ class CampaignLeadModel {
 
     // Per TDD: Use lad_dev schema
     const query = `
-      UPDATE lad_dev.campaign_leads
+      UPDATE ${schema}.campaign_leads
       SET ${setClause.join(', ')}
       WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
       RETURNING *
@@ -157,10 +162,11 @@ class CampaignLeadModel {
   /**
    * Delete campaign lead
    */
-  static async delete(leadId, tenantId) {
+  static async delete(leadId, tenantId, req = null) {
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema (soft delete)
     const query = `
-      UPDATE lad_dev.campaign_leads
+      UPDATE ${schema}.campaign_leads
       SET is_deleted = TRUE, updated_at = CURRENT_TIMESTAMP
       WHERE id = $1 AND tenant_id = $2
       RETURNING id
@@ -173,10 +179,11 @@ class CampaignLeadModel {
   /**
    * Get active leads for processing
    */
-  static async getActiveLeadsForCampaign(campaignId, tenantId, limit = 10) {
+  static async getActiveLeadsForCampaign(campaignId, tenantId, limit = 10, req = null) {
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema
     const query = `
-      SELECT * FROM lad_dev.campaign_leads
+      SELECT * FROM ${schema}.campaign_leads
       WHERE campaign_id = $1 AND tenant_id = $2 AND status = 'active' AND is_deleted = FALSE
       ORDER BY created_at ASC
       LIMIT $3
@@ -189,10 +196,11 @@ class CampaignLeadModel {
   /**
    * Get lead data (handles both lead_data and custom_fields columns)
    */
-  static async getLeadData(campaignLeadId, tenantId) {
+  static async getLeadData(campaignLeadId, tenantId, req = null) {
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema
     const query = `
-      SELECT lead_data FROM lad_dev.campaign_leads
+      SELECT lead_data FROM ${schema}.campaign_leads
       WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
     `;
 
@@ -209,7 +217,8 @@ class CampaignLeadModel {
   /**
    * Bulk create leads
    */
-  static async bulkCreate(campaignId, tenantId, leads) {
+  static async bulkCreate(campaignId, tenantId, leads, req = null) {
+    const schema = getSchema(req);
     if (!leads || leads.length === 0) {
       return [];
     }
@@ -249,7 +258,7 @@ class CampaignLeadModel {
 
     // Per TDD: Use lad_dev schema with snapshot JSONB
     const query = `
-      INSERT INTO lad_dev.campaign_leads (
+      INSERT INTO ${schema}.campaign_leads (
         tenant_id, campaign_id, lead_id, snapshot, lead_data, status
       )
       VALUES ${placeholders.join(', ')}

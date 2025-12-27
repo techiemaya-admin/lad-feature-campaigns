@@ -7,13 +7,22 @@ const path = require('path');
 const fs = require('fs');
 
 function getDatabaseConnection() {
-  // Try multiple possible paths
-  // Handle both local (backend/features/campaigns/...) and production (/app/features/campaigns/...) structures
-  
-  // Get the directory where this file is located
+  // Priority 1: Try main LAD backend (for feature repos in development)
+  const mainLADPath = '/Users/naveenreddy/Desktop/AI-Maya/LAD/backend/shared/database/connection';
+  try {
+    const connection = require(mainLADPath);
+    if (connection && connection.pool) {
+      console.log(`[DB Connection] ✅ Loaded from main LAD: ${mainLADPath}`);
+      return connection;
+    }
+  } catch (error) {
+    // Continue to other methods
+  }
+
+  // Priority 2: Try to find shared folder by going up the directory tree
+  // This works when feature is deployed in main backend
   const currentDir = __dirname;
   
-  // Try to find shared folder by going up the directory tree
   let searchDir = currentDir;
   const maxDepth = 10; // Prevent infinite loops
   let depth = 0;
@@ -42,7 +51,7 @@ function getDatabaseConnection() {
     depth++;
   }
   
-  // Fallback: try common paths
+  // Priority 3: Fallback to other common paths
   const possiblePaths = [
     // Production: /app/shared/database/connection
     '/app/shared/database/connection',
