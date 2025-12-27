@@ -3,16 +3,15 @@
  * Handles lead generation with daily limits and offset tracking
  */
 
-const { pool } = require('../../../shared/database/connection');
-const { searchEmployees } = require('./LeadSearchService');
+const { pool } = require('../../../../shared/database/connection');
+const { searchEmployees, searchEmployeesFromDatabase } = require('./LeadSearchService');
 const {
-  checkLeadExists,
-  extractLeadFields,
-  createSnapshot,
-  saveLeadToCampaign,
   updateCampaignConfig,
   updateStepConfig
 } = require('./LeadGenerationHelpers');
+const { saveLeadsToCampaign } = require('./LeadSaveService');
+const { createLeadGenerationActivity } = require('./CampaignActivityService');
+const CampaignModel = require('../models/CampaignModel');
 
 /**
  * Execute lead generation step with daily limit support
@@ -168,116 +167,160 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
       dailyLimit
     });
     
-    // Search for employees using LeadSearchService
-    console.log(`[Campaign Execution] 🔍 Calling searchEmployees with params:`, JSON.stringify(searchParams, null, 2));
-    console.log(`[Campaign Execution] 🔑 Using auth token: ${authToken ? 'Yes (provided)' : 'No (will try env var)'}`);
-    const searchResult = await searchEmployees(searchParams, page, offsetInPage, dailyLimit, authToken);
-    const { employees, fromSource, error } = searchResult || {};
+    // PRODUCTION-GRADE: Check employees_cache first, then Apollo
+    // This matches how real SaaS platforms work (cache-first strategy)
+    console.log(`[Campaign Execution] 🔍 STEP 1: Checking employees_cache table first...`);
+    let employees = [];
+    let fromSource = 'unknown';
+    let searchError = null;
     
-    console.log(`[Campaign Execution] 📊 Search result:`, {
-      employeesCount: employees?.length || 0,
-      fromSource: fromSource || 'unknown',
-      hasError: !!error,
-      error: error || 'none'
+    let accessDenied = false;
+    
+    try {
+      // First, try to get leads from database (employees_cache)
+      const dbSearchResult = await searchEmployeesFromDatabase(searchParams, page, offsetInPage, dailyLimit, authToken);
+      employees = dbSearchResult.employees || [];
+      fromSource = dbSearchResult.fromSource || 'database';
+      searchError = dbSearchResult.error || null;
+      accessDenied = dbSearchResult.accessDenied || false;
+      
+      console.log(`[Campaign Execution] 📊 Database search result: ${employees.length} leads found (source: ${fromSource})`);
+      if (accessDenied) {
+        console.warn(`[Campaign Execution] ⚠️  User does not have Apollo Leads feature access - database access denied`);
+      }
+      
+      // If no leads from database and access is NOT denied, try Apollo API
+      if (employees.length === 0 && !searchError && !accessDenied) {
+        console.log(`[Campaign Execution] 🔍 STEP 2: No leads in employees_cache, calling Apollo API...`);
+        const apolloSearchResult = await searchEmployees(searchParams, page, offsetInPage, dailyLimit, authToken);
+        employees = apolloSearchResult.employees || [];
+        fromSource = apolloSearchResult.fromSource || 'apollo';
+        searchError = apolloSearchResult.error || null;
+        
+        console.log(`[Campaign Execution] 📊 Apollo search result: ${employees.length} leads found (source: ${fromSource})`);
+      }
+    } catch (searchErr) {
+      console.error(`[Campaign Execution] ❌ Lead search error:`, searchErr.message);
+      searchError = searchErr.message;
+    }
+    
+    console.log(`[Campaign Execution] 📊 Final search result:`, {
+      employeesCount: employees.length,
+      fromSource: fromSource,
+      hasError: !!searchError,
+      accessDenied: accessDenied,
+      error: searchError || 'none'
     });
     
-    if (error) {
-      console.error(`[Campaign Execution] ❌ Lead search returned error: ${error}`);
+    // Handle access denied (403) - this is NOT an error, just no access to Apollo/database
+    if (accessDenied) {
+      console.warn(`[Campaign Execution] ⚠️  Apollo Leads feature access required for lead generation`);
+      console.warn(`[Campaign Execution] Campaign will continue but no leads will be generated`);
+      
+      // Set execution state to waiting_for_leads with clear message
+      const now = new Date();
+      const retryIntervalHours = process.env.LEAD_RETRY_INTERVAL_HOURS || 6;
+      const nextRetryTime = new Date(now.getTime() + (retryIntervalHours * 60 * 60 * 1000));
+      
+      await CampaignModel.updateExecutionState(campaignId, 'waiting_for_leads', {
+        lastLeadCheckAt: now.toISOString(),
+        nextRunAt: nextRetryTime.toISOString(),
+        lastExecutionReason: 'Apollo Leads feature access required. Please upgrade your plan to enable lead generation.'
+      });
+      
+      // Return success but with 0 leads
+      return {
+        success: true,
+        leadsFound: 0,
+        leadsSaved: 0,
+        source: 'access_denied',
+        message: 'Apollo Leads feature access required for lead generation'
+      };
+    }
+    
+    // Handle actual errors (not access denied)
+    if (searchError) {
+      console.error(`[Campaign Execution] ❌ Lead search returned error: ${searchError}`);
       console.error(`[Campaign Execution] This likely means Apollo/database endpoints are not available`);
       console.error(`[Campaign Execution] Backend URL: ${require('./LeadSearchService').BACKEND_URL || 'not set'}`);
+      
+      // Set execution state to error
+      await CampaignModel.updateExecutionState(campaignId, 'error', {
+        lastExecutionReason: `Lead search failed: ${searchError}`
+      });
+      
       // Return error so caller knows what happened
       return {
         success: false,
-        error: `Lead search failed: ${error}`,
+        error: `Lead search failed: ${searchError}`,
         leadsFound: 0,
         leadsSaved: 0,
         source: 'error'
       };
     }
     
+    // PRODUCTION-GRADE: Handle no leads found scenario
     if (!employees || employees.length === 0) {
       console.warn(`[Campaign Execution] ⚠️  No employees found! Possible reasons:`);
-      console.warn(`   - Apollo/database endpoints not available (check backend URL)`);
       console.warn(`   - No leads match the filters (too specific)`);
       console.warn(`   - Database is empty`);
       console.warn(`   - Network/connection issues`);
       console.warn(`[Campaign Execution] Search params used:`, JSON.stringify(searchParams, null, 2));
+      
+      // Set execution state to waiting_for_leads
+      const now = new Date();
+      const retryIntervalHours = process.env.LEAD_RETRY_INTERVAL_HOURS || 6; // Default 6 hours
+      const nextRetryTime = new Date(now.getTime() + (retryIntervalHours * 60 * 60 * 1000));
+      
+      // Also check if there's a configured daily retry time (e.g., 09:00)
+      const dailyRetryHour = process.env.LEAD_DAILY_RETRY_HOUR || 9; // Default 9 AM
+      const dailyRetryMinute = process.env.LEAD_DAILY_RETRY_MINUTE || 0;
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(parseInt(dailyRetryHour), parseInt(dailyRetryMinute), 0, 0);
+      
+      // Use whichever is earlier: 6 hours from now, or tomorrow at configured time
+      const nextRunAt = tomorrow < nextRetryTime ? tomorrow : nextRetryTime;
+      
+      await CampaignModel.updateExecutionState(campaignId, 'waiting_for_leads', {
+        lastLeadCheckAt: now.toISOString(),
+        nextRunAt: nextRunAt.toISOString(),
+        lastExecutionReason: `No leads found. Retrying in ${retryIntervalHours}h or tomorrow at ${dailyRetryHour}:${dailyRetryMinute.toString().padStart(2, '0')}`
+      });
+      
+      console.log(`[Campaign Execution] ⏸️  Campaign set to 'waiting_for_leads' state. Next retry: ${nextRunAt.toISOString()}`);
+      
+      return {
+        success: true,
+        leadsFound: 0,
+        leadsSaved: 0,
+        dailyLimit: dailyLimit,
+        currentOffset: currentOffset,
+        source: fromSource,
+        executionState: 'waiting_for_leads',
+        message: 'No leads found. Campaign will retry later.'
+      };
     }
     
     const employeesList = employees || [];
+    
+    // Get tenant_id from campaign
+    const campaignQuery = await pool.query(
+      `SELECT tenant_id FROM lad_dev.campaigns WHERE id = $1 AND is_deleted = FALSE`,
+      [campaignId]
+    );
+    const tenantId = campaignQuery.rows[0]?.tenant_id;
+    
+    if (!tenantId) {
+      throw new Error(`Campaign ${campaignId} not found or missing tenant_id`);
+    }
       
     // Save leads to campaign_leads table (only the daily limit)
-    let savedCount = 0;
-    let firstGeneratedLeadId = null; // Track first lead ID for activity creation
-    for (const employee of employeesList) {
-      try {
-        // Apollo person IDs are hex strings, not UUIDs, so we can't use them in lead_id column
-        // Instead, check if lead exists by querying the lead_data JSONB field
-        const apolloPersonId = employee.id || employee.apollo_person_id;
-        
-        if (!apolloPersonId) {
-          console.warn('[Campaign Execution] Employee missing apollo_person_id, skipping');
-          continue;
-        }
-        
-        // Check if lead already exists
-        const existingLead = await checkLeadExists(campaignId, apolloPersonId);
-        
-        if (!existingLead) {
-          // Generate a UUID for lead_id (Apollo IDs are hex strings, not UUIDs)
-          const { randomUUID } = require('crypto');
-          const leadId = randomUUID();
-          
-          // Ensure apollo_person_id is stored for future lookups
-          const leadData = {
-            ...employee,
-            apollo_person_id: apolloPersonId
-          };
-          
-          // Extract fields and create snapshot
-          const fields = extractLeadFields(employee);
-          const snapshot = createSnapshot(fields);
-          
-          // Get tenant_id from campaign
-          const campaignQuery = await pool.query(
-            `SELECT tenant_id FROM lad_dev.campaigns WHERE id = $1 AND is_deleted = FALSE`,
-            [campaignId]
-          );
-          const tenantId = campaignQuery.rows[0]?.tenant_id;
-          
-          if (!tenantId) {
-            throw new Error(`Campaign ${campaignId} not found or missing tenant_id`);
-          }
-          
-          // Save lead to campaign
-          try {
-            const insertedLeadId = await saveLeadToCampaign(campaignId, tenantId, leadId, snapshot, leadData);
-            savedCount++;
-            // Track first generated lead ID (primary key) for activity creation
-            if (!firstGeneratedLeadId) {
-              firstGeneratedLeadId = insertedLeadId;
-            }
-            console.log(`[Campaign Execution] ✅ Successfully saved lead ${apolloPersonId} to campaign (UUID: ${insertedLeadId}, lead_id: ${leadId})`);
-          } catch (err) {
-            console.error(`[Campaign Execution] ❌ Error saving lead:`, {
-              message: err.message,
-              code: err.code,
-              detail: err.detail,
-              constraint: err.constraint
-            });
-            throw err;
-          }
-        } else {
-          console.log(`[Campaign Execution] ⏭️ Skipping lead ${apolloPersonId} - already exists in campaign (existing ID: ${existingLead.id})`);
-        }
-      } catch (err) {
-        console.error(`[Campaign Execution] ❌ Error processing lead ${apolloPersonId}:`, {
-          message: err.message,
-          code: err.code,
-          detail: err.detail
-        });
-        }
-      }
+    const { savedCount, firstGeneratedLeadId } = await saveLeadsToCampaign(
+      campaignId,
+      tenantId,
+      employeesList
+    );
       
     // Update campaign config with new offset and date
     const newOffset = currentOffset + savedCount;
@@ -323,13 +366,31 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
     
     console.log(`[Campaign Execution] Updated campaign offset: ${currentOffset} → ${newOffset} (saved ${savedCount} leads today)`);
     
+    // PRODUCTION-GRADE: Handle daily limit and execution state
+    // IMPORTANT: Don't set to sleep here - let the campaign processor handle it AFTER processing existing leads
+    // This ensures all leads are processed through workflow steps before sleeping
+    const dailyLeadsGenerated = savedCount;
+    
+    if (dailyLeadsGenerated >= dailyLimit) {
+      // Daily limit reached - but DON'T set to sleep yet
+      // The campaign processor will set to sleep AFTER processing existing leads
+      console.log(`[Campaign Execution] ⚠️  Daily limit reached (${dailyLeadsGenerated}/${dailyLimit} leads). Will sleep AFTER processing existing leads.`);
+      
+      // Set a flag in the return value so processor knows to sleep after processing
+      // But keep state as 'active' for now so workflow steps can execute
+    } else {
+      // Leads found but not at limit - set to active
+      await CampaignModel.updateExecutionState(campaignId, 'active', {
+        lastExecutionReason: `Leads found (${dailyLeadsGenerated}/${dailyLimit}). Campaign active.`
+      });
+      
+      console.log(`[Campaign Execution] ✅ Campaign set to 'active' state. Generated ${dailyLeadsGenerated}/${dailyLimit} leads today.`);
+    }
+    
     // Create activity record for lead generation step (if leads were saved and we have a lead ID)
     // This allows the analytics to track lead generation executions
     if (savedCount > 0 && firstGeneratedLeadId && step) {
       try {
-        // Create activity with 'sent' status first (consistent with other steps)
-        // The analytics query looks for status='sent' for lead_generation
-        const activityStatus = 'sent'; // Always 'sent' for lead generation (represents successful execution)
         // Get tenant_id and campaign_id from the lead
         const leadInfo = await pool.query(
           `SELECT tenant_id, campaign_id FROM lad_dev.campaign_leads WHERE id = $1`,
@@ -338,13 +399,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
         const { tenant_id, campaign_id } = leadInfo.rows[0] || {};
         
         if (tenant_id && campaign_id) {
-          // Per TDD: Use lad_dev schema
-          await pool.query(
-            `INSERT INTO lad_dev.campaign_lead_activities 
-             (tenant_id, campaign_id, campaign_lead_id, step_id, step_type, action_type, status, channel, created_at)
-             VALUES ($1, $2, $3, $4, 'lead_generation', 'lead_generation', $5, 'web', CURRENT_TIMESTAMP)`,
-            [tenant_id, campaign_id, firstGeneratedLeadId, step.id, activityStatus]
-          );
+          await createLeadGenerationActivity(tenant_id, campaign_id, firstGeneratedLeadId, step.id);
         }
         console.log(`[Campaign Execution] ✅ Created lead generation activity record for ${savedCount} leads`);
       } catch (activityErr) {
@@ -359,7 +414,9 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
       leadsSaved: savedCount,
       dailyLimit: dailyLimit,
       currentOffset: newOffset,
-      source: fromSource
+      source: fromSource,
+      executionState: dailyLeadsGenerated >= dailyLimit ? 'sleeping_until_next_day' : 'active',
+      dailyLimitReached: dailyLeadsGenerated >= dailyLimit // Flag to indicate limit was reached
     };
   } catch (error) {
     console.error('[Campaign Execution] Lead generation error:', error);

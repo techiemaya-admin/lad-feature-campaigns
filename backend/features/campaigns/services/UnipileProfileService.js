@@ -139,11 +139,43 @@ class UnipileProfileService {
             };
 
             console.log(`[Unipile] Fetching LinkedIn profile with contact info for: ${publicIdentifier}`);
+            console.log(`[Unipile] Endpoint: ${endpoint}`);
+            console.log(`[Unipile] Account ID: ${accountId}`);
+            console.log(`[Unipile] Base URL: ${baseUrl}`);
+            console.log(`[Unipile] Token present: ${headers.Authorization ? 'Yes (Bearer ...)' : 'No'}`);
+            console.log(`[Unipile] Token length: ${headers.Authorization ? headers.Authorization.length : 0}`);
 
             const response = await axios.get(endpoint, {
                 headers: headers,
                 params: params,
                 timeout: Number(process.env.UNIPILE_LOOKUP_TIMEOUT_MS) || 15000
+            }).catch(async (error) => {
+                // Handle 401 errors - account credentials may have expired
+                if (error.response && error.response.status === 401) {
+                    const errorData = error.response.data || {};
+                    const errorType = errorData.type || '';
+                    const errorTitle = errorData.title || '';
+                    
+                    // Check if it's a missing credentials error
+                    if (errorType.includes('missing_credentials') || errorTitle.includes('Missing credentials')) {
+                        console.error(`[Unipile] ⚠️ Account ${accountId} credentials expired or invalid. Marking as inactive.`);
+                        
+                        // Mark account as inactive in database
+                        try {
+                            const { pool } = require('../../../../shared/database/connection');
+                            await pool.query(
+                                `UPDATE lad_dev.linkedin_accounts 
+                                 SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP 
+                                 WHERE unipile_account_id = $1`,
+                                [accountId]
+                            );
+                            console.log(`[Unipile] ✅ Marked account ${accountId} as inactive due to expired credentials`);
+                        } catch (dbError) {
+                            console.error(`[Unipile] Error updating account status:`, dbError.message);
+                        }
+                    }
+                }
+                throw error;
             });
 
             const profileData = response.data;
@@ -221,6 +253,54 @@ class UnipileProfileService {
             if (error.response) {
                 console.error(`[Unipile] Response status: ${error.response.status}`);
                 console.error(`[Unipile] Response data:`, error.response.data);
+                
+                // Handle 401 errors - account credentials may have expired
+                if (error.response.status === 401) {
+                    const errorData = error.response.data || {};
+                    const errorType = errorData.type || '';
+                    const errorTitle = errorData.title || '';
+                    
+                    // Check if it's a missing credentials error
+                    if (errorType.includes('missing_credentials') || errorTitle.includes('Missing credentials')) {
+                        console.error(`[Unipile] ⚠️ Account ${accountId} credentials expired or invalid. Marking as inactive.`);
+                        
+                        // Mark account as inactive in database
+                        try {
+                            const { pool } = require('../../../../shared/database/connection');
+                            await pool.query(
+                                `UPDATE lad_dev.linkedin_accounts 
+                                 SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP 
+                                 WHERE unipile_account_id = $1`,
+                                [accountId]
+                            );
+                            console.log(`[Unipile] ✅ Marked account ${accountId} as inactive due to expired credentials`);
+                            
+                            // Also try to update old schema if it exists
+                            try {
+                                await pool.query(
+                                    `UPDATE voice_agent.user_integrations_voiceagent 
+                                     SET is_connected = FALSE, updated_at = CURRENT_TIMESTAMP 
+                                     WHERE (credentials->>'unipile_account_id' = $1 OR credentials->>'account_id' = $1)
+                                     AND provider = 'linkedin'`,
+                                    [accountId]
+                                );
+                            } catch (oldSchemaError) {
+                                // Old schema might not exist, that's okay
+                            }
+                        } catch (dbError) {
+                            console.error(`[Unipile] Error updating account status:`, dbError.message);
+                        }
+                        
+                        return {
+                            success: false,
+                            phone: null,
+                            email: null,
+                            error: 'LinkedIn account credentials expired. Please reconnect your LinkedIn account in Settings.',
+                            accountExpired: true,
+                            accountId: accountId
+                        };
+                    }
+                }
             }
             
             // Don't throw - return failure so caller can fallback to Apollo

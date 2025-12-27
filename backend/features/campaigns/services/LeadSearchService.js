@@ -7,10 +7,22 @@ const axios = require('axios');
 
 // Use the actual backend URL - prioritize internal URL, then public URL, then default
 // For remote servers, this should be the same backend URL as the API calls
-const BACKEND_URL = process.env.BACKEND_INTERNAL_URL 
-  || process.env.NEXT_PUBLIC_BACKEND_URL 
-  || process.env.BACKEND_URL 
-  || 'https://lad-backend-develop-741719885039.us-central1.run.app';
+// When running locally, try localhost first
+function getBackendUrl() {
+  // If explicitly set, use it
+  if (process.env.BACKEND_INTERNAL_URL) return process.env.BACKEND_INTERNAL_URL;
+  if (process.env.BACKEND_URL) return process.env.BACKEND_URL;
+  if (process.env.NEXT_PUBLIC_BACKEND_URL) return process.env.NEXT_PUBLIC_BACKEND_URL;
+  
+  // When running locally, try localhost first
+  const port = process.env.PORT || 3004;
+  const localhostUrl = `http://localhost:${port}`;
+  
+  // Return localhost for local development, production URL as fallback
+  return localhostUrl;
+}
+
+const BACKEND_URL = getBackendUrl();
 
 /**
  * Get authentication headers for API calls
@@ -83,6 +95,19 @@ async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dai
     
     return { employees: [], fromSource: 'database' };
   } catch (dbError) {
+    // Handle 403 Forbidden (user doesn't have Apollo feature access)
+    if (dbError.response && dbError.response.status === 403) {
+      console.warn('[Lead Search] ⚠️  User does not have Apollo Leads feature access - database access denied');
+      console.warn('[Lead Search] Campaign will continue without lead generation');
+      // Return empty array with special flag to indicate access denied (not an error)
+      return { 
+        employees: [], 
+        fromSource: 'database', 
+        accessDenied: true,
+        error: 'Apollo Leads feature access required'
+      };
+    }
+    
     console.error('[Lead Search] ❌ Error fetching from database:', dbError.message);
     if (dbError.response) {
       console.error('[Lead Search] Response status:', dbError.response.status);
@@ -168,6 +193,14 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
     
     return [];
   } catch (apolloError) {
+    // Handle 403 Forbidden (user doesn't have Apollo feature access)
+    if (apolloError.response && apolloError.response.status === 403) {
+      console.warn('[Lead Search] ⚠️  User does not have Apollo Leads feature access - Apollo API access denied');
+      console.warn('[Lead Search] Campaign will continue without Apollo lead generation');
+      // Return empty array - access denied is not an error, just no leads available
+      return [];
+    }
+    
     console.error('[Lead Search] ❌ Error fetching from Apollo:', apolloError.message);
     if (apolloError.response) {
       console.error('[Lead Search] Response status:', apolloError.response.status);
@@ -203,10 +236,16 @@ async function searchEmployees(searchParams, page, offsetInPage, dailyLimit, aut
   const dbResult = await searchEmployeesFromDatabase(searchParams, page, offsetInPage, dailyLimit, authToken);
   let employees = dbResult.employees;
   let fromSource = dbResult.fromSource;
+  const accessDenied = dbResult.accessDenied || false;
   
   console.log(`[Lead Search] 📊 Database search result: ${employees.length} leads found (source: ${fromSource})`);
   if (dbResult.error) {
     console.error(`[Lead Search] ⚠️  Database search had error: ${dbResult.error}`);
+  }
+  if (accessDenied) {
+    console.warn(`[Lead Search] ⚠️  Access denied - user does not have Apollo Leads feature access`);
+    // Return early with access denied flag
+    return { employees: [], fromSource: 'database', accessDenied: true };
   }
   
   // STEP 2: If not enough leads from database, fetch from Apollo

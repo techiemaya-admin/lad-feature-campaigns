@@ -37,6 +37,11 @@ class LinkedInIntegrationService {
     return linkedInOAuthService.getAccountDetails(unipileAccountId);
   }
 
+  // Helper method to extract LinkedIn profile URL (delegates to LinkedInOAuthService)
+  extractLinkedInProfileUrl(unipileResponse) {
+    return linkedInOAuthService.extractLinkedInProfileUrl(unipileResponse);
+  }
+
   // Account management methods - delegate to LinkedInAccountService
   async disconnectAccount(userId, unipileAccountId) {
     return linkedInAccountService.disconnectAccount(userId, unipileAccountId);

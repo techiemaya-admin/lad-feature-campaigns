@@ -58,5 +58,31 @@ get-token.js
 .token
 TEST_INSTRUCTIONS.md
 
+# Local development server (production uses sts-service)
+server.js
+
 # Ignore local auth middleware changes
 backend/features/<feature-key>/middleware/auth.js
+core/middleware/auth.js
+
+# Local development files (not for production)
+package.json
+package-lock.json
+
+# Documentation files
+*.md
+
+# Test files
+**/*test*.js
+**/*test*.ts
+**/*spec*.js
+**/*spec*.ts
+test/
+tests/
+
+# Check/debug scripts (local testing only)
+check*.js
+check*.sql
+debug*.js
+verify*.js
+test-*.js

@@ -1,5 +1,5 @@
 const unipileService = require('../services/unipileService');
-const { pool } = require('../../../shared/database/connection');
+const { pool } = require('../../../../../shared/database/connection');
 
 /**
  * LinkedIn Channel Dispatcher

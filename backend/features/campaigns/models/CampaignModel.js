@@ -3,7 +3,7 @@
  * Handles database operations for campaigns
  */
 
-const { pool } = require('../../../shared/database/connection');
+const { pool } = require('../../../../shared/database/connection');
 
 class CampaignModel {
   /**
@@ -137,8 +137,8 @@ class CampaignModel {
         COUNT(DISTINCT CASE WHEN cla.status = 'opened' THEN cla.id END) as opened_count,
         COUNT(DISTINCT CASE WHEN cla.status = 'clicked' THEN cla.id END) as clicked_count
       FROM lad_dev.campaigns c
-      LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND cl.is_deleted = FALSE
-      LEFT JOIN lad_dev.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id AND cla.tenant_id = $1
+      LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND COALESCE(cl.is_deleted, FALSE) = FALSE
+      LEFT JOIN lad_dev.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id AND cla.tenant_id = $1 AND COALESCE(cla.is_deleted, FALSE) = FALSE
       WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
     `;
 
@@ -177,7 +177,7 @@ class CampaignModel {
             0 as opened_count,
             0 as clicked_count
           FROM lad_dev.campaigns c
-          LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND cl.is_deleted = FALSE
+          LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND COALESCE(cl.is_deleted, FALSE) = FALSE
           WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
         `;
         
@@ -197,8 +197,50 @@ class CampaignModel {
         fallbackQuery += ` GROUP BY c.id ORDER BY c.created_at DESC LIMIT $${fallbackParamIndex++} OFFSET $${fallbackParamIndex++}`;
         fallbackParams.push(limit, offset);
         
-        const result = await pool.query(fallbackQuery, fallbackParams);
-        return result.rows;
+        try {
+          const result = await pool.query(fallbackQuery, fallbackParams);
+          return result.rows;
+        } catch (fallbackError) {
+          // If cl.is_deleted doesn't exist, try without it (already removed above)
+          // If there's still an error, it might be another column issue
+          const fallbackErrorMsg = fallbackError.message?.toLowerCase() || '';
+          if (fallbackErrorMsg.includes('is_deleted') || fallbackErrorMsg.includes('column') && fallbackErrorMsg.includes('does not exist')) {
+            console.warn('[CampaignModel] Column issue in fallback query, trying without is_deleted:', fallbackError.message);
+            // The query already doesn't have cl.is_deleted, so if it still fails, return empty or try even simpler
+            let simpleQuery = `
+              SELECT 
+                c.*,
+                0 as leads_count,
+                0 as sent_count,
+                0 as delivered_count,
+                0 as connected_count,
+                0 as replied_count,
+                0 as opened_count,
+                0 as clicked_count
+              FROM lad_dev.campaigns c
+              WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
+            `;
+            const simpleParams = [tenantId];
+            let simpleParamIndex = 2;
+            
+            if (status && status !== 'all') {
+              simpleQuery += ` AND c.status = $${simpleParamIndex++}`;
+              simpleParams.push(status);
+            }
+            
+            if (search) {
+              simpleQuery += ` AND c.name ILIKE $${simpleParamIndex++}`;
+              simpleParams.push(`%${search}%`);
+            }
+            
+            simpleQuery += ` ORDER BY c.created_at DESC LIMIT $${simpleParamIndex++} OFFSET $${simpleParamIndex++}`;
+            simpleParams.push(limit, offset);
+            
+            const result = await pool.query(simpleQuery, simpleParams);
+            return result.rows;
+          }
+          throw fallbackError;
+        }
       }
       throw error;
     }
@@ -208,7 +250,7 @@ class CampaignModel {
    * Update campaign
    */
   static async update(campaignId, tenantId, updates) {
-    const allowedFields = ['name', 'status', 'config'];
+    const allowedFields = ['name', 'status', 'config', 'execution_state', 'last_lead_check_at', 'next_run_at', 'last_execution_reason'];
     const setClause = [];
     const values = [campaignId, tenantId];
     let paramIndex = 3;
@@ -218,6 +260,14 @@ class CampaignModel {
         if (key === 'config') {
           setClause.push(`${key} = $${paramIndex++}::jsonb`);
           values.push(JSON.stringify(value));
+        } else if (key === 'last_lead_check_at' || key === 'next_run_at') {
+          // Handle timestamp fields
+          if (value === null) {
+            setClause.push(`${key} = NULL`);
+          } else {
+            setClause.push(`${key} = $${paramIndex++}`);
+            values.push(value);
+          }
         } else {
           setClause.push(`${key} = $${paramIndex++}`);
           values.push(value);
@@ -241,6 +291,67 @@ class CampaignModel {
 
     const result = await pool.query(query, values);
     return result.rows[0];
+  }
+
+  /**
+   * Update campaign execution state (internal use, no tenant check)
+   * Used by scheduled processor to update execution state
+   */
+  static async updateExecutionState(campaignId, executionState, options = {}) {
+    const { lastLeadCheckAt = null, nextRunAt = null, lastExecutionReason = null } = options;
+    const setClause = [];
+    const values = [campaignId];
+    let paramIndex = 2;
+
+    setClause.push(`execution_state = $${paramIndex++}`);
+    values.push(executionState);
+
+    if (lastLeadCheckAt !== undefined) {
+      if (lastLeadCheckAt === null) {
+        setClause.push(`last_lead_check_at = NULL`);
+      } else {
+        setClause.push(`last_lead_check_at = $${paramIndex++}`);
+        values.push(lastLeadCheckAt);
+      }
+    }
+
+    if (nextRunAt !== undefined) {
+      if (nextRunAt === null) {
+        setClause.push(`next_run_at = NULL`);
+      } else {
+        setClause.push(`next_run_at = $${paramIndex++}`);
+        values.push(nextRunAt);
+      }
+    }
+
+    if (lastExecutionReason !== undefined) {
+      setClause.push(`last_execution_reason = $${paramIndex++}`);
+      values.push(lastExecutionReason);
+    }
+
+    setClause.push(`updated_at = CURRENT_TIMESTAMP`);
+
+    // Per TDD: Use lad_dev schema
+    // No tenant check - this is for internal processor use
+    const query = `
+      UPDATE lad_dev.campaigns
+      SET ${setClause.join(', ')}
+      WHERE id = $1
+      RETURNING id, execution_state, last_lead_check_at, next_run_at, last_execution_reason
+    `;
+
+    try {
+      const result = await pool.query(query, values);
+      return result.rows[0];
+    } catch (error) {
+      // If columns don't exist, try without them (graceful degradation)
+      const errorMsg = error.message?.toLowerCase() || '';
+      if (errorMsg.includes('execution_state') || errorMsg.includes('does not exist')) {
+        console.warn('[CampaignModel] Execution state columns not found, skipping update:', error.message);
+        return null;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -273,7 +384,7 @@ class CampaignModel {
         COUNT(DISTINCT CASE WHEN cla.status = 'connected' THEN cla.id END) as total_connected,
         COUNT(DISTINCT CASE WHEN cla.status = 'replied' THEN cla.id END) as total_replied
       FROM lad_dev.campaigns c
-      LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND cl.is_deleted = FALSE
+      LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1
       LEFT JOIN lad_dev.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id AND cla.tenant_id = $1
       WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
     `;
@@ -296,7 +407,7 @@ class CampaignModel {
             0 as total_connected,
             0 as total_replied
           FROM lad_dev.campaigns c
-          LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND cl.is_deleted = FALSE
+          LEFT JOIN lad_dev.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1
           WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
         `;
         const result = await pool.query(fallbackQuery, [tenantId]);

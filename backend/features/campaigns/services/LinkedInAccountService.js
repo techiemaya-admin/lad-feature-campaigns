@@ -3,9 +3,10 @@
  * Handles account management operations
  */
 
-const { pool } = require('../../../shared/database/connection');
+const { pool } = require('../../../../shared/database/connection');
 const UnipileBaseService = require('./UnipileBaseService');
 const axios = require('axios');
+const { getUserLinkedInAccounts, findAccountByUnipileId } = require('./LinkedInAccountQueryService');
 
 class LinkedInAccountService {
   constructor() {
@@ -14,58 +15,88 @@ class LinkedInAccountService {
 
   /**
    * Disconnect a specific LinkedIn account
-   * @param {string} userId - User ID
+   * Uses TDD schema: lad_dev.linkedin_accounts with tenant_id (UUID)
+   * @param {string} tenantId - Tenant ID (UUID)
    * @param {string} unipileAccountId - Unipile account ID to disconnect
    * @returns {Object} Result
    */
-  async disconnectAccount(userId, unipileAccountId) {
+  async disconnectAccount(tenantId, unipileAccountId) {
     try {
-      console.log('[LinkedIn Account] Disconnecting account:', unipileAccountId, 'for user:', userId);
+      console.log('[LinkedIn Account] Disconnecting account:', unipileAccountId, 'for tenant:', tenantId);
       
-      // Find integration
-      const integrationQuery = await pool.query(
-        `SELECT id, credentials
-         FROM voice_agent.user_integrations_voiceagent
-         WHERE user_id = $1 
-         AND provider = 'linkedin'
-         AND (credentials->>'unipile_account_id' = $2 OR credentials->>'account_id' = $2)
-         LIMIT 1`,
-        [userId, unipileAccountId]
-      );
-
-      if (integrationQuery.rows.length === 0) {
-        throw new Error('LinkedIn account not found for this user');
+      // Try TDD schema first (lad_dev.linkedin_accounts)
+      const accountResult = await findAccountByUnipileId(tenantId, unipileAccountId);
+      
+      if (!accountResult || !accountResult.account) {
+        throw new Error('LinkedIn account not found for this tenant/user');
       }
-
-      const integration = integrationQuery.rows[0];
-
-      // Try to delete from Unipile (don't fail if it errors)
+      
+      const account = accountResult.account;
+      const schema = accountResult.schema;
+      
+      // Try to delete from Unipile using SDK (don't fail if it errors)
       if (this.baseService.isConfigured()) {
         try {
+          // Try SDK first
+          const { UnipileClient } = require('unipile-node-sdk');
           const baseUrl = this.baseService.getBaseUrl();
-          const headers = this.baseService.getAuthHeaders();
-          await axios.delete(
-            `${baseUrl}/accounts/${unipileAccountId}`,
-            { headers, timeout: 30000 }
-          );
-        } catch (unipileError) {
-          console.warn('[LinkedIn Account] Error deleting from Unipile (continuing):', unipileError.message);
+          let sdkBaseUrl = baseUrl;
+          if (sdkBaseUrl.endsWith('/api/v1')) {
+            sdkBaseUrl = sdkBaseUrl.replace(/\/api\/v1$/, '');
+          }
+          
+          const token = (this.baseService.dsn && this.baseService.token) 
+            ? this.baseService.token.trim() 
+            : (process.env.UNIPILE_TOKEN || '').trim();
+          
+          if (token) {
+            const unipile = new UnipileClient(sdkBaseUrl, token);
+            if (unipile.account && typeof unipile.account.delete === 'function') {
+              await unipile.account.delete(unipileAccountId);
+              console.log('[LinkedIn Account] ✅ Account deleted from Unipile via SDK');
+            } else {
+              throw new Error('SDK delete method not available');
+            }
+          }
+        } catch (sdkError) {
+          // Fallback to HTTP API
+          try {
+            const baseUrl = this.baseService.getBaseUrl();
+            const headers = this.baseService.getAuthHeaders();
+            await axios.delete(
+              `${baseUrl}/accounts/${unipileAccountId}`,
+              { headers, timeout: 30000 }
+            );
+            console.log('[LinkedIn Account] ✅ Account deleted from Unipile via HTTP');
+          } catch (httpError) {
+            console.warn('[LinkedIn Account] Error deleting from Unipile (continuing):', httpError.message);
+          }
         }
       }
 
-      // Mark as disconnected in database
-      await pool.query(
-        `UPDATE voice_agent.user_integrations_voiceagent
-         SET is_connected = FALSE,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = $1`,
-        [integration.id]
-      );
-
-      console.log('[LinkedIn Account] ✅ Account disconnected');
+      // Mark as inactive/disconnected in database
+      if (schema === 'tdd') {
+        await pool.query(
+          `UPDATE lad_dev.linkedin_accounts
+           SET is_active = FALSE,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1`,
+          [account.id]
+        );
+        console.log('[LinkedIn Account] ✅ Account disconnected (TDD schema)');
+      } else {
+        await pool.query(
+          `UPDATE voice_agent.user_integrations_voiceagent
+           SET is_connected = FALSE,
+           updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1`,
+          [account.id]
+        );
+        console.log('[LinkedIn Account] ✅ Account disconnected (fallback schema)');
+      }
 
       // Get remaining accounts
-      const remainingAccounts = await this.getUserLinkedInAccounts(userId);
+      const remainingAccounts = await getUserLinkedInAccounts(tenantId);
 
       return {
         success: true,
@@ -85,37 +116,7 @@ class LinkedInAccountService {
    * @returns {Array} List of connected accounts
    */
   async getUserLinkedInAccounts(userId) {
-    try {
-      const query = `
-        SELECT id, credentials, is_connected, connected_at
-        FROM voice_agent.user_integrations_voiceagent
-        WHERE user_id = $1 
-        AND provider = 'linkedin'
-        AND is_connected = TRUE
-        ORDER BY connected_at DESC NULLS LAST, created_at DESC
-      `;
-      
-      const result = await pool.query(query, [userId]);
-      
-      return result.rows.map(row => {
-        const creds = typeof row.credentials === 'string' 
-          ? JSON.parse(row.credentials) 
-          : (row.credentials || {});
-        
-        return {
-          unipile_account_id: creds.unipile_account_id || creds.account_id,
-          profileName: creds.profile_name || 'LinkedIn User',
-          profileUrl: creds.profile_url,
-          email: creds.email,
-          profileId: creds.profile_id,
-          status: row.is_connected ? 'connected' : 'disconnected',
-          connectedAt: creds.connected_at || row.connected_at
-        };
-      });
-    } catch (error) {
-      console.error('[LinkedIn Account] Error getting user accounts:', error);
-      return [];
-    }
+    return await getUserLinkedInAccounts(userId);
   }
 
   /**
@@ -293,6 +294,133 @@ class LinkedInAccountService {
         success: false,
         error: error.message
       };
+    }
+  }
+
+  /**
+   * Solve checkpoint (Yes/No validation)
+   * @param {string} unipileAccountId - Unipile account ID
+   * @param {string} answer - YES or NO
+   * @param {string} checkpointType - Checkpoint type (default: IN_APP_VALIDATION)
+   * @returns {Object} Result
+   */
+  async solveCheckpoint(unipileAccountId, answer, checkpointType = 'IN_APP_VALIDATION') {
+    try {
+      if (!this.baseService.isConfigured()) {
+        throw new Error('Unipile is not configured');
+      }
+
+      const baseUrl = this.baseService.getBaseUrl();
+      let sdkBaseUrl = baseUrl;
+      if (sdkBaseUrl.endsWith('/api/v1')) {
+        sdkBaseUrl = sdkBaseUrl.replace(/\/api\/v1$/, '');
+      } else if (sdkBaseUrl.endsWith('/api/v1/')) {
+        sdkBaseUrl = sdkBaseUrl.replace(/\/api\/v1\/$/, '');
+      }
+
+      const token = (this.baseService.dsn && this.baseService.token) 
+        ? this.baseService.token.trim() 
+        : (process.env.UNIPILE_TOKEN || '').trim();
+
+      if (!token) {
+        throw new Error('UNIPILE_TOKEN is not configured');
+      }
+
+      // Try SDK first (like pluto_campaigns)
+      const { UnipileClient } = require('unipile-node-sdk');
+      const unipile = new UnipileClient(sdkBaseUrl, token);
+
+      let solveResponse;
+      if (unipile.account && typeof unipile.account.solveCheckpoint === 'function') {
+        console.log('[LinkedIn Account] Using SDK solveCheckpoint()');
+        solveResponse = await unipile.account.solveCheckpoint({
+          account_id: unipileAccountId,
+          type: checkpointType,
+          answer: answer
+        });
+      } else {
+        // Fallback to HTTP
+        console.log('[LinkedIn Account] SDK method not available, using HTTP fallback');
+        const headers = this.baseService.getAuthHeaders();
+        const response = await axios.post(
+          `${baseUrl}/accounts/${unipileAccountId}/solve-checkpoint`,
+          {
+            type: checkpointType,
+            answer: answer
+          },
+          { headers, timeout: 30000 }
+        );
+        solveResponse = response.data;
+      }
+
+      console.log('[LinkedIn Account] ✅ Checkpoint solved successfully');
+      return solveResponse;
+    } catch (error) {
+      console.error('[LinkedIn Account] Error solving checkpoint:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Verify OTP for checkpoint
+   * @param {string} unipileAccountId - Unipile account ID
+   * @param {string} otp - OTP code
+   * @returns {Object} Result
+   */
+  async verifyOTP(unipileAccountId, otp) {
+    try {
+      if (!this.baseService.isConfigured()) {
+        throw new Error('Unipile is not configured');
+      }
+
+      const baseUrl = this.baseService.getBaseUrl();
+      let sdkBaseUrl = baseUrl;
+      if (sdkBaseUrl.endsWith('/api/v1')) {
+        sdkBaseUrl = sdkBaseUrl.replace(/\/api\/v1$/, '');
+      } else if (sdkBaseUrl.endsWith('/api/v1/')) {
+        sdkBaseUrl = sdkBaseUrl.replace(/\/api\/v1\/$/, '');
+      }
+
+      const token = (this.baseService.dsn && this.baseService.token) 
+        ? this.baseService.token.trim() 
+        : (process.env.UNIPILE_TOKEN || '').trim();
+
+      if (!token) {
+        throw new Error('UNIPILE_TOKEN is not configured');
+      }
+
+      // Try SDK first (like pluto_campaigns)
+      const { UnipileClient } = require('unipile-node-sdk');
+      const unipile = new UnipileClient(sdkBaseUrl, token);
+
+      let verificationResponse;
+      if (unipile.account && typeof unipile.account.solveCodeCheckpoint === 'function') {
+        console.log('[LinkedIn Account] Using SDK solveCodeCheckpoint()');
+        verificationResponse = await unipile.account.solveCodeCheckpoint({
+          provider: 'LINKEDIN',
+          account_id: unipileAccountId,
+          code: otp
+        });
+      } else {
+        // Fallback to HTTP
+        console.log('[LinkedIn Account] SDK method not available, using HTTP fallback');
+        const headers = this.baseService.getAuthHeaders();
+        const response = await axios.post(
+          `${baseUrl}/accounts/${unipileAccountId}/solve-checkpoint`,
+          {
+            type: 'OTP',
+            code: otp
+          },
+          { headers, timeout: 30000 }
+        );
+        verificationResponse = response.data;
+      }
+
+      console.log('[LinkedIn Account] ✅ OTP verified successfully');
+      return verificationResponse;
+    } catch (error) {
+      console.error('[LinkedIn Account] Error verifying OTP:', error);
+      throw error;
     }
   }
 }

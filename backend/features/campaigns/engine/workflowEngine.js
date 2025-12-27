@@ -1,4 +1,4 @@
-const { pool } = require('../../../shared/database/connection');
+const { pool } = require('../../../../shared/database/connection');
 const stepExecutor = require('./stepExecutor');
 const conditionEvaluator = require('./conditionEvaluator');
 
