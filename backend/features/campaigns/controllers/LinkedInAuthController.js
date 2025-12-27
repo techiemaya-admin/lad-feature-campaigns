@@ -17,7 +17,14 @@ class LinkedInAuthController {
       const redirectUri = req.query.redirect_uri || 
                         req.body.redirect_uri || 
                         process.env.LINKEDIN_REDIRECT_URI || 
-                        `${process.env.FRONTEND_URL || 'http://localhost:3000'}/settings/linkedin/callback`;
+                        (process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/settings/linkedin/callback` : null);
+      
+      if (!redirectUri) {
+        return res.status(400).json({
+          success: false,
+          error: 'Redirect URI must be provided via redirect_uri parameter, LINKEDIN_REDIRECT_URI, or FRONTEND_URL must be set'
+        });
+      }
       
       if (!userId) {
         return res.status(400).json({
@@ -53,7 +60,14 @@ class LinkedInAuthController {
       const { code, state } = req.query;
       const redirectUri = req.query.redirect_uri || 
                         process.env.LINKEDIN_REDIRECT_URI || 
-                        `${process.env.FRONTEND_URL || 'http://localhost:3000'}/settings/linkedin/callback`;
+                        (process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/settings/linkedin/callback` : null);
+      
+      if (!redirectUri) {
+        return res.status(400).json({
+          success: false,
+          error: 'Redirect URI must be provided via redirect_uri parameter, LINKEDIN_REDIRECT_URI, or FRONTEND_URL must be set'
+        });
+      }
       
       if (!code) {
         return res.status(400).json({
@@ -76,13 +90,25 @@ class LinkedInAuthController {
       const result = await linkedInService.handleLinkedInCallback(userId, code, redirectUri);
       
       // Redirect to frontend success page
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      const frontendUrl = process.env.FRONTEND_URL;
+      if (!frontendUrl) {
+        return res.status(500).json({
+          success: false,
+          error: 'FRONTEND_URL must be set for redirect'
+        });
+      }
       const successUrl = `${frontendUrl}/settings?linkedin=connected&accountId=${result.account.unipile_account_id}`;
       
       res.redirect(successUrl);
     } catch (error) {
       console.error('[LinkedIn Auth] Error handling callback:', error);
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      const frontendUrl = process.env.FRONTEND_URL;
+      if (!frontendUrl) {
+        return res.status(500).json({
+          success: false,
+          error: 'FRONTEND_URL must be set for redirect'
+        });
+      }
       const errorUrl = `${frontendUrl}/settings?linkedin=error&message=${encodeURIComponent(error.message)}`;
       res.redirect(errorUrl);
     }

@@ -17,7 +17,11 @@ class LinkedInWebhookController {
       const webhookUrl = webhook_url || 
                         process.env.UNIPILE_WEBHOOK_URL || 
                         process.env.WEBHOOK_URL ||
-                        `${process.env.BACKEND_URL || 'http://localhost:3004'}/api/campaigns/linkedin/webhook`;
+                        (process.env.BACKEND_URL ? `${process.env.BACKEND_URL}/api/campaigns/linkedin/webhook` : null);
+      
+      if (!webhookUrl) {
+        throw new Error('Webhook URL must be provided via webhook_url, UNIPILE_WEBHOOK_URL, WEBHOOK_URL, or BACKEND_URL must be set');
+      }
       
       const webhookEvents = events || ['new_relation'];
       const webhookSource = source || 'users';

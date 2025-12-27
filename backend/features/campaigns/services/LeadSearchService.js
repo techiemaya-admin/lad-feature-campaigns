@@ -14,12 +14,8 @@ function getBackendUrl() {
   if (process.env.BACKEND_URL) return process.env.BACKEND_URL;
   if (process.env.NEXT_PUBLIC_BACKEND_URL) return process.env.NEXT_PUBLIC_BACKEND_URL;
   
-  // When running locally, try localhost first
-  const port = process.env.PORT || 3004;
-  const localhostUrl = `http://localhost:${port}`;
-  
-  // Return localhost for local development, production URL as fallback
-  return localhostUrl;
+  // No hardcoded fallback - must be set via environment variables
+  throw new Error('BACKEND_URL, BACKEND_INTERNAL_URL, or NEXT_PUBLIC_BACKEND_URL must be set');
 }
 
 const BACKEND_URL = getBackendUrl();
