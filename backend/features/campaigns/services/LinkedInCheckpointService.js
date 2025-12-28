@@ -4,6 +4,7 @@
  */
 
 const { extractCheckpointInfo } = require('./LinkedInProfileHelper');
+const logger = require('../../../core/utils/logger');
 
 /**
  * Handle checkpoint response from Unipile SDK
@@ -20,7 +21,7 @@ async function handleCheckpointResponse(account, unipile, email = null) {
     throw new Error('LinkedIn requires verification, but no account ID was returned.');
   }
   
-  console.log('[LinkedIn Checkpoint] ⚠️ Checkpoint required:', account.checkpoint.type);
+  logger.info('[LinkedIn Checkpoint] Checkpoint required', { checkpointType: account.checkpoint.type });
   
   // Extract checkpoint information
   const checkpointInfo = await extractCheckpointInfo(account, unipile, accountId);

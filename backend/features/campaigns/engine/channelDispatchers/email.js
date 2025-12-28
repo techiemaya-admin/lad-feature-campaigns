@@ -1,4 +1,5 @@
 const axios = require('axios');
+const logger = require('../../../../core/utils/logger');
 
 const BACKEND_URL = process.env.BACKEND_INTERNAL_URL || process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL;
 if (!BACKEND_URL) {
@@ -13,22 +14,22 @@ class EmailDispatcher {
   /**
    * Execute email action
    */
-  async execute(stepType, lead, stepConfig, userId, orgId) {
+  async execute(stepType, lead, stepConfig, userId, tenantId) {
     try {
-      console.log(`[EmailDispatcher] Executing ${stepType} for lead ${lead.id}`);
+      logger.info('[EmailDispatcher] Executing step', { stepType, leadId: lead.id });
 
       switch (stepType) {
         case 'email_send':
-          return await this.sendEmail(lead, stepConfig, userId, orgId);
+          return await this.sendEmail(lead, stepConfig, userId, tenantId);
 
         case 'email_followup':
-          return await this.sendFollowupEmail(lead, stepConfig, userId, orgId);
+          return await this.sendFollowupEmail(lead, stepConfig, userId, tenantId);
 
         default:
           return { success: false, error: `Unsupported email action: ${stepType}` };
       }
     } catch (error) {
-      console.error('[EmailDispatcher] Error:', error);
+      logger.error('[EmailDispatcher] Error', { error: error.message, stack: error.stack });
       return { success: false, error: error.message };
     }
   }
@@ -36,7 +37,7 @@ class EmailDispatcher {
   /**
    * Send email
    */
-  async sendEmail(lead, stepConfig, userId, orgId) {
+  async sendEmail(lead, stepConfig, userId, tenantId) {
     try {
       const leadData = lead.lead_data || {};
       const email = leadData.email || leadData.email_address;
@@ -58,7 +59,7 @@ class EmailDispatcher {
           lead_id: lead.id,
           campaign_id: lead.campaign_id,
           user_id: userId,
-          org_id: orgId
+          tenant_id: tenantId
         },
         {
           headers: {
@@ -80,7 +81,7 @@ class EmailDispatcher {
         throw new Error(response.data?.message || 'Email send failed');
       }
     } catch (error) {
-      console.error('[EmailDispatcher] Email send failed:', error);
+      logger.error('[EmailDispatcher] Email send failed', { error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -88,7 +89,7 @@ class EmailDispatcher {
   /**
    * Send followup email
    */
-  async sendFollowupEmail(lead, stepConfig, userId, orgId) {
+  async sendFollowupEmail(lead, stepConfig, userId, tenantId) {
     try {
       const leadData = lead.lead_data || {};
       const email = leadData.email || leadData.email_address;
@@ -111,7 +112,7 @@ class EmailDispatcher {
           lead_id: lead.id,
           campaign_id: lead.campaign_id,
           user_id: userId,
-          org_id: orgId
+          tenant_id: tenantId
         },
         {
           headers: {
@@ -133,7 +134,7 @@ class EmailDispatcher {
         throw new Error(response.data?.message || 'Followup email send failed');
       }
     } catch (error) {
-      console.error('[EmailDispatcher] Followup email send failed:', error);
+      logger.error('[EmailDispatcher] Followup email send failed', { error: error.message, stack: error.stack });
       throw error;
     }
   }

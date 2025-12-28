@@ -26,7 +26,9 @@ class CampaignLeadModel {
       status = 'active'
     } = leadData;
 
-    // Per TDD: Use lad_dev schema with snapshot JSONB (not individual columns)
+    const schema = getSchema(req);
+    
+    // Per TDD: Use dynamic schema with snapshot JSONB (not individual columns)
     const snapshot = {
       first_name: firstName,
       last_name: lastName,

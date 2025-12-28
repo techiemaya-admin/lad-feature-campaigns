@@ -12,36 +12,35 @@ const {
   sendConnectionRequestWithFallback
 } = require('./LinkedInAccountHelper');
 const { generateAndSaveProfileSummary } = require('./LinkedInProfileSummaryService');
+const logger = require('../../../core/utils/logger');
 
 /**
  * Execute LinkedIn step
  */
-async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, orgId) {
+async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, tenantId) {
   try {
-    console.log(`[Campaign Execution] Executing LinkedIn step: ${stepType}`);
-    console.log(`[Campaign Execution] Campaign Lead ID: ${campaignLead?.id}, User ID: ${userId}, Org ID: ${orgId}`);
+    logger.info('[Campaign Execution] Executing LinkedIn step', { stepType, leadId: campaignLead?.id, userId, tenantId });
     
     // Get lead data
     const leadData = await getLeadData(campaignLead.id);
     if (!leadData) {
-      console.error(`[Campaign Execution] ❌ Lead data not found for lead ID: ${campaignLead.id}`);
+      logger.error('[Campaign Execution] Lead data not found', { leadId: campaignLead.id });
       return { success: false, error: 'Lead not found' };
     }
     
     const linkedinUrl = leadData.linkedin_url || leadData.employee_linkedin_url;
     if (!linkedinUrl) {
-      console.error(`[Campaign Execution] ❌ LinkedIn URL not found for lead ${campaignLead.id}. Lead data keys:`, Object.keys(leadData));
+      logger.error('[Campaign Execution] LinkedIn URL not found for lead', { leadId: campaignLead.id, leadDataKeys: Object.keys(leadData) });
       return { success: false, error: 'LinkedIn URL not found for lead' };
     }
     
-    console.log(`[Campaign Execution] Found LinkedIn URL: ${linkedinUrl} for lead ${campaignLead.id}`);
+    logger.debug('[Campaign Execution] Found LinkedIn URL', { linkedinUrl, leadId: campaignLead.id });
     
     // Get LinkedIn account with Unipile account ID (using helper)
-    const linkedinAccountId = await getLinkedInAccountForExecution(orgId, userId);
+    const linkedinAccountId = await getLinkedInAccountForExecution(tenantId, userId);
     
     if (!linkedinAccountId) {
-      console.error(`[Campaign Execution] ❌ No active LinkedIn account connected with Unipile. Org ID: ${orgId}`);
-      console.error(`[Campaign Execution] To fix this: Go to Settings → LinkedIn Integration and connect a LinkedIn account`);
+      logger.error('[Campaign Execution] No active LinkedIn account connected with Unipile', { tenantId });
       return { 
         success: false, 
         error: 'No active LinkedIn account connected with Unipile. Please connect a LinkedIn account in Settings → LinkedIn Integration to enable LinkedIn campaign steps.',
@@ -49,7 +48,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, o
       };
     }
     
-    console.log(`[Campaign Execution] Using LinkedIn account with Unipile ID: ${linkedinAccountId}`);
+    logger.info('[Campaign Execution] Using LinkedIn account', { unipileAccountId: linkedinAccountId });
     
     // Format employee for Unipile
     const employee = {
@@ -70,11 +69,11 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, o
       const userWantsMessage = stepConfig.sendWithMessage === true || stepConfig.sendWithMessage === 'true' || stepConfig.connectionMessage !== null;
       const message = stepConfig.message || stepConfig.connectionMessage || null;
       
-      console.log(`[Campaign Execution] LinkedIn connect step - user wants message: ${userWantsMessage}, message provided: ${!!message}`);
+      logger.debug('[Campaign Execution] LinkedIn connect step', { userWantsMessage, hasMessage: !!message });
       
       // Get all available LinkedIn accounts for fallback
-      const allAccounts = await getAllLinkedInAccountsForTenant(orgId, userId);
-      console.log(`[Campaign Execution] Found ${allAccounts.length} LinkedIn account(s) available for fallback`);
+      const allAccounts = await getAllLinkedInAccountsForTenant(tenantId, userId);
+      logger.info('[Campaign Execution] Found LinkedIn accounts available for fallback', { count: allAccounts.length });
       
       // Try connection request with smart fallback logic
       result = await sendConnectionRequestWithFallback(
@@ -88,62 +87,61 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, o
       // Add 10-second delay after sending connection request to avoid rate limiting
       // This prevents sending requests too fast and hitting LinkedIn's rate limits
       // Delay applies regardless of success/failure to maintain consistent rate
-      console.log(`[Campaign Execution] ⏳ Waiting 10 seconds before next connection request to avoid rate limits...`);
+      logger.debug('[Campaign Execution] Waiting 10 seconds before next connection request to avoid rate limits');
       await new Promise(resolve => setTimeout(resolve, 10000));
-      console.log(`[Campaign Execution] ✅ Delay complete, ready for next request`);
+      logger.debug('[Campaign Execution] Delay complete, ready for next request');
     } else if (stepType === 'linkedin_message') {
       const message = stepConfig.message || stepConfig.body || 'Hello!';
-      console.log(`[Campaign Execution] LinkedIn message step - sending message to ${employee.fullname}`);
+      logger.info('[Campaign Execution] LinkedIn message step - sending message', { employeeName: employee.fullname });
       result = await unipileService.sendLinkedInMessage(employee, message, linkedinAccountId);
     } else if (stepType === 'linkedin_follow') {
-      console.log(`[Campaign Execution] LinkedIn follow step - following ${employee.fullname}`);
+      logger.info('[Campaign Execution] LinkedIn follow step', { employeeName: employee.fullname });
       result = await unipileService.followLinkedInProfile(employee, linkedinAccountId);
     } else if (stepType === 'linkedin_visit') {
-      console.log(`[Campaign Execution] LinkedIn visit step - fetching profile via Unipile for ${employee.fullname} (URL: ${linkedinUrl})`);
-      console.log(`[Campaign Execution] Using Unipile account ID: ${linkedinAccountId}`);
+      logger.info('[Campaign Execution] LinkedIn visit step - fetching profile via Unipile', { employeeName: employee.fullname, linkedinUrl, unipileAccountId: linkedinAccountId });
       
       // Validate inputs before making API call
       if (!linkedinUrl) {
-        console.error(`[Campaign Execution] ❌ LinkedIn URL is missing for ${employee.fullname}`);
+        logger.error('[Campaign Execution] LinkedIn URL is missing', { employeeName: employee.fullname });
         result = { success: false, error: 'LinkedIn URL is required' };
         return result;
       }
       
       if (!linkedinAccountId) {
-        console.error(`[Campaign Execution] ❌ LinkedIn account ID is missing for ${employee.fullname}`);
+        logger.error('[Campaign Execution] LinkedIn account ID is missing', { employeeName: employee.fullname });
         result = { success: false, error: 'LinkedIn account ID is required' };
         return result;
       }
       
       // Check if Unipile service is configured
       if (!unipileService.isConfigured()) {
-        console.error(`[Campaign Execution] ❌ Unipile service is not configured`);
+        logger.error('[Campaign Execution] Unipile service is not configured');
         result = { success: false, error: 'Unipile service is not configured' };
         return result;
       }
       
       // Use Unipile profile lookup as a real "visit" and to hydrate contact info
       try {
-        console.log(`[Campaign Execution] Calling Unipile API for ${employee.fullname}...`);
+        logger.debug('[Campaign Execution] Calling Unipile API', { employeeName: employee.fullname });
         const startTime = Date.now();
         const profileResult = await unipileService.getLinkedInContactDetails(linkedinUrl, linkedinAccountId);
         const duration = Date.now() - startTime;
-        console.log(`[Campaign Execution] Unipile API call completed in ${duration}ms for ${employee.fullname}`);
+        logger.info('[Campaign Execution] Unipile API call completed', { employeeName: employee.fullname, duration });
         
         // Check if account credentials expired
         if (profileResult && profileResult.accountExpired) {
-          console.error(`[Campaign Execution] ⚠️ Account ${linkedinAccountId} credentials expired. Trying to find another account...`);
+          logger.warn('[Campaign Execution] Account credentials expired, trying to find another account', { accountId: linkedinAccountId });
           
           // Try to get another active account
-          const allAccounts = await getAllLinkedInAccountsForTenant(orgId, userId);
+          const allAccounts = await getAllLinkedInAccountsForTenant(tenantId, userId);
           const otherAccount = allAccounts.find(acc => acc.unipile_account_id !== linkedinAccountId);
           
           if (otherAccount && otherAccount.unipile_account_id) {
-            console.log(`[Campaign Execution] 🔄 Retrying with another account: ${otherAccount.unipile_account_id}`);
+            logger.info('[Campaign Execution] Retrying with another account', { accountId: otherAccount.unipile_account_id });
             const retryResult = await unipileService.getLinkedInContactDetails(linkedinUrl, otherAccount.unipile_account_id);
             
             if (retryResult && retryResult.success !== false) {
-              console.log(`[Campaign Execution] ✅ Successfully visited profile for ${employee.fullname} via fallback account`);
+              logger.info('[Campaign Execution] Successfully visited profile via fallback account', { employeeName: employee.fullname });
               result = {
                 success: true,
                 message: 'Profile visited via Unipile and contact details fetched',
@@ -153,7 +151,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, o
               const profileData = retryResult.profile || retryResult;
               await generateAndSaveProfileSummary(campaignLead.id, leadData, profileData, employee);
             } else {
-              console.error(`[Campaign Execution] ❌ All LinkedIn accounts have expired credentials`);
+              logger.error('[Campaign Execution] All LinkedIn accounts have expired credentials');
               result = {
                 success: false,
                 error: 'LinkedIn account credentials expired. Please reconnect your LinkedIn account in Settings → LinkedIn Integration.',
@@ -161,7 +159,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, o
               };
             }
           } else {
-            console.error(`[Campaign Execution] ❌ No other active LinkedIn accounts available`);
+            logger.error('[Campaign Execution] No other active LinkedIn accounts available');
             result = {
               success: false,
               error: 'LinkedIn account credentials expired. Please reconnect your LinkedIn account in Settings → LinkedIn Integration.',
@@ -169,7 +167,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, o
             };
           }
         } else if (profileResult && profileResult.success !== false) {
-          console.log(`[Campaign Execution] ✅ Successfully visited profile for ${employee.fullname} via Unipile`);
+          logger.info('[Campaign Execution] Successfully visited profile via Unipile', { employeeName: employee.fullname });
           result = {
             success: true,
             message: 'Profile visited via Unipile and contact details fetched',
@@ -180,25 +178,25 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, o
           const profileData = profileResult.profile || profileResult;
           await generateAndSaveProfileSummary(campaignLead.id, leadData, profileData, employee);
         } else {
-          console.error(`[Campaign Execution] ❌ Failed to visit profile for ${employee.fullname}: ${profileResult?.error || 'Unknown error'}`);
+          logger.error('[Campaign Execution] Failed to visit profile', { employeeName: employee.fullname, error: profileResult?.error || 'Unknown error' });
           result = {
             success: false,
             error: profileResult?.error || 'Failed to fetch LinkedIn profile via Unipile'
           };
         }
       } catch (visitErr) {
-        console.error(`[Campaign Execution] ❌ Error during LinkedIn visit via Unipile for ${employee.fullname}:`, visitErr.message || visitErr);
+        logger.error('[Campaign Execution] Error during LinkedIn visit via Unipile', { employeeName: employee.fullname, error: visitErr.message, stack: visitErr.stack });
         result = { success: false, error: visitErr.message || 'LinkedIn visit failed' };
       }
     } else {
       // For other LinkedIn steps (scrape_profile, company_search, employee_list, autopost, comment_reply)
-      console.log(`[Campaign Execution] LinkedIn step ${stepType} - recorded for future implementation`);
+      logger.debug('[Campaign Execution] LinkedIn step recorded for future implementation', { stepType });
       result = { success: true, message: `LinkedIn step ${stepType} recorded` };
     }
     
     return result;
   } catch (error) {
-    console.error('[Campaign Execution] LinkedIn step error:', error);
+    logger.error('[Campaign Execution] LinkedIn step error', { error: error.message, stack: error.stack });
     return { success: false, error: error.message };
   }
 }

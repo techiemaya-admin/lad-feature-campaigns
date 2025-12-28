@@ -8,6 +8,7 @@ const { getSchema } = require('../../../core/utils/schemaHelper');
 const UnipileBaseService = require('./UnipileBaseService');
 const axios = require('axios');
 const { getUserLinkedInAccounts, findAccountByUnipileId } = require('./LinkedInAccountQueryService');
+const logger = require('../../../core/utils/logger');
 
 class LinkedInAccountService {
   constructor() {
@@ -23,9 +24,9 @@ class LinkedInAccountService {
    */
   async disconnectAccount(tenantId, unipileAccountId) {
     try {
-      console.log('[LinkedIn Account] Disconnecting account:', unipileAccountId, 'for tenant:', tenantId);
+      logger.info('[LinkedIn Account] Disconnecting account', { unipileAccountId, tenantId });
       
-      const schema = getSchema(req);
+      const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
       // Try TDD schema first (${schema}.linkedin_accounts)
       const accountResult = await findAccountByUnipileId(tenantId, unipileAccountId);
       
@@ -55,7 +56,7 @@ class LinkedInAccountService {
             const unipile = new UnipileClient(sdkBaseUrl, token);
             if (unipile.account && typeof unipile.account.delete === 'function') {
               await unipile.account.delete(unipileAccountId);
-              console.log('[LinkedIn Account] ✅ Account deleted from Unipile via SDK');
+              logger.info('[LinkedIn Account] Account deleted from Unipile via SDK', { accountId: unipileAccountId });
             } else {
               throw new Error('SDK delete method not available');
             }
@@ -69,23 +70,24 @@ class LinkedInAccountService {
               `${baseUrl}/accounts/${unipileAccountId}`,
               { headers, timeout: 30000 }
             );
-            console.log('[LinkedIn Account] ✅ Account deleted from Unipile via HTTP');
+            logger.info('[LinkedIn Account] Account deleted from Unipile via HTTP', { accountId: unipileAccountId });
           } catch (httpError) {
-            console.warn('[LinkedIn Account] Error deleting from Unipile (continuing):', httpError.message);
+            logger.warn('[LinkedIn Account] Error deleting from Unipile (continuing)', { error: httpError.message });
           }
         }
       }
 
       // Mark as inactive/disconnected in database
-      if (schema === 'tdd') {
+      const resolvedSchema = accountResult.schema === 'tdd' ? schema : null;
+      if (accountResult.schema === 'tdd') {
         await pool.query(
-          `UPDATE ${schema}.linkedin_accounts
+          `UPDATE ${resolvedSchema}.linkedin_accounts
            SET is_active = FALSE,
                updated_at = CURRENT_TIMESTAMP
            WHERE id = $1`,
           [account.id]
         );
-        console.log('[LinkedIn Account] ✅ Account disconnected (TDD schema)');
+        logger.info('[LinkedIn Account] Account disconnected (TDD schema)', { accountId: unipileAccountId });
       } else {
         await pool.query(
           `UPDATE voice_agent.user_integrations_voiceagent
@@ -94,7 +96,7 @@ class LinkedInAccountService {
            WHERE id = $1`,
           [account.id]
         );
-        console.log('[LinkedIn Account] ✅ Account disconnected (fallback schema)');
+        logger.info('[LinkedIn Account] Account disconnected (fallback schema)', { accountId: unipileAccountId });
       }
 
       // Get remaining accounts
@@ -107,7 +109,7 @@ class LinkedInAccountService {
         remainingAccountsList: remainingAccounts
       };
     } catch (error) {
-      console.error('[LinkedIn Account] Error disconnecting account:', error);
+      logger.error('[LinkedIn Account] Error disconnecting account', { error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -154,7 +156,7 @@ class LinkedInAccountService {
         };
       });
     } catch (error) {
-      console.error('[LinkedIn Account] Error getting all accounts:', error);
+      logger.error('[LinkedIn Account] Error getting all accounts', { error: error.message, stack: error.stack });
       return [];
     }
   }
@@ -168,7 +170,7 @@ class LinkedInAccountService {
     try {
       const { unipile_account_id } = account;
       
-      console.log('[LinkedIn Account] Syncing account data:', unipile_account_id);
+      logger.info('[LinkedIn Account] Syncing account data', { accountId: unipile_account_id });
       
       if (!this.baseService.isConfigured()) {
         throw new Error('Unipile is not configured');
@@ -188,7 +190,7 @@ class LinkedInAccountService {
           ? connResponse.data 
           : (connResponse.data?.data || connResponse.data?.connections || []);
       } catch (err) {
-        console.warn('[LinkedIn Account] Error fetching connections:', err.message);
+        logger.warn('[LinkedIn Account] Error fetching connections', { error: err.message });
       }
 
       // Update lastSyncedAt in credentials
@@ -225,7 +227,7 @@ class LinkedInAccountService {
         connectionsCount: connections.length
       };
     } catch (error) {
-      console.error('[LinkedIn Account] Error syncing account data:', error);
+      logger.error('[LinkedIn Account] Error syncing account data', { error: error.message, stack: error.stack });
       return {
         success: false,
         error: error.message
@@ -291,7 +293,7 @@ class LinkedInAccountService {
         account: accountDetails
       };
     } catch (error) {
-      console.error('[LinkedIn Account] Error syncing from Unipile:', error);
+      logger.error('[LinkedIn Account] Error syncing from Unipile', { error: error.message, stack: error.stack });
       return {
         success: false,
         error: error.message
@@ -334,7 +336,7 @@ class LinkedInAccountService {
 
       let solveResponse;
       if (unipile.account && typeof unipile.account.solveCheckpoint === 'function') {
-        console.log('[LinkedIn Account] Using SDK solveCheckpoint()');
+        logger.debug('[LinkedIn Account] Using SDK solveCheckpoint', { accountId: unipileAccountId, checkpointType, answer });
         solveResponse = await unipile.account.solveCheckpoint({
           account_id: unipileAccountId,
           type: checkpointType,
@@ -342,7 +344,7 @@ class LinkedInAccountService {
         });
       } else {
         // Fallback to HTTP
-        console.log('[LinkedIn Account] SDK method not available, using HTTP fallback');
+        logger.debug('[LinkedIn Account] SDK method not available, using HTTP fallback');
         const headers = this.baseService.getAuthHeaders();
         const response = await axios.post(
           `${baseUrl}/accounts/${unipileAccountId}/solve-checkpoint`,
@@ -355,10 +357,10 @@ class LinkedInAccountService {
         solveResponse = response.data;
       }
 
-      console.log('[LinkedIn Account] ✅ Checkpoint solved successfully');
+      logger.info('[LinkedIn Account] Checkpoint solved successfully', { accountId: unipileAccountId });
       return solveResponse;
     } catch (error) {
-      console.error('[LinkedIn Account] Error solving checkpoint:', error);
+      logger.error('[LinkedIn Account] Error solving checkpoint', { error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -397,7 +399,7 @@ class LinkedInAccountService {
 
       let verificationResponse;
       if (unipile.account && typeof unipile.account.solveCodeCheckpoint === 'function') {
-        console.log('[LinkedIn Account] Using SDK solveCodeCheckpoint()');
+        logger.debug('[LinkedIn Account] Using SDK solveCodeCheckpoint', { accountId: unipileAccountId });
         verificationResponse = await unipile.account.solveCodeCheckpoint({
           provider: 'LINKEDIN',
           account_id: unipileAccountId,
@@ -405,7 +407,7 @@ class LinkedInAccountService {
         });
       } else {
         // Fallback to HTTP
-        console.log('[LinkedIn Account] SDK method not available, using HTTP fallback');
+        logger.debug('[LinkedIn Account] SDK method not available, using HTTP fallback');
         const headers = this.baseService.getAuthHeaders();
         const response = await axios.post(
           `${baseUrl}/accounts/${unipileAccountId}/solve-checkpoint`,
@@ -418,10 +420,10 @@ class LinkedInAccountService {
         verificationResponse = response.data;
       }
 
-      console.log('[LinkedIn Account] ✅ OTP verified successfully');
+      logger.info('[LinkedIn Account] OTP verified successfully', { accountId: unipileAccountId });
       return verificationResponse;
     } catch (error) {
-      console.error('[LinkedIn Account] Error verifying OTP:', error);
+      logger.error('[LinkedIn Account] Error verifying OTP', { error: error.message, stack: error.stack });
       throw error;
     }
   }

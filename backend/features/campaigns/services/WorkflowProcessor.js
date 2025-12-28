@@ -17,12 +17,12 @@ const { executeConditionStep } = require('./StepExecutors');
 /**
  * Process a lead through the workflow steps
  */
-async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId, orgId, authToken = null) {
+async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId, tenantId, authToken = null) {
   try {
     // Find the last successfully completed step for this lead
     // This ensures we don't re-execute steps that were already completed
-    // LAD Architecture: Get schema from request context
-    const schema = getSchema(req);
+    // LAD Architecture: Get schema from tenant context
+    const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
     const lastSuccessfulActivityResult = await pool.query(
       `SELECT step_id, status, created_at FROM ${schema}.campaign_lead_activities 
        WHERE campaign_lead_id = $1 
@@ -78,7 +78,7 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
       if (currentStepIndex >= 0 && currentStepIndex < steps.length - 1) {
         // Recursively process the next step
         const remainingSteps = steps.slice(currentStepIndex + 1);
-        await processLeadThroughWorkflow(campaign, remainingSteps, campaignLead, userId, orgId, authToken);
+        await processLeadThroughWorkflow(campaign, remainingSteps, campaignLead, userId, tenantId, authToken);
       }
       return;
     }
@@ -170,7 +170,56 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
       const CampaignProcessor = require('./CampaignProcessor');
       executeStepForLead = CampaignProcessor.executeStepForLead;
     }
-    await executeStepForLead(campaign.id, nextStep, campaignLead, userId, orgId, authToken);
+    
+    const stepResult = await executeStepForLead(campaign.id, nextStep, campaignLead, userId, tenantId, authToken);
+    
+    // CRITICAL FIX: After executing a step, continue to the next step if successful
+    // This ensures the workflow continues through all steps instead of stopping after the first one
+    if (stepResult && stepResult.success) {
+      logger.info('[Campaign Execution] Step executed successfully, continuing to next step', { 
+        stepId: nextStep.id, 
+        stepType: nextStep.type, 
+        leadId: campaignLead.id 
+      });
+      
+      // Find the index of the current step
+      const currentStepIndex = steps.findIndex(s => s.id === nextStep.id);
+      
+      // If there are more steps, recursively process them
+      if (currentStepIndex >= 0 && currentStepIndex < steps.length - 1) {
+        const remainingSteps = steps.slice(currentStepIndex + 1);
+        logger.debug('[Campaign Execution] Processing remaining steps', { 
+          remainingCount: remainingSteps.length, 
+          nextStepType: remainingSteps[0]?.type 
+        });
+        
+        // Recursively process remaining steps
+        await processLeadThroughWorkflow(campaign, remainingSteps, campaignLead, userId, tenantId, authToken);
+      } else {
+        logger.info('[Campaign Execution] All steps completed for lead', { leadId: campaignLead.id });
+        
+        // Mark lead as completed if all steps are done
+        await pool.query(
+          `UPDATE ${schema}.campaign_leads SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+          [campaignLead.id]
+        );
+      }
+    } else {
+      // Step failed - log error but don't stop workflow (some steps might fail but workflow should continue)
+      logger.warn('[Campaign Execution] Step execution failed, but continuing workflow', { 
+        stepId: nextStep.id, 
+        stepType: nextStep.type, 
+        error: stepResult?.error,
+        leadId: campaignLead.id 
+      });
+      
+      // Even if step fails, try to continue to next step (user can retry failed steps later)
+      const currentStepIndex = steps.findIndex(s => s.id === nextStep.id);
+      if (currentStepIndex >= 0 && currentStepIndex < steps.length - 1) {
+        const remainingSteps = steps.slice(currentStepIndex + 1);
+        await processLeadThroughWorkflow(campaign, remainingSteps, campaignLead, userId, tenantId, authToken);
+      }
+    }
     
   } catch (error) {
     logger.error('[Campaign Execution] Error processing lead', { leadId: campaignLead.id, error: error.message, stack: error.stack });

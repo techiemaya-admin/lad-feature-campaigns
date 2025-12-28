@@ -6,6 +6,7 @@
 const { pool } = require('../utils/dbConnection');
 const UnipileBaseService = require('./UnipileBaseService');
 const axios = require('axios');
+const logger = require('../../../core/utils/logger');
 
 class LinkedInTokenService {
   constructor() {
@@ -25,7 +26,7 @@ class LinkedInTokenService {
         throw new Error('No refresh token available');
       }
       
-      console.log('[LinkedIn Token] Refreshing token for account:', unipile_account_id);
+      logger.info('[LinkedIn Token] Refreshing token for account', { accountId: unipile_account_id });
       
       if (!this.baseService.isConfigured()) {
         throw new Error('Unipile is not configured');
@@ -41,7 +42,7 @@ class LinkedInTokenService {
         const timeUntilExpiry = expiresAt.getTime() - now.getTime();
         // Only refresh if expires within 1 hour
         if (timeUntilExpiry > 60 * 60 * 1000) {
-          console.log('[LinkedIn Token] Token not expired yet, skipping refresh');
+          logger.debug('[LinkedIn Token] Token not expired yet, skipping refresh');
           return account;
         }
       }
@@ -84,7 +85,7 @@ class LinkedInTokenService {
           [JSON.stringify(creds), integrationQuery.rows[0].id]
         );
         
-        console.log('[LinkedIn Token] ✅ Token refreshed');
+        logger.info('[LinkedIn Token] Token refreshed');
       }
 
       return {
@@ -94,7 +95,7 @@ class LinkedInTokenService {
         expires_at: newExpiresAt
       };
     } catch (error) {
-      console.error('[LinkedIn Token] Error refreshing token:', error);
+      logger.error('[LinkedIn Token] Error refreshing token', { error: error.message, stack: error.stack });
       // Mark account as disconnected if refresh fails
       return { ...account, status: 'disconnected' };
     }

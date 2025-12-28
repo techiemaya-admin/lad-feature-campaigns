@@ -4,6 +4,7 @@
  */
 
 const CampaignStepModel = require('../models/CampaignStepModel');
+const logger = require('../../../core/utils/logger');
 
 class CampaignStepsController {
   /**
@@ -22,7 +23,7 @@ class CampaignStepsController {
         data: steps
       });
     } catch (error) {
-      console.error('[Campaign Steps] Error getting campaign steps:', error);
+      logger.error('[Campaign Steps] Error getting campaign steps', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to get campaign steps',
@@ -59,7 +60,7 @@ class CampaignStepsController {
         data: createdSteps
       });
     } catch (error) {
-      console.error('[Campaign Steps] Error updating campaign steps:', error);
+      logger.error('[Campaign Steps] Error updating campaign steps', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to update campaign steps',

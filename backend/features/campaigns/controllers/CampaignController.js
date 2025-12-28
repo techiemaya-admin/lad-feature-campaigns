@@ -8,7 +8,10 @@
 const CampaignCRUDController = require('./CampaignCRUDController');
 const CampaignActionsController = require('./CampaignActionsController');
 const CampaignLeadsController = require('./CampaignLeadsController');
+const CampaignLeadsSummaryController = require('./CampaignLeadsSummaryController');
+const CampaignLeadsRevealController = require('./CampaignLeadsRevealController');
 const CampaignStepsController = require('./CampaignStepsController');
+const logger = require('../../../core/utils/logger');
 
 class CampaignController {
   // CRUD methods - delegate to CampaignCRUDController
@@ -46,15 +49,31 @@ class CampaignController {
   }
 
   static async getLeadSummary(req, res) {
-    return CampaignLeadsController.getLeadSummary(req, res);
+    return CampaignLeadsSummaryController.getLeadSummary(req, res);
   }
 
   static async generateLeadSummary(req, res) {
-    return CampaignLeadsController.generateLeadSummary(req, res);
+    return CampaignLeadsSummaryController.generateLeadSummary(req, res);
+  }
+
+  static async revealLeadEmail(req, res) {
+    return CampaignLeadsRevealController.revealLeadEmail(req, res);
+  }
+
+  static async revealLeadPhone(req, res) {
+    return CampaignLeadsRevealController.revealLeadPhone(req, res);
   }
 
   static async getCampaignActivities(req, res) {
     return CampaignLeadsController.getCampaignActivities(req, res);
+  }
+
+  static async revealLeadEmail(req, res) {
+    return CampaignLeadsController.revealLeadEmail(req, res);
+  }
+
+  static async revealLeadPhone(req, res) {
+    return CampaignLeadsController.revealLeadPhone(req, res);
   }
 
   // Actions methods - delegate to CampaignActionsController
@@ -205,7 +224,7 @@ class CampaignController {
         }
       });
     } catch (error) {
-      console.error('[Campaign Controller] Error getting campaign analytics:', error);
+      logger.error('[Campaign Controller] Error getting campaign analytics', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to get campaign analytics',

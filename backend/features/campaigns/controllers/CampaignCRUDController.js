@@ -6,6 +6,7 @@
 const CampaignModel = require('../models/CampaignModel');
 const CampaignStepModel = require('../models/CampaignStepModel');
 const CampaignExecutionService = require('../services/CampaignExecutionService');
+const logger = require('../../../core/utils/logger');
 
 class CampaignCRUDController {
   /**
@@ -41,7 +42,7 @@ class CampaignCRUDController {
               clicked_count: parseInt(campaign.clicked_count) || 0
             };
           } catch (error) {
-            console.warn(`Could not fetch steps for campaign ${campaign.id}:`, error.message);
+            logger.warn('[Campaign CRUD] Could not fetch steps for campaign', { campaignId: campaign.id, error: error.message });
             return {
               ...campaign,
               steps: [],
@@ -62,8 +63,7 @@ class CampaignCRUDController {
         data: campaignsWithSteps
       });
     } catch (error) {
-      console.error('[Campaign CRUD] Error listing campaigns:', error);
-      console.error('[Campaign CRUD] Error stack:', error.stack);
+      logger.error('[Campaign CRUD] Error listing campaigns', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to list campaigns',
@@ -112,8 +112,7 @@ class CampaignCRUDController {
         }
       });
     } catch (error) {
-      console.error('[Campaign CRUD] Error getting stats:', error);
-      console.error('[Campaign CRUD] Error stack:', error.stack);
+      logger.error('[Campaign CRUD] Error getting stats', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to get campaign stats',
@@ -152,7 +151,7 @@ class CampaignCRUDController {
         }
       });
     } catch (error) {
-      console.error('[Campaign CRUD] Error getting campaign:', error);
+      logger.error('[Campaign CRUD] Error getting campaign', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to get campaign',
@@ -167,12 +166,10 @@ class CampaignCRUDController {
    */
   static async createCampaign(req, res) {
     try {
-      const tenantId = req.user?.tenantId || req.user?.organization_id;
+      const tenantId = req.user?.tenantId;
       const userId = req.user?.userId || req.user?.user_id || req.user?.id;
       
-      console.log('[Campaign CRUD] Creating campaign for user:', userId, 'tenant:', tenantId);
-      console.log('[Campaign CRUD] Request body:', JSON.stringify(req.body, null, 2));
-      console.log('[Campaign CRUD] User object:', JSON.stringify(req.user, null, 2));
+      logger.info('[Campaign CRUD] Creating campaign', { userId, tenantId, body: req.body });
       
       // Validate authentication
       if (!tenantId) {
@@ -232,8 +229,7 @@ class CampaignCRUDController {
       // If campaign is created with status='running' (mapped from 'active'), trigger immediate lead generation
       // This ensures leads are scraped right away when campaign is created and started
       if (campaign.status === 'running' || status === 'active') {
-        console.log(`[Campaign CRUD] 🚀 Campaign created with status='running', triggering immediate lead generation`);
-        console.log(`[Campaign CRUD] Campaign ID: ${campaign.id}, Tenant: ${tenantId}`);
+        logger.info('[Campaign CRUD] Campaign created with status=running, triggering immediate lead generation', { campaignId: campaign.id, tenantId });
         
         // Set execution_state to active for immediate processing
         try {
@@ -242,7 +238,7 @@ class CampaignCRUDController {
           });
         } catch (stateError) {
           // If execution_state columns don't exist, continue anyway
-          console.warn('[Campaign CRUD] Could not set execution state:', stateError.message);
+          logger.warn('[Campaign CRUD] Could not set execution state', { error: stateError.message });
         }
         
         // Extract auth token from request headers
@@ -253,10 +249,10 @@ class CampaignCRUDController {
         // Trigger campaign execution immediately (fire and forget)
         CampaignExecutionService.processCampaign(campaign.id, tenantId, authToken)
           .then(() => {
-            console.log(`[Campaign CRUD] ✅ Immediate lead generation completed for campaign ${campaign.id}`);
+            logger.info('[Campaign CRUD] Immediate lead generation completed', { campaignId: campaign.id });
           })
           .catch(err => {
-            console.error(`[Campaign CRUD] ❌ Error in immediate lead generation for campaign ${campaign.id}:`, err.message);
+            logger.error('[Campaign CRUD] Error in immediate lead generation', { campaignId: campaign.id, error: err.message, stack: err.stack });
             // Don't fail the creation - campaign is created, just log the error
           });
       }
@@ -270,8 +266,7 @@ class CampaignCRUDController {
         }
       });
     } catch (error) {
-      console.error('[Campaign CRUD] Error creating campaign:', error);
-      console.error('[Campaign CRUD] Error stack:', error.stack);
+      logger.error('[Campaign CRUD] Error creating campaign', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to create campaign',
@@ -304,7 +299,7 @@ class CampaignCRUDController {
         data: campaign
       });
     } catch (error) {
-      console.error('[Campaign CRUD] Error updating campaign:', error);
+      logger.error('[Campaign CRUD] Error updating campaign', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to update campaign',
@@ -336,7 +331,7 @@ class CampaignCRUDController {
         message: 'Campaign deleted successfully'
       });
     } catch (error) {
-      console.error('[Campaign CRUD] Error deleting campaign:', error);
+      logger.error('[Campaign CRUD] Error deleting campaign', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to delete campaign',

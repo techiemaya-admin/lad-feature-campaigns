@@ -4,6 +4,7 @@
  */
 
 const axios = require('axios');
+const logger = require('../../../core/utils/logger');
 
 // Use the actual backend URL - prioritize internal URL, then public URL
 // No hardcoded fallback - must be set via environment variables
@@ -47,11 +48,9 @@ function getAuthHeaders(authToken) {
  * @returns {Object} { employees, fromSource }
  */
 async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dailyLimit, authToken = null) {
-  console.log(`[Lead Search] 🔍 Searching database for leads...`);
-  console.log(`[Lead Search] 📋 Database search params:`, JSON.stringify(searchParams, null, 2));
-  console.log(`[Lead Search] 📄 Page: ${page}, Offset: ${offsetInPage}, Limit: ${dailyLimit}`);
+  logger.debug('[Lead Search] Searching database for leads', { searchParams, page, offsetInPage, dailyLimit });
   try {
-    console.log('[Lead Search] Checking database (employees_cache) - page', page);
+    logger.debug('[Lead Search] Checking database (employees_cache)', { page });
     
     const dbResponse = await axios.post(
       `${BACKEND_URL}/api/apollo-leads/search-employees-from-db`,
@@ -68,7 +67,7 @@ async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dai
     
     if (dbResponse.data && dbResponse.data.success !== false) {
       const dbEmployees = dbResponse.data.employees || dbResponse.data || [];
-      console.log(`[Lead Search] Found ${dbEmployees.length} leads in database (page ${page})`);
+      logger.info('[Lead Search] Found leads in database', { count: dbEmployees.length, page });
       
       // Apply offset within this page and take daily limit
       const availableFromDb = dbEmployees.slice(offsetInPage, offsetInPage + dailyLimit);
@@ -92,8 +91,8 @@ async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dai
   } catch (dbError) {
     // Handle 403 Forbidden (user doesn't have Apollo feature access)
     if (dbError.response && dbError.response.status === 403) {
-      console.warn('[Lead Search] ⚠️  User does not have Apollo Leads feature access - database access denied');
-      console.warn('[Lead Search] Campaign will continue without lead generation');
+      logger.warn('[Lead Search] User does not have Apollo Leads feature access - database access denied');
+      logger.warn('[Lead Search] Campaign will continue without lead generation');
       // Return empty array with special flag to indicate access denied (not an error)
       return { 
         employees: [], 
@@ -103,14 +102,9 @@ async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dai
       };
     }
     
-    console.error('[Lead Search] ❌ Error fetching from database:', dbError.message);
-    if (dbError.response) {
-      console.error('[Lead Search] Response status:', dbError.response.status);
-      console.error('[Lead Search] Response data:', dbError.response.data);
-    }
+    logger.error('[Lead Search] Error fetching from database', { error: dbError.message, status: dbError.response?.status, responseData: dbError.response?.data, code: dbError.code });
     if (dbError.code === 'ECONNREFUSED' || dbError.code === 'ENOTFOUND') {
-      console.error('[Lead Search] Cannot reach backend server:', BACKEND_URL);
-      console.error('[Lead Search] This will cause lead generation to fail silently!');
+      logger.error('[Lead Search] Cannot reach backend server', { backendUrl: BACKEND_URL, message: 'This will cause lead generation to fail silently!' });
     }
     // Return empty array but log the error so it's visible
     return { employees: [], fromSource: 'database', error: dbError.message };
@@ -128,7 +122,7 @@ async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dai
  */
 async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neededCount, authToken = null) {
   try {
-    console.log('[Lead Search] Fetching from Apollo API - page', page);
+    logger.debug('[Lead Search] Fetching from Apollo API', { page });
     
     const apolloParams = {
       ...searchParams,
@@ -137,8 +131,7 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
     };
     
     // Try calling Apollo API directly - if endpoint doesn't exist, fallback to database endpoint
-    console.log(`[Lead Search] 🔍 Calling Apollo API: ${BACKEND_URL}/api/apollo-leads/search-employees`);
-    console.log(`[Lead Search] 📋 Search params:`, JSON.stringify(apolloParams, null, 2));
+    logger.debug('[Lead Search] Calling Apollo API', { url: `${BACKEND_URL}/api/apollo-leads/search-employees`, searchParams: apolloParams });
     
     let apolloResponse;
     try {
@@ -150,14 +143,10 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
           timeout: 60000
         }
       );
-      console.log(`[Lead Search] ✅ Apollo API responded with status: ${apolloResponse.status}`);
+      logger.info('[Lead Search] Apollo API responded', { status: apolloResponse.status });
     } catch (apolloEndpointError) {
       // If Apollo endpoint doesn't exist, use database endpoint which may fetch from Apollo
-      console.warn(`[Lead Search] ⚠️  Apollo endpoint failed (${apolloEndpointError.message}), trying database endpoint`);
-      if (apolloEndpointError.response) {
-        console.warn(`[Lead Search] Response status: ${apolloEndpointError.response.status}`);
-        console.warn(`[Lead Search] Response data:`, apolloEndpointError.response.data);
-      }
+      logger.warn('[Lead Search] Apollo endpoint failed, trying database endpoint', { error: apolloEndpointError.message, status: apolloEndpointError.response?.status, responseData: apolloEndpointError.response?.data });
       try {
         apolloResponse = await axios.post(
           `${BACKEND_URL}/api/apollo-leads/search-employees-from-db`,
@@ -167,20 +156,16 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
             timeout: 60000
           }
         );
-        console.log(`[Lead Search] ✅ Database endpoint responded with status: ${apolloResponse.status}`);
+        logger.info('[Lead Search] Database endpoint responded', { status: apolloResponse.status });
       } catch (dbEndpointError) {
-        console.error(`[Lead Search] ❌ Database endpoint also failed: ${dbEndpointError.message}`);
-        if (dbEndpointError.response) {
-          console.error(`[Lead Search] Response status: ${dbEndpointError.response.status}`);
-          console.error(`[Lead Search] Response data:`, dbEndpointError.response.data);
-        }
+        logger.error('[Lead Search] Database endpoint also failed', { error: dbEndpointError.message, status: dbEndpointError.response?.status, responseData: dbEndpointError.response?.data });
         throw dbEndpointError; // Re-throw to be caught by outer catch
       }
     }
     
     if (apolloResponse.data && apolloResponse.data.success !== false) {
       const apolloEmployees = apolloResponse.data.employees || apolloResponse.data || [];
-      console.log(`[Lead Search] Found ${apolloEmployees.length} leads from Apollo (page ${page})`);
+      logger.info('[Lead Search] Found leads from Apollo', { count: apolloEmployees.length, page });
       
       // Apply offset within Apollo page and take what we need
       return apolloEmployees.slice(offsetInPage, offsetInPage + neededCount);
@@ -190,22 +175,16 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
   } catch (apolloError) {
     // Handle 403 Forbidden (user doesn't have Apollo feature access)
     if (apolloError.response && apolloError.response.status === 403) {
-      console.warn('[Lead Search] ⚠️  User does not have Apollo Leads feature access - Apollo API access denied');
-      console.warn('[Lead Search] Campaign will continue without Apollo lead generation');
+      logger.warn('[Lead Search] User does not have Apollo Leads feature access - Apollo API access denied');
+      logger.warn('[Lead Search] Campaign will continue without Apollo lead generation');
       // Return empty array - access denied is not an error, just no leads available
       return [];
     }
     
-    console.error('[Lead Search] ❌ Error fetching from Apollo:', apolloError.message);
-    if (apolloError.response) {
-      console.error('[Lead Search] Response status:', apolloError.response.status);
-      console.error('[Lead Search] Response data:', apolloError.response.data);
-    }
+    logger.error('[Lead Search] Error fetching from Apollo', { error: apolloError.message, status: apolloError.response?.status, responseData: apolloError.response?.data, code: apolloError.code, url: `${BACKEND_URL}/api/apollo-leads/search-employees` });
     if (apolloError.code === 'ECONNREFUSED' || apolloError.code === 'ENOTFOUND') {
-      console.error('[Lead Search] Cannot reach backend server:', BACKEND_URL);
-      console.error('[Lead Search] This will cause lead generation to fail silently!');
+      logger.error('[Lead Search] Cannot reach backend server', { backendUrl: BACKEND_URL, message: 'This will cause lead generation to fail silently!' });
     }
-    console.error('[Lead Search] URL tried:', `${BACKEND_URL}/api/apollo-leads/search-employees`);
     // Return empty array but log the error so it's visible
     return [];
   }
@@ -221,24 +200,18 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
  * @returns {Object} { employees, fromSource }
  */
 async function searchEmployees(searchParams, page, offsetInPage, dailyLimit, authToken = null) {
-  console.log(`[Lead Search] 🚀 Starting employee search...`);
-  console.log(`[Lead Search] 📋 Search params:`, JSON.stringify(searchParams, null, 2));
-  console.log(`[Lead Search] 📄 Page: ${page}, Offset: ${offsetInPage}, Daily limit: ${dailyLimit}`);
-  console.log(`[Lead Search] 🌐 Using BACKEND_URL: ${BACKEND_URL}`);
+  logger.info('[Lead Search] Starting employee search', { searchParams, page, offsetInPage, dailyLimit, backendUrl: BACKEND_URL });
   
   // STEP 1: Try to get leads from database first
-  console.log(`[Lead Search] 📊 STEP 1: Searching database...`);
+  logger.debug('[Lead Search] STEP 1: Searching database');
   const dbResult = await searchEmployeesFromDatabase(searchParams, page, offsetInPage, dailyLimit, authToken);
   let employees = dbResult.employees;
   let fromSource = dbResult.fromSource;
   const accessDenied = dbResult.accessDenied || false;
   
-  console.log(`[Lead Search] 📊 Database search result: ${employees.length} leads found (source: ${fromSource})`);
-  if (dbResult.error) {
-    console.error(`[Lead Search] ⚠️  Database search had error: ${dbResult.error}`);
-  }
+  logger.info('[Lead Search] Database search result', { leadCount: employees.length, source: fromSource, error: dbResult.error || null });
   if (accessDenied) {
-    console.warn(`[Lead Search] ⚠️  Access denied - user does not have Apollo Leads feature access`);
+    logger.warn('[Lead Search] Access denied - user does not have Apollo Leads feature access');
     // Return early with access denied flag
     return { employees: [], fromSource: 'database', accessDenied: true };
   }
@@ -246,19 +219,19 @@ async function searchEmployees(searchParams, page, offsetInPage, dailyLimit, aut
   // STEP 2: If not enough leads from database, fetch from Apollo
   if (employees.length < dailyLimit) {
     const neededFromApollo = dailyLimit - employees.length;
-    console.log(`[Lead Search] 📊 STEP 2: Need ${neededFromApollo} more leads, fetching from Apollo...`);
+    logger.debug('[Lead Search] STEP 2: Need more leads, fetching from Apollo', { neededFromApollo });
     const apolloEmployees = await searchEmployeesFromApollo(searchParams, page, offsetInPage, neededFromApollo, authToken);
     
     // Combine database leads with Apollo leads
     employees = [...employees, ...apolloEmployees].slice(0, dailyLimit);
     fromSource = employees.length > (dailyLimit - neededFromApollo) ? 'mixed' : 'apollo';
     
-    console.log(`[Lead Search] 📊 Combined total: ${employees.length} leads (${employees.length - apolloEmployees.length} from DB, ${apolloEmployees.length} from Apollo)`);
+    logger.info('[Lead Search] Combined total', { total: employees.length, fromDb: employees.length - apolloEmployees.length, fromApollo: apolloEmployees.length });
   } else {
-    console.log(`[Lead Search] ✅ Got enough leads from database (${employees.length}/${dailyLimit}), skipping Apollo`);
+    logger.info('[Lead Search] Got enough leads from database, skipping Apollo', { count: employees.length, dailyLimit });
   }
   
-  console.log(`[Lead Search] ✅ Final result: ${employees.length} leads from ${fromSource}`);
+  logger.info('[Lead Search] Final result', { leadCount: employees.length, source: fromSource });
   return { employees, fromSource };
 }
 

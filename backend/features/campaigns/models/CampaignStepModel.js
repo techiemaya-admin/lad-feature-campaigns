@@ -5,6 +5,7 @@
 
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const { pool } = require('../utils/dbConnection');
+const logger = require('../../../core/utils/logger');
 
 class CampaignStepModel {
   /**
@@ -70,7 +71,7 @@ class CampaignStepModel {
       const errorMsg = error.message?.toLowerCase() || '';
       // If step_type or step_order columns don't exist, try with type and order
       if (errorMsg.includes('column "step_type"') || errorMsg.includes('column "step_order"')) {
-        console.warn('[CampaignStepModel] step_type/step_order columns not found, trying type/order:', error.message);
+        logger.warn('[CampaignStepModel] step_type/step_order columns not found, trying type/order:', error.message);
         query = `
           SELECT 
             id, tenant_id, campaign_id,
@@ -89,7 +90,7 @@ class CampaignStepModel {
           const fallbackErrorMsg = fallbackError.message?.toLowerCase() || '';
           // If is_deleted column also doesn't exist, try without it
           if (fallbackErrorMsg.includes('column "is_deleted"')) {
-            console.warn('[CampaignStepModel] is_deleted column not found, trying without it:', fallbackError.message);
+            logger.warn('[CampaignStepModel] is_deleted column not found, trying without it:', fallbackError.message);
             query = `
               SELECT 
                 id, tenant_id, campaign_id,
@@ -108,7 +109,7 @@ class CampaignStepModel {
         }
       } else if (errorMsg.includes('column "is_deleted"')) {
         // If only is_deleted is missing, try without it but keep step_type/step_order
-        console.warn('[CampaignStepModel] is_deleted column not found, trying without it:', error.message);
+        logger.warn('[CampaignStepModel] is_deleted column not found, trying without it:', error.message);
         query = `
           SELECT 
             id, tenant_id, campaign_id,
@@ -127,7 +128,7 @@ class CampaignStepModel {
           const fallbackErrorMsg = fallbackError.message?.toLowerCase() || '';
           // If step_type/step_order also don't exist, try with type/order
           if (fallbackErrorMsg.includes('column "step_type"') || fallbackErrorMsg.includes('column "step_order"')) {
-            console.warn('[CampaignStepModel] step_type/step_order also not found, trying type/order:', fallbackError.message);
+            logger.warn('[CampaignStepModel] step_type/step_order also not found, trying type/order:', fallbackError.message);
             query = `
               SELECT 
                 id, tenant_id, campaign_id,
@@ -174,7 +175,7 @@ class CampaignStepModel {
       const errorMsg = error.message?.toLowerCase() || '';
       // If step_type or step_order columns don't exist, try with type and order
       if (errorMsg.includes('column "step_type"') || errorMsg.includes('column "step_order"')) {
-        console.warn('[CampaignStepModel] step_type/step_order columns not found, trying type/order:', error.message);
+        logger.warn('[CampaignStepModel] step_type/step_order columns not found, trying type/order:', error.message);
         query = `
           SELECT 
             id, tenant_id, campaign_id,
@@ -192,7 +193,7 @@ class CampaignStepModel {
           const fallbackErrorMsg = fallbackError.message?.toLowerCase() || '';
           // If is_deleted column also doesn't exist, try without it
           if (fallbackErrorMsg.includes('column "is_deleted"')) {
-            console.warn('[CampaignStepModel] is_deleted column not found, trying without it:', fallbackError.message);
+            logger.warn('[CampaignStepModel] is_deleted column not found, trying without it:', fallbackError.message);
             query = `
               SELECT 
                 id, tenant_id, campaign_id,
@@ -210,7 +211,7 @@ class CampaignStepModel {
         }
       } else if (errorMsg.includes('column "is_deleted"')) {
         // If only is_deleted is missing, try without it but keep step_type/step_order
-        console.warn('[CampaignStepModel] is_deleted column not found, trying without it:', error.message);
+        logger.warn('[CampaignStepModel] is_deleted column not found, trying without it:', error.message);
         query = `
           SELECT 
             id, tenant_id, campaign_id,
@@ -228,7 +229,7 @@ class CampaignStepModel {
           const fallbackErrorMsg = fallbackError.message?.toLowerCase() || '';
           // If step_type/step_order also don't exist, try with type/order
           if (fallbackErrorMsg.includes('column "step_type"') || fallbackErrorMsg.includes('column "step_order"')) {
-            console.warn('[CampaignStepModel] step_type/step_order also not found, trying type/order:', fallbackError.message);
+            logger.warn('[CampaignStepModel] step_type/step_order also not found, trying type/order:', fallbackError.message);
             query = `
               SELECT 
                 id, tenant_id, campaign_id,
@@ -376,7 +377,7 @@ class CampaignStepModel {
       
       // If step_type or step_order columns don't exist, try with type and order
       if (errorMsg.includes('column "step_type"') || errorMsg.includes('column "step_order"')) {
-        console.warn('[CampaignStepModel] step_type/step_order columns not found, trying type/order:', error.message);
+        logger.warn('[CampaignStepModel] step_type/step_order columns not found, trying type/order:', error.message);
         
         // Rebuild placeholders and values for type/order columns
         const fallbackValues = [];
@@ -414,7 +415,7 @@ class CampaignStepModel {
         } catch (fallbackError) {
           // If config column also doesn't exist, try without it
           if (fallbackError.message && (fallbackError.message.includes('column "config"') || fallbackError.message.includes('jsonb'))) {
-            console.warn('[CampaignStepModel] Config column also not found, trying without config:', fallbackError.message);
+            logger.warn('[CampaignStepModel] Config column also not found, trying without config:', fallbackError.message);
             
             const simpleValues = [];
             const simplePlaceholders = [];

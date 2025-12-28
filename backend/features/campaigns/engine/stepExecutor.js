@@ -3,6 +3,7 @@ const { getSchema } = require('../../../core/utils/schemaHelper');
 const linkedinDispatcher = require('./channelDispatchers/linkedin');
 const voiceDispatcher = require('./channelDispatchers/voice');
 const emailDispatcher = require('./channelDispatchers/email');
+const logger = require('../../../core/utils/logger');
 
 /**
  * Step Executor - executes individual workflow steps
@@ -23,9 +24,9 @@ class StepExecutor {
   /**
    * Execute a step for a specific lead
    */
-  async executeStepForLead(campaignId, lead, step, userId, orgId) {
+  async executeStepForLead(campaignId, lead, step, userId, tenantId) {
     try {
-      console.log(`[StepExecutor] Executing ${step.type} for lead ${lead.id}`);
+      logger.info('[StepExecutor] Executing step for lead', { stepType: step.type, leadId: lead.id });
 
       // Parse step config
       const stepConfig = typeof step.data === 'string' 
@@ -63,12 +64,12 @@ class StepExecutor {
           break;
 
         case 'lead_generation':
-          result = await this.executeLeadGeneration(campaignId, step, stepConfig, userId, orgId);
+          result = await this.executeLeadGeneration(campaignId, step, stepConfig, userId, tenantId);
           break;
 
         default:
           // Channel-specific actions (LinkedIn, Voice, Email, etc.)
-          result = await this.executeChannelAction(step.type, lead, stepConfig, userId, orgId);
+          result = await this.executeChannelAction(step.type, lead, stepConfig, userId, tenantId);
           break;
       }
 
@@ -77,7 +78,7 @@ class StepExecutor {
 
       return result;
     } catch (error) {
-      console.error(`[StepExecutor] Error executing step:`, error);
+      logger.error('[StepExecutor] Error executing step', { error: error.message, stack: error.stack });
       return { success: false, error: error.message };
     }
   }
@@ -85,15 +86,15 @@ class StepExecutor {
   /**
    * Execute channel-specific action using appropriate dispatcher
    */
-  async executeChannelAction(stepType, lead, stepConfig, userId, orgId) {
+  async executeChannelAction(stepType, lead, stepConfig, userId, tenantId) {
     const dispatcher = this.dispatchers[stepType];
 
     if (!dispatcher) {
-      console.warn(`[StepExecutor] No dispatcher found for step type: ${stepType}`);
+      logger.warn('[StepExecutor] No dispatcher found for step type', { stepType });
       return { success: false, error: `Unsupported step type: ${stepType}` };
     }
 
-    return await dispatcher.execute(stepType, lead, stepConfig, userId, orgId);
+    return await dispatcher.execute(stepType, lead, stepConfig, userId, tenantId);
   }
 
   /**
@@ -107,16 +108,16 @@ class StepExecutor {
     const delayMs = (days * 24 * 60 * 60 * 1000) + (hours * 60 * 60 * 1000) + (minutes * 60 * 1000);
     const scheduledAt = new Date(Date.now() + delayMs);
 
-    // Per TDD: Use lad_dev schema (note: TDD schema uses executed_at, not scheduled_at)
+    // Per TDD: Use dynamic schema (note: TDD schema uses executed_at, not scheduled_at)
+    const schema = getSchema(null);
     await pool.query(
-      const schema = getSchema(req);
       `UPDATE ${schema}.campaign_lead_activities 
        SET executed_at = $1, status = 'pending', updated_at = CURRENT_TIMESTAMP
        WHERE id = $2 AND is_deleted = FALSE`,
       [scheduledAt, activityId]
     );
 
-    console.log(`[StepExecutor] Delay scheduled until ${scheduledAt.toISOString()}`);
+    logger.info('[StepExecutor] Delay scheduled', { delayUntil: scheduledAt.toISOString() });
 
     return {
       success: true,
@@ -128,10 +129,10 @@ class StepExecutor {
   /**
    * Execute lead generation step
    */
-  async executeLeadGeneration(campaignId, step, stepConfig, userId, orgId) {
+  async executeLeadGeneration(campaignId, step, stepConfig, userId, tenantId) {
     // This would integrate with Apollo or other lead gen services
     // For now, return success
-    console.log('[StepExecutor] Lead generation executed');
+    logger.info('[StepExecutor] Lead generation executed', { campaignId });
     return { success: true, leadsGenerated: 0 };
   }
 
@@ -139,9 +140,9 @@ class StepExecutor {
    * Mark lead as completed
    */
   async markLeadCompleted(leadId) {
-    // Per TDD: Use lad_dev schema
+    // Per TDD: Use dynamic schema
+    const schema = getSchema(null);
     await pool.query(
-      const schema = getSchema(req);
       `UPDATE ${schema}.campaign_leads 
        SET status = 'completed', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
        WHERE id = $1 AND is_deleted = FALSE`,
@@ -153,10 +154,10 @@ class StepExecutor {
    * Create activity record
    */
   async createActivity(campaignId, leadId, stepId, stepType) {
-    // Per TDD: Use lad_dev schema - need tenant_id and campaign_lead_id
+    // Per TDD: Use dynamic schema - need tenant_id and campaign_lead_id
     // Get tenant_id from campaign
+    const schema = getSchema(null);
     const campaignResult = await pool.query(
-      const schema = getSchema(req);
       `SELECT tenant_id FROM ${schema}.campaigns WHERE id = $1 AND is_deleted = FALSE`,
       [campaignId]
     );
@@ -188,9 +189,9 @@ class StepExecutor {
    * Update activity status
    */
   async updateActivityStatus(activityId, status, errorMessage = null) {
-    // Per TDD: Use lad_dev schema
+    // Per TDD: Use dynamic schema
+    const schema = getSchema(null);
     await pool.query(
-      const schema = getSchema(req);
       `UPDATE ${schema}.campaign_lead_activities 
        SET status = $1, error_message = $2, updated_at = CURRENT_TIMESTAMP
        WHERE id = $3 AND is_deleted = FALSE`,

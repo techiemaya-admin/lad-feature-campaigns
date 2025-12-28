@@ -4,6 +4,7 @@
  */
 
 const axios = require('axios');
+const logger = require('../../../core/utils/logger');
 
 class UnipileMessageService {
     constructor(baseService) {
@@ -60,7 +61,7 @@ class UnipileMessageService {
             }
             const publicId = match[1];
 
-            console.log(`[Unipile] [Message] Looking up provider_id for LinkedIn DM target: ${publicId}`);
+            logger.debug('[Unipile] [Message] Looking up provider_id for LinkedIn DM target', { publicId });
 
             const lookupResponse = await axios.get(
                 `${baseUrl}/users/${publicId}`,
@@ -78,7 +79,7 @@ class UnipileMessageService {
                 throw new Error('No provider_id found for LinkedIn DM target');
             }
 
-            console.log(`[Unipile] [Message] ✅ Found provider_id for DM target: ${providerId}`);
+            logger.info('[Unipile] [Message] Found provider_id for DM target', { providerId });
 
             // STEP 2: Create chat with this participant
             const chatPayload = {
@@ -94,7 +95,7 @@ class UnipileMessageService {
                 ]
             };
 
-            console.log(`[Unipile] [Message] Creating chat for LinkedIn DM...`);
+            logger.debug('[Unipile] [Message] Creating chat for LinkedIn DM');
 
             const chatResponse = await axios.post(
                 `${baseUrl}/chats`,
@@ -112,7 +113,7 @@ class UnipileMessageService {
                 throw new Error('Failed to create chat: no chat_id returned from Unipile');
             }
 
-            console.log(`[Unipile] [Message] ✅ Chat created with id: ${chatId}`);
+            logger.info('[Unipile] [Message] Chat created', { chatId });
 
             // STEP 3: Send message to /chats/{chat_id}/messages
             const messagePayload = {
@@ -121,7 +122,7 @@ class UnipileMessageService {
                 text: messageText
             };
 
-            console.log(`[Unipile] [Message] Sending DM via chat ${chatId}...`);
+            logger.debug('[Unipile] [Message] Sending DM', { chatId });
 
             const messageResponse = await axios.post(
                 `${baseUrl}/chats/${chatId}/messages`,
@@ -138,11 +139,7 @@ class UnipileMessageService {
                 chat_id: chatId
             };
         } catch (error) {
-            console.error('[Unipile] ❌ Error sending LinkedIn message:', error.message);
-            if (error.response) {
-                console.error('[Unipile] Response status:', error.response.status);
-                console.error('[Unipile] Response data:', error.response.data);
-            }
+            logger.error('[Unipile] Error sending LinkedIn message', { error: error.message, stack: error.stack, status: error.response?.status, responseData: error.response?.data });
             return {
                 success: false,
                 error: error.message

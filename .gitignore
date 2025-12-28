@@ -86,3 +86,9 @@ check*.sql
 debug*.js
 verify*.js
 test-*.js
+
+# Ignore core and shared folders
+backend/core/
+backend/shared/
+shared/
+core/

@@ -13,6 +13,7 @@ const {
 const { saveLeadsToCampaign } = require('./LeadSaveService');
 const { createLeadGenerationActivity } = require('./CampaignActivityService');
 const CampaignModel = require('../models/CampaignModel');
+const logger = require('../../../core/utils/logger');
 
 /**
  * Execute lead generation step with daily limit support
@@ -20,12 +21,12 @@ const CampaignModel = require('../models/CampaignModel');
  * @param {Object} step - Step object
  * @param {Object} stepConfig - Step configuration
  * @param {string} userId - User ID
- * @param {string} orgId - Organization ID
+ * @param {string} tenantId - Tenant ID
  * @param {string} authToken - Optional JWT token for API authentication
  */
-async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId, authToken = null) {
+async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenantId, authToken = null) {
   try {
-    console.log('[Campaign Execution] Executing lead generation...');
+    logger.info('[Campaign Execution] Executing lead generation', { campaignId, userId, tenantId });
     
     // Ensure stepConfig is parsed if it's a string
     if (typeof stepConfig === 'string') {
@@ -37,9 +38,9 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
     let campaignConfig = {};
     let configColumnExists = false;
     try {
-      // Per TDD: Use lad_dev schema
+      // LAD Architecture: Use dynamic schema resolution
+      const schema = getSchema(null); // No req available, will use default
       const campaignResult = await pool.query(
-        const schema = getSchema(req);
         `SELECT config FROM ${schema}.campaigns WHERE id = $1`,
         [campaignId]
       );
@@ -52,7 +53,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
       }
     } catch (err) {
       // Config column might not exist, try reading from step config instead
-      console.log('[Campaign Execution] Config column not available, checking step config');
+      logger.debug('[Campaign Execution] Config column not available, checking step config');
     }
     
     // If config column doesn't exist, try to read from step config
@@ -71,7 +72,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
     const leadsPerDay = campaignConfig.leads_per_day || stepConfig.leads_per_day || stepConfig.leadGenerationLimit || 50;
     
     if (!leadsPerDay || leadsPerDay <= 0) {
-      console.error('[Campaign Execution] Invalid leads_per_day setting');
+      logger.error('[Campaign Execution] Invalid leads_per_day setting');
       return { success: false, error: 'leads_per_day must be set and greater than 0' };
     }
     
@@ -79,7 +80,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
                         : stepConfig.leads_per_day ? 'step config' 
                         : stepConfig.leadGenerationLimit ? 'step limit'
                         : 'default';
-    console.log(`[Campaign Execution] Using user-selected leads_per_day: ${leadsPerDay} (from ${configSource})`);
+    logger.info('[Campaign Execution] Using user-selected leads_per_day', { leadsPerDay, configSource });
     
     // Get current offset (how many leads have been processed so far)
     let currentOffset = campaignConfig.lead_gen_offset || stepConfig.lead_gen_offset || 0;
@@ -91,8 +92,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
     // CRITICAL: If leads were already generated today, skip generation
     // This prevents duplicate lead generation when the server restarts
     if (lastLeadGenDate === today) {
-      console.log(`[Campaign Execution] ⏭️  Leads already generated today (${today}). Skipping lead generation.`);
-      console.log(`[Campaign Execution] Current offset: ${currentOffset} (already processed ${currentOffset} leads total)`);
+      logger.info('[Campaign Execution] Leads already generated today, skipping', { today, currentOffset });
       return {
         success: true,
         leadsFound: 0,
@@ -106,7 +106,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
     
     // If it's a new day, we process leads starting from current offset
     // Offset tracks total leads processed across all days
-    console.log(`[Campaign Execution] Today: ${today}, Last generation: ${lastLeadGenDate || 'never'}, Current offset: ${currentOffset}`);
+    logger.info('[Campaign Execution] Lead generation status', { today, lastLeadGenDate: lastLeadGenDate || 'never', currentOffset });
     
     // Parse lead generation config
     const filters = stepConfig.leadGenerationFilters 
@@ -149,18 +149,18 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
       searchParams.organization_industries = Array.isArray(filters.industries) ? filters.industries : [filters.industries];
     }
     
-    if (orgId) {
-      searchParams.organization_id = orgId;
+    if (tenantId) {
+      searchParams.tenant_id = tenantId;
     }
     
     if (userId) {
       searchParams.user_id = userId;
     }
     
-    console.log(`[Campaign Execution] Daily limit: ${dailyLimit}, Current offset: ${currentOffset}, Page: ${page}, Offset in page: ${offsetInPage}`);
+    logger.info('[Campaign Execution] Lead generation parameters', { dailyLimit, currentOffset, page, offsetInPage });
     
     // Log search parameters for debugging
-    console.log(`[Campaign Execution] Calling LeadSearchService with filters:`, {
+    logger.debug('[Campaign Execution] Calling LeadSearchService with filters', {
       person_titles: searchParams.person_titles,
       organization_industries: searchParams.organization_industries,
       organization_locations: searchParams.organization_locations,
@@ -171,7 +171,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
     
     // PRODUCTION-GRADE: Check employees_cache first, then Apollo
     // This matches how real SaaS platforms work (cache-first strategy)
-    console.log(`[Campaign Execution] 🔍 STEP 1: Checking employees_cache table first...`);
+    logger.debug('[Campaign Execution] STEP 1: Checking employees_cache table first');
     let employees = [];
     let fromSource = 'unknown';
     let searchError = null;
@@ -186,27 +186,27 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
       searchError = dbSearchResult.error || null;
       accessDenied = dbSearchResult.accessDenied || false;
       
-      console.log(`[Campaign Execution] 📊 Database search result: ${employees.length} leads found (source: ${fromSource})`);
+      logger.info('[Campaign Execution] Database search result', { leadCount: employees.length, source: fromSource });
       if (accessDenied) {
-        console.warn(`[Campaign Execution] ⚠️  User does not have Apollo Leads feature access - database access denied`);
+        logger.warn('[Campaign Execution] User does not have Apollo Leads feature access - database access denied');
       }
       
       // If no leads from database and access is NOT denied, try Apollo API
       if (employees.length === 0 && !searchError && !accessDenied) {
-        console.log(`[Campaign Execution] 🔍 STEP 2: No leads in employees_cache, calling Apollo API...`);
+        logger.debug('[Campaign Execution] STEP 2: No leads in employees_cache, calling Apollo API');
         const apolloSearchResult = await searchEmployees(searchParams, page, offsetInPage, dailyLimit, authToken);
         employees = apolloSearchResult.employees || [];
         fromSource = apolloSearchResult.fromSource || 'apollo';
         searchError = apolloSearchResult.error || null;
         
-        console.log(`[Campaign Execution] 📊 Apollo search result: ${employees.length} leads found (source: ${fromSource})`);
+        logger.info('[Campaign Execution] Apollo search result', { leadCount: employees.length, source: fromSource });
       }
     } catch (searchErr) {
-      console.error(`[Campaign Execution] ❌ Lead search error:`, searchErr.message);
+      logger.error('[Campaign Execution] Lead search error', { error: searchErr.message, stack: searchErr.stack });
       searchError = searchErr.message;
     }
     
-    console.log(`[Campaign Execution] 📊 Final search result:`, {
+    logger.info('[Campaign Execution] Final search result', {
       employeesCount: employees.length,
       fromSource: fromSource,
       hasError: !!searchError,
@@ -216,8 +216,8 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
     
     // Handle access denied (403) - this is NOT an error, just no access to Apollo/database
     if (accessDenied) {
-      console.warn(`[Campaign Execution] ⚠️  Apollo Leads feature access required for lead generation`);
-      console.warn(`[Campaign Execution] Campaign will continue but no leads will be generated`);
+      logger.warn('[Campaign Execution] Apollo Leads feature access required for lead generation');
+      logger.warn('[Campaign Execution] Campaign will continue but no leads will be generated');
       
       // Set execution state to waiting_for_leads with clear message
       const now = new Date();
@@ -242,9 +242,10 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
     
     // Handle actual errors (not access denied)
     if (searchError) {
-      console.error(`[Campaign Execution] ❌ Lead search returned error: ${searchError}`);
-      console.error(`[Campaign Execution] This likely means Apollo/database endpoints are not available`);
-      console.error(`[Campaign Execution] Backend URL: ${require('./LeadSearchService').BACKEND_URL || 'not set'}`);
+      logger.error('[Campaign Execution] Lead search returned error', { 
+        error: searchError,
+        backendUrl: require('./LeadSearchService').BACKEND_URL || 'not set'
+      });
       
       // Set execution state to error
       await CampaignModel.updateExecutionState(campaignId, 'error', {
@@ -263,11 +264,14 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
     
     // PRODUCTION-GRADE: Handle no leads found scenario
     if (!employees || employees.length === 0) {
-      console.warn(`[Campaign Execution] ⚠️  No employees found! Possible reasons:`);
-      console.warn(`   - No leads match the filters (too specific)`);
-      console.warn(`   - Database is empty`);
-      console.warn(`   - Network/connection issues`);
-      console.warn(`[Campaign Execution] Search params used:`, JSON.stringify(searchParams, null, 2));
+      logger.warn('[Campaign Execution] No employees found', { 
+        possibleReasons: [
+          'No leads match the filters (too specific)',
+          'Database is empty',
+          'Network/connection issues'
+        ],
+        searchParams
+      });
       
       // Set execution state to waiting_for_leads
       const now = new Date();
@@ -290,7 +294,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
         lastExecutionReason: `No leads found. Retrying in ${retryIntervalHours}h or tomorrow at ${dailyRetryHour}:${dailyRetryMinute.toString().padStart(2, '0')}`
       });
       
-      console.log(`[Campaign Execution] ⏸️  Campaign set to 'waiting_for_leads' state. Next retry: ${nextRunAt.toISOString()}`);
+      logger.info('[Campaign Execution] Campaign set to waiting_for_leads state', { nextRetry: nextRunAt.toISOString() });
       
       return {
         success: true,
@@ -338,7 +342,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
       await updateCampaignConfig(campaignId, updatedConfig);
     } catch (updateError) {
       // If config column doesn't exist, store offset in step config as fallback
-      console.log('[Campaign Execution] Config column not available, storing offset in step config');
+      logger.debug('[Campaign Execution] Config column not available, storing offset in step config');
       try {
         // Update step config with offset and date
         const updatedStepConfig = {
@@ -349,9 +353,9 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
         };
         
         await updateStepConfig(step.id, updatedStepConfig);
-        console.log('[Campaign Execution] ✅ Stored offset in step config:', { offset: newOffset, date: today });
+        logger.info('[Campaign Execution] Stored offset in step config', { offset: newOffset, date: today });
       } catch (stepUpdateErr) {
-        console.error('[Campaign Execution] Error storing offset in step config:', stepUpdateErr);
+        logger.error('[Campaign Execution] Error storing offset in step config', { error: stepUpdateErr.message, stack: stepUpdateErr.stack });
       }
       
       // Also update campaign updated_at timestamp
@@ -366,7 +370,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
       }
     }
     
-    console.log(`[Campaign Execution] Updated campaign offset: ${currentOffset} → ${newOffset} (saved ${savedCount} leads today)`);
+    logger.info('[Campaign Execution] Updated campaign offset', { oldOffset: currentOffset, newOffset, savedCount, today });
     
     // PRODUCTION-GRADE: Handle daily limit and execution state
     // IMPORTANT: Don't set to sleep here - let the campaign processor handle it AFTER processing existing leads
@@ -376,7 +380,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
     if (dailyLeadsGenerated >= dailyLimit) {
       // Daily limit reached - but DON'T set to sleep yet
       // The campaign processor will set to sleep AFTER processing existing leads
-      console.log(`[Campaign Execution] ⚠️  Daily limit reached (${dailyLeadsGenerated}/${dailyLimit} leads). Will sleep AFTER processing existing leads.`);
+      logger.info('[Campaign Execution] Daily limit reached, will sleep after processing existing leads', { dailyLeadsGenerated, dailyLimit });
       
       // Set a flag in the return value so processor knows to sleep after processing
       // But keep state as 'active' for now so workflow steps can execute
@@ -386,7 +390,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
         lastExecutionReason: `Leads found (${dailyLeadsGenerated}/${dailyLimit}). Campaign active.`
       });
       
-      console.log(`[Campaign Execution] ✅ Campaign set to 'active' state. Generated ${dailyLeadsGenerated}/${dailyLimit} leads today.`);
+      logger.info('[Campaign Execution] Campaign set to active state', { dailyLeadsGenerated, dailyLimit });
     }
     
     // Create activity record for lead generation step (if leads were saved and we have a lead ID)
@@ -403,10 +407,10 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
         if (tenant_id && campaign_id) {
           await createLeadGenerationActivity(tenant_id, campaign_id, firstGeneratedLeadId, step.id);
         }
-        console.log(`[Campaign Execution] ✅ Created lead generation activity record for ${savedCount} leads`);
+        logger.info('[Campaign Execution] Created lead generation activity record', { savedCount });
       } catch (activityErr) {
         // Don't fail the whole process if activity creation fails
-        console.error(`[Campaign Execution] Warning: Failed to create lead generation activity:`, activityErr.message);
+        logger.warn('[Campaign Execution] Failed to create lead generation activity', { error: activityErr.message });
       }
     }
     
@@ -421,7 +425,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, orgId
       dailyLimitReached: dailyLeadsGenerated >= dailyLimit // Flag to indicate limit was reached
     };
   } catch (error) {
-    console.error('[Campaign Execution] Lead generation error:', error);
+    logger.error('[Campaign Execution] Lead generation error', { error: error.message, stack: error.stack });
     return { success: false, error: error.message };
   }
 }

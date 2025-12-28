@@ -4,6 +4,7 @@
  */
 
 const linkedInService = require('../services/LinkedInIntegrationService');
+const logger = require('../../../core/utils/logger');
 
 class LinkedInWebhookController {
   /**
@@ -34,7 +35,7 @@ class LinkedInWebhookController {
         webhook: result
       });
     } catch (error) {
-      console.error('[LinkedIn Webhook] Error registering webhook:', error);
+      logger.error('[LinkedIn Webhook] Error registering webhook', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to register webhook'
@@ -55,7 +56,7 @@ class LinkedInWebhookController {
         webhooks
       });
     } catch (error) {
-      console.error('[LinkedIn Webhook] Error listing webhooks:', error);
+      logger.error('[LinkedIn Webhook] Error listing webhooks', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to list webhooks'
@@ -71,14 +72,14 @@ class LinkedInWebhookController {
     try {
       // Webhook handling will be implemented in LinkedInWebhookService
       // For now, just acknowledge receipt
-      console.log('[LinkedIn Webhook] Webhook received:', JSON.stringify(req.body, null, 2));
+      logger.info('[LinkedIn Webhook] Webhook received', { body: req.body });
       
       res.json({
         success: true,
         message: 'Webhook received'
       });
     } catch (error) {
-      console.error('[LinkedIn Webhook] Error handling webhook:', error);
+      logger.error('[LinkedIn Webhook] Error handling webhook', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to handle webhook'

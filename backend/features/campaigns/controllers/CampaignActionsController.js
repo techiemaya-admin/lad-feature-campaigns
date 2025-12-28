@@ -5,6 +5,7 @@
 
 const CampaignModel = require('../models/CampaignModel');
 const CampaignExecutionService = require('../services/CampaignExecutionService');
+const logger = require('../../../core/utils/logger');
 
 class CampaignActionsController {
   /**
@@ -12,22 +13,13 @@ class CampaignActionsController {
    * Start/resume a campaign
    */
   static async startCampaign(req, res) {
-    console.log('[Campaign Actions] ========================================');
-    console.log('[Campaign Actions] 🎯 startCampaign METHOD CALLED');
-    console.log('[Campaign Actions] Request method:', req.method);
-    console.log('[Campaign Actions] Request URL:', req.url);
-    console.log('[Campaign Actions] Request originalUrl:', req.originalUrl);
-    console.log('[Campaign Actions] Request params:', JSON.stringify(req.params, null, 2));
-    console.log('[Campaign Actions] Request body:', JSON.stringify(req.body, null, 2));
-    console.log('[Campaign Actions] User object:', JSON.stringify(req.user, null, 2));
-    console.log('[Campaign Actions] ========================================');
+    logger.debug('[Campaign Actions] startCampaign method called', { method: req.method, url: req.url, originalUrl: req.originalUrl, params: req.params, body: req.body, user: req.user });
     
     try {
       const tenantId = req.user.tenantId;
       const { id } = req.params;
       
-      console.log('[Campaign Actions] Campaign ID from params:', id);
-      console.log('[Campaign Actions] Tenant ID from user:', tenantId);
+      logger.info('[Campaign Actions] Starting campaign', { campaignId: id, tenantId });
 
       // Update campaign status to running and reset execution_state to active
       // This ensures immediate lead generation when campaign is started
@@ -51,14 +43,12 @@ class CampaignActionsController {
         });
       } catch (stateError) {
         // If execution_state columns don't exist, continue anyway
-        console.warn('[Campaign Actions] Could not update execution state:', stateError.message);
+        logger.warn('[Campaign Actions] Could not update execution state', { error: stateError.message });
       }
 
       // Trigger campaign execution IMMEDIATELY (fire and forget, but log errors)
       // This ensures leads are scraped right away when campaign is started
-      console.log(`[Campaign Actions] 🚀 Triggering IMMEDIATE campaign execution for ${id} (tenant: ${tenantId || 'none'})`);
-      console.log(`[Campaign Actions] ⏰ Start time: ${new Date().toISOString()}`);
-      console.log(`[Campaign Actions] 📊 This will scrape leads immediately, not wait for scheduled service`);
+      logger.info('[Campaign Actions] Triggering immediate campaign execution', { campaignId: id, tenantId, startTime: new Date().toISOString() });
       
       // Extract auth token from request to pass to processCampaign
       // The token is available via req.headers.authorization (Bearer token)
@@ -66,30 +56,27 @@ class CampaignActionsController {
         ? req.headers.authorization.replace('Bearer ', '').trim()
         : null;
       
-      console.log(`[Campaign Actions] 🔑 Auth token available: ${authToken ? 'Yes' : 'No'}`);
+      logger.debug('[Campaign Actions] Auth token available', { hasToken: !!authToken });
       
       // IMPORTANT: Wrap in try-catch to catch synchronous errors
       try {
         CampaignExecutionService.processCampaign(id, tenantId, authToken)
           .then((result) => {
-            console.log(`[Campaign Actions] ✅ Campaign ${id} processing completed at ${new Date().toISOString()}`);
-            if (result) {
-              console.log(`[Campaign Actions] Result:`, JSON.stringify(result, null, 2));
-            }
+            logger.info('[Campaign Actions] Campaign processing completed', { campaignId: id, completedAt: new Date().toISOString(), result });
           })
           .catch(err => {
-            console.error(`[Campaign Actions] ❌ CRITICAL ERROR executing campaign ${id}:`);
-            console.error(`[Campaign Actions] Error message: ${err.message}`);
-            console.error(`[Campaign Actions] Error name: ${err.name}`);
-            console.error(`[Campaign Actions] Error code: ${err.code || 'N/A'}`);
-            console.error(`[Campaign Actions] Error stack:`, err.stack);
-            if (err.response) {
-              console.error(`[Campaign Actions] Error response:`, err.response.status, err.response.data);
-            }
+            logger.error('[Campaign Actions] Critical error executing campaign', {
+              campaignId: id,
+              error: err.message,
+              name: err.name,
+              code: err.code || 'N/A',
+              stack: err.stack,
+              responseStatus: err.response?.status,
+              responseData: err.response?.data
+            });
           });
       } catch (syncError) {
-        console.error(`[Campaign Actions] ❌ SYNCHRONOUS ERROR when calling processCampaign:`, syncError);
-        console.error(`[Campaign Actions] Sync error stack:`, syncError.stack);
+        logger.error('[Campaign Actions] Synchronous error when calling processCampaign', { error: syncError.message, stack: syncError.stack });
       }
 
       res.json({
@@ -98,7 +85,7 @@ class CampaignActionsController {
         data: campaign
       });
     } catch (error) {
-      console.error('[Campaign Actions] Error starting campaign:', error);
+      logger.error('[Campaign Actions] Error starting campaign', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to start campaign',
@@ -131,7 +118,7 @@ class CampaignActionsController {
         data: campaign
       });
     } catch (error) {
-      console.error('[Campaign Actions] Error pausing campaign:', error);
+      logger.error('[Campaign Actions] Error pausing campaign', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to pause campaign',
@@ -164,7 +151,7 @@ class CampaignActionsController {
         data: campaign
       });
     } catch (error) {
-      console.error('[Campaign Actions] Error stopping campaign:', error);
+      logger.error('[Campaign Actions] Error stopping campaign', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to stop campaign',

@@ -7,6 +7,7 @@
 const path = require('path');
 const fs = require('fs');
 const logger = require('../../../core/utils/logger');
+const { API_CONFIG } = require('../constants');
 
 // Load .env file from project root (lad-feature-campaigns/.env)
 try {
@@ -58,8 +59,10 @@ class UnipileBaseService {
             return url;
         }
         
-        // Fallback: canonical URL with /api/v1
-        return 'https://api.unipile.com/api/v1';
+        // Fallback: canonical URL with /api/v1 (from environment or constants)
+        const defaultUrl = process.env.UNIPILE_API_BASE_URL || API_CONFIG.UNIPILE_DEFAULT_BASE_URL;
+        logger.warn('[Unipile] Using default base URL. Set UNIPILE_DSN or UNIPILE_API_BASE_URL for custom configuration.', { defaultUrl });
+        return defaultUrl;
     }
 
     /**
@@ -128,7 +131,7 @@ class UnipileBaseService {
                     params: {
                         account_id: accountId
                     },
-                    timeout: Number(process.env.UNIPILE_LOOKUP_TIMEOUT_MS) || 15000
+                    timeout: Number(process.env.UNIPILE_LOOKUP_TIMEOUT_MS) || API_CONFIG.UNIPILE_LOOKUP_TIMEOUT_MS
                 }
             );
 

@@ -11,6 +11,7 @@ const {
   createSnapshot,
   saveLeadToCampaign
 } = require('./LeadGenerationHelpers');
+const logger = require('../../../core/utils/logger');
 
 /**
  * Save multiple leads to campaign
@@ -28,7 +29,7 @@ async function saveLeadsToCampaign(campaignId, tenantId, employees) {
     
     try {
       if (!apolloPersonId || apolloPersonId === 'unknown') {
-        console.warn('[Lead Save] Employee missing apollo_person_id, skipping');
+        logger.warn('[Lead Save] Employee missing apollo_person_id, skipping', { employeeName: employee.name || employee.employee_name });
         continue;
       }
       
@@ -57,9 +58,10 @@ async function saveLeadsToCampaign(campaignId, tenantId, employees) {
           if (!firstGeneratedLeadId) {
             firstGeneratedLeadId = insertedLeadId;
           }
-          console.log(`[Lead Save] ✅ Successfully saved lead ${apolloPersonId} to campaign (campaign_lead_id: ${insertedLeadId}, lead_id: ${leadId}, apollo_person_id: ${apolloPersonId})`);
+          logger.info('[Lead Save] Successfully saved lead to campaign', { apolloPersonId, campaignLeadId: insertedLeadId, leadId });
         } catch (err) {
-          console.error(`[Lead Save] ❌ Error saving lead:`, {
+          logger.error('[Lead Save] Error saving lead', {
+            apolloPersonId,
             message: err.message,
             code: err.code,
             detail: err.detail,
@@ -68,10 +70,11 @@ async function saveLeadsToCampaign(campaignId, tenantId, employees) {
           // Continue to next lead instead of throwing
         }
       } else {
-        console.log(`[Lead Save] ⏭️ Skipping lead ${apolloPersonId} - already exists in campaign (existing ID: ${existingLead.id})`);
+        logger.info('[Lead Save] Skipping lead - already exists in campaign', { apolloPersonId, existingLeadId: existingLead.id });
       }
     } catch (err) {
-      console.error(`[Lead Save] ❌ Error processing lead ${apolloPersonId}:`, {
+      logger.error('[Lead Save] Error processing lead', {
+        apolloPersonId,
         message: err.message,
         code: err.code,
         detail: err.detail
@@ -91,8 +94,8 @@ async function findOrCreateLead(tenantId, apolloPersonId, fields, leadData) {
   
   try {
     // Find existing lead by source_id (Apollo person ID)
+    const schema = getSchema({ user: { tenant_id: tenantId } });
     const findLeadResult = await pool.query(
-      const schema = getSchema(req);
       `SELECT id FROM ${schema}.leads 
        WHERE tenant_id = $1 AND source_id = $2 AND source = 'apollo_io'
        LIMIT 1`,
@@ -101,7 +104,7 @@ async function findOrCreateLead(tenantId, apolloPersonId, fields, leadData) {
     
     if (findLeadResult.rows.length > 0) {
       leadId = findLeadResult.rows[0].id;
-      console.log(`[Lead Save] ✅ Found existing lead in leads table for apollo_person_id ${apolloPersonId}: ${leadId}`);
+      logger.info('[Lead Save] Found existing lead in leads table', { apolloPersonId, leadId });
     } else {
       // Create new lead with UUID id, store apollo_person_id in source_id
       const { randomUUID } = require('crypto');
@@ -135,20 +138,21 @@ async function findOrCreateLead(tenantId, apolloPersonId, fields, leadData) {
           JSON.stringify(leadData) // raw_data - full employee data
         ]
       );
-      console.log(`[Lead Save] ✅ Created new lead in leads table for apollo_person_id ${apolloPersonId}: ${leadId} (source_id: ${apolloPersonId})`);
+      logger.info('[Lead Save] Created new lead in leads table', { apolloPersonId, leadId, sourceId: apolloPersonId });
     }
   } catch (leadErr) {
     // If leads table doesn't exist or has different schema, generate UUID and continue
     if (leadErr.code === '42P01') {
-      console.warn(`[Lead Save] ⚠️  leads table doesn't exist, generating UUID for lead_id`);
+      logger.warn('[Lead Save] leads table doesn\'t exist, generating UUID for lead_id', { apolloPersonId });
       const { randomUUID } = require('crypto');
       leadId = randomUUID();
     } else if (leadErr.code === '42703') {
       // Column doesn't exist, try without source_id
-      console.warn(`[Lead Save] ⚠️  source_id column doesn't exist, creating lead without it`);
+      logger.warn('[Lead Save] source_id column doesn\'t exist, creating lead without it', { apolloPersonId });
       try {
         const { randomUUID } = require('crypto');
         leadId = randomUUID();
+        const schema = getSchema({ user: { tenant_id: tenantId } });
         await pool.query(
           `INSERT INTO ${schema}.leads (id, tenant_id, first_name, last_name, email, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -162,12 +166,12 @@ async function findOrCreateLead(tenantId, apolloPersonId, fields, leadData) {
           ]
         );
       } catch (retryErr) {
-        console.warn(`[Lead Save] ⚠️  Could not create lead in leads table:`, retryErr.message);
+        logger.warn('[Lead Save] Could not create lead in leads table', { apolloPersonId, error: retryErr.message });
         const { randomUUID } = require('crypto');
         leadId = randomUUID();
       }
     } else {
-      console.warn(`[Lead Save] ⚠️  Could not find/create lead in leads table:`, leadErr.message);
+      logger.warn('[Lead Save] Could not find/create lead in leads table', { apolloPersonId, error: leadErr.message });
       // Generate UUID anyway to continue
       const { randomUUID } = require('crypto');
       leadId = randomUUID();

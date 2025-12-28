@@ -117,6 +117,14 @@ const DEFAULTS = {
   TIMEOUT_MS: 30000
 };
 
+// API Configuration
+const API_CONFIG = {
+  // Unipile API base URL (can be overridden via UNIPILE_DSN or UNIPILE_API_BASE_URL)
+  UNIPILE_DEFAULT_BASE_URL: 'https://api.unipile.com/api/v1',
+  // Unipile lookup timeout (ms)
+  UNIPILE_LOOKUP_TIMEOUT_MS: 15000
+};
+
 module.exports = {
   CAMPAIGN_STATUS,
   CAMPAIGN_TYPE,
@@ -129,5 +137,6 @@ module.exports = {
   ERROR_CODE,
   CHANNEL,
   EXECUTION_STATUS,
-  DEFAULTS
+  DEFAULTS,
+  API_CONFIG
 };

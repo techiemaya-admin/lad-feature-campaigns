@@ -5,6 +5,7 @@
 
 const UnipileBaseService = require('./UnipileBaseService');
 const axios = require('axios');
+const logger = require('../../../core/utils/logger');
 
 class LinkedInWebhookService {
   constructor() {
@@ -41,7 +42,7 @@ class LinkedInWebhookService {
 
       return response.data;
     } catch (error) {
-      console.error('[LinkedIn Webhook] Error registering webhook:', error);
+      logger.error('[LinkedIn Webhook] Error registering webhook', { error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -68,7 +69,7 @@ class LinkedInWebhookService {
         ? response.data 
         : (response.data?.data || response.data?.webhooks || []);
     } catch (error) {
-      console.error('[LinkedIn Webhook] Error listing webhooks:', error);
+      logger.error('[LinkedIn Webhook] Error listing webhooks', { error: error.message, stack: error.stack });
       return [];
     }
   }

@@ -7,6 +7,9 @@ let pool;
 let getDatabaseStatus;
 let setDatabaseStatus;
 
+// LAD Architecture: Use logger instead of console
+const logger = require('../../backend/core/utils/logger');
+
 try {
   // Import from sts-service config
   // Path: lad-feature-campaigns/shared/database/ -> sts-service/src/config/postgres
@@ -14,17 +17,20 @@ try {
   pool = postgresConfig.pool;
   getDatabaseStatus = postgresConfig.getDatabaseStatus || (() => true);
   setDatabaseStatus = postgresConfig.setDatabaseStatus || (() => {});
-  console.log('[Campaigns DB] ✅ Database connection loaded successfully');
+  logger.info('[Campaigns DB] Database connection loaded successfully');
 } catch (error) {
-  console.error('[Campaigns DB] ❌ Failed to load database connection:', error.message);
-  console.error('[Campaigns DB] Stack:', error.stack);
+  logger.error('[Campaigns DB] Failed to load database connection', { 
+    error: error.message, 
+    stack: error.stack 
+  });
   
   // Create a stub pool that will log errors
   pool = {
     query: async (query, params) => {
-      console.error('[Campaigns DB] ❌ Database query attempted but pool not available!');
-      console.error('[Campaigns DB] Query:', query);
-      console.error('[Campaigns DB] Params:', params);
+      logger.error('[Campaigns DB] Database query attempted but pool not available', { 
+        query, 
+        params 
+      });
       throw new Error(`Database connection not available: ${error.message}`);
     }
   };

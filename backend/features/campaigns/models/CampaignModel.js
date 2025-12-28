@@ -6,6 +6,7 @@
 // Use helper to resolve database connection path for both local and production
 const { pool } = require('../utils/dbConnection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
+const logger = require('../../../core/utils/logger');
 
 class CampaignModel {
   /**
@@ -44,7 +45,7 @@ class CampaignModel {
       
       // If created_by_user_id column doesn't exist, try created_by
       if (errorMsg.includes('created_by_user_id') && errorMsg.includes('does not exist')) {
-        console.warn('[CampaignModel] created_by_user_id column not found, trying created_by:', error.message);
+        logger.warn('[CampaignModel] created_by_user_id column not found, trying created_by:', error.message);
         try {
           const fallbackQuery = `
             INSERT INTO ${schema}.campaigns (
@@ -58,7 +59,7 @@ class CampaignModel {
         } catch (fallbackError) {
           // If config column also doesn't exist, try without config
           if (fallbackError.message && (fallbackError.message.includes('column "config"') || fallbackError.message.includes('jsonb'))) {
-            console.warn('[CampaignModel] Config column also not found, trying without config:', fallbackError.message);
+            logger.warn('[CampaignModel] Config column also not found, trying without config:', fallbackError.message);
             const simpleQuery = `
               INSERT INTO ${schema}.campaigns (
                 tenant_id, name, status, created_by, created_at, updated_at
@@ -76,7 +77,7 @@ class CampaignModel {
       
       // If config column doesn't exist or there's a JSONB casting issue, try without config
       if (errorMsg.includes('column "config"') || errorMsg.includes('jsonb')) {
-        console.warn('[CampaignModel] Config column issue, trying insert without config:', error.message);
+        logger.warn('[CampaignModel] Config column issue, trying insert without config:', error.message);
         const fallbackQuery = `
           INSERT INTO ${schema}.campaigns (
             tenant_id, name, status, created_by_user_id, created_at, updated_at
@@ -168,7 +169,7 @@ class CampaignModel {
       // If activities table doesn't exist, fallback to simpler query
       const errorMsg = error.message?.toLowerCase() || '';
       if (errorMsg.includes('campaign_lead_activities') || errorMsg.includes('does not exist') || errorMsg.includes('relation') || errorMsg.includes('undefined table')) {
-        console.warn('[CampaignModel] Activities table not available, using simplified query:', error.message);
+        logger.warn('[CampaignModel] Activities table not available, using simplified query:', error.message);
         let fallbackQuery = `
           SELECT 
             c.*,
@@ -208,7 +209,7 @@ class CampaignModel {
           // If there's still an error, it might be another column issue
           const fallbackErrorMsg = fallbackError.message?.toLowerCase() || '';
           if (fallbackErrorMsg.includes('is_deleted') || fallbackErrorMsg.includes('column') && fallbackErrorMsg.includes('does not exist')) {
-            console.warn('[CampaignModel] Column issue in fallback query, trying without is_deleted:', fallbackError.message);
+            logger.warn('[CampaignModel] Column issue in fallback query, trying without is_deleted:', fallbackError.message);
             // The query already doesn't have cl.is_deleted, so if it still fails, return empty or try even simpler
             let simpleQuery = `
               SELECT 
@@ -350,7 +351,7 @@ class CampaignModel {
       // If columns don't exist, try without them (graceful degradation)
       const errorMsg = error.message?.toLowerCase() || '';
       if (errorMsg.includes('execution_state') || errorMsg.includes('does not exist')) {
-        console.warn('[CampaignModel] Execution state columns not found, skipping update:', error.message);
+        logger.warn('[CampaignModel] Execution state columns not found, skipping update:', error.message);
         return null;
       }
       throw error;
@@ -400,7 +401,7 @@ class CampaignModel {
       // If activities table doesn't exist, fallback to simpler query
       const errorMsg = error.message?.toLowerCase() || '';
       if (errorMsg.includes('campaign_lead_activities') || errorMsg.includes('does not exist') || errorMsg.includes('relation') || errorMsg.includes('undefined table')) {
-        console.warn('[CampaignModel] Activities table not available for stats, using simplified query:', error.message);
+        logger.warn('[CampaignModel] Activities table not available for stats, using simplified query:', error.message);
         const fallbackQuery = `
           SELECT
             COUNT(DISTINCT c.id) as total_campaigns,
