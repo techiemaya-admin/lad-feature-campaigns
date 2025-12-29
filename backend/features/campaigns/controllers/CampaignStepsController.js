@@ -3,6 +3,7 @@
  * Handles step management for campaigns
  */
 
+const CampaignStepRepository = require('../repositories/CampaignStepRepository');
 const CampaignStepModel = require('../models/CampaignStepModel');
 const logger = require('../../../core/utils/logger');
 
@@ -16,7 +17,8 @@ class CampaignStepsController {
       const tenantId = req.user.tenantId;
       const { id } = req.params;
 
-      const steps = await CampaignStepModel.getStepsByCampaignId(id, tenantId);
+      const dbSteps = await CampaignStepRepository.getStepsByCampaignId(id, tenantId, req);
+      const steps = dbSteps.map(step => CampaignStepModel.mapStepFromDB(step));
 
       res.json({
         success: true,
@@ -50,10 +52,11 @@ class CampaignStepsController {
       }
 
       // Delete existing steps
-      await CampaignStepModel.deleteByCampaignId(id, tenantId);
+      await CampaignStepRepository.deleteByCampaignId(id, tenantId, req);
 
       // Create new steps
-      const createdSteps = await CampaignStepModel.bulkCreate(id, tenantId, steps);
+      const dbSteps = await CampaignStepRepository.bulkCreate(id, tenantId, steps, req);
+      const createdSteps = dbSteps.map(step => CampaignStepModel.mapStepFromDB(step));
 
       res.json({
         success: true,

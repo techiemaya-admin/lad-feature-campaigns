@@ -4,6 +4,7 @@
  * LAD Architecture Compliant - No SQL in controllers, uses logger
  */
 
+const CampaignLeadRepository = require('../repositories/CampaignLeadRepository');
 const CampaignLeadModel = require('../models/CampaignLeadModel');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const logger = require('../../../core/utils/logger');
@@ -18,9 +19,9 @@ class CampaignLeadsSummaryController {
       const tenantId = req.user.tenantId;
       const { id: campaignId, leadId } = req.params;
 
-      // LAD Architecture: Use model layer instead of direct SQL in controller
+      // LAD Architecture: Use repository layer instead of direct SQL in controller
       const schema = getSchema(req);
-      const leadResult = await CampaignLeadModel.getLeadData(leadId, campaignId, tenantId, schema);
+      const leadResult = await CampaignLeadRepository.getLeadData(leadId, campaignId, tenantId, schema);
 
       if (!leadResult) {
         return res.status(404).json({
@@ -80,11 +81,11 @@ class CampaignLeadsSummaryController {
       }
 
       // Get lead data from database
-      // LAD Architecture: Use model layer instead of direct SQL in controller
+      // LAD Architecture: Use repository layer instead of direct SQL in controller
       let lead = profileData;
       if (!lead) {
         const schema = getSchema(req);
-        const dbLead = await CampaignLeadModel.getLeadById(leadId, campaignId, tenantId, schema);
+        const dbLead = await CampaignLeadRepository.getLeadById(leadId, campaignId, tenantId, schema);
 
         if (!dbLead) {
           return res.status(404).json({
@@ -92,17 +93,20 @@ class CampaignLeadsSummaryController {
             error: 'Lead not found'
           });
         }
-        const leadDataFull = dbLead.lead_data_full || {};
+        
+        // Map database result using model
+        const mappedLead = CampaignLeadModel.mapLeadFromDB(dbLead);
+        const leadDataFull = mappedLead.leadData || {};
         
         lead = {
-          name: dbLead.first_name && dbLead.last_name 
-            ? `${dbLead.first_name} ${dbLead.last_name}`.trim()
-            : dbLead.first_name || dbLead.last_name || leadDataFull.name || leadDataFull.employee_name || 'Unknown',
-          title: dbLead.title || leadDataFull.title || leadDataFull.employee_title || leadDataFull.headline || '',
-          company: dbLead.company_name || leadDataFull.company_name || leadDataFull.company || '',
-          email: dbLead.email || leadDataFull.email || '',
-          phone: dbLead.phone || leadDataFull.phone || '',
-          linkedin_url: dbLead.linkedin_url || leadDataFull.linkedin_url || leadDataFull.employee_linkedin_url || '',
+          name: mappedLead.firstName && mappedLead.lastName 
+            ? `${mappedLead.firstName} ${mappedLead.lastName}`.trim()
+            : mappedLead.firstName || mappedLead.lastName || leadDataFull.name || leadDataFull.employee_name || 'Unknown',
+          title: mappedLead.title || leadDataFull.title || leadDataFull.employee_title || leadDataFull.headline || '',
+          company: mappedLead.companyName || leadDataFull.company_name || leadDataFull.company || '',
+          email: mappedLead.email || leadDataFull.email || '',
+          phone: mappedLead.phone || leadDataFull.phone || '',
+          linkedin_url: mappedLead.linkedinUrl || leadDataFull.linkedin_url || leadDataFull.employee_linkedin_url || '',
           ...leadDataFull
         };
       }
@@ -141,10 +145,10 @@ Summary:`;
       const summary = response.text().trim();
 
       // Save summary to lead_data
-      // LAD Architecture: Use model layer instead of direct SQL in controller
+      // LAD Architecture: Use repository layer instead of direct SQL in controller
       try {
         const schema = getSchema(req);
-        await CampaignLeadModel.updateLeadData(leadId, campaignId, tenantId, schema, {
+        await CampaignLeadRepository.updateLeadData(leadId, campaignId, tenantId, schema, {
           profile_summary: summary,
           profile_summary_generated_at: new Date().toISOString()
         });

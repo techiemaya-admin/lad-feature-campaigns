@@ -100,8 +100,11 @@ class CampaignController {
 
   // Analytics method
   static async getCampaignAnalytics(req, res) {
+    const CampaignRepository = require('../repositories/CampaignRepository');
     const CampaignModel = require('../models/CampaignModel');
+    const CampaignStepRepository = require('../repositories/CampaignStepRepository');
     const CampaignStepModel = require('../models/CampaignStepModel');
+    const CampaignLeadRepository = require('../repositories/CampaignLeadRepository');
     const CampaignLeadModel = require('../models/CampaignLeadModel');
 
     try {
@@ -109,7 +112,8 @@ class CampaignController {
       const { id } = req.params;
 
       // Get campaign
-      const campaign = await CampaignModel.getById(id, tenantId);
+      const dbCampaign = await CampaignRepository.getById(id, tenantId, req);
+      const campaign = CampaignModel.mapCampaignFromDB(dbCampaign);
 
       if (!campaign) {
         return res.status(404).json({
@@ -119,10 +123,12 @@ class CampaignController {
       }
 
       // Get campaign steps
-      const steps = await CampaignStepModel.getStepsByCampaignId(id, tenantId);
+      const dbSteps = await CampaignStepRepository.getStepsByCampaignId(id, tenantId, req);
+      const steps = dbSteps.map(step => CampaignStepModel.mapStepFromDB(step));
 
       // Get leads for this campaign
-      const leads = await CampaignLeadModel.getByCampaignId(id, tenantId);
+      const dbLeads = await CampaignLeadRepository.getByCampaignId(id, tenantId, {}, req);
+      const leads = dbLeads.map(lead => CampaignLeadModel.mapLeadFromDB(lead));
 
       // Calculate analytics
       const totalLeads = leads.length;

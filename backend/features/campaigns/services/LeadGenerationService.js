@@ -12,7 +12,7 @@ const {
 } = require('./LeadGenerationHelpers');
 const { saveLeadsToCampaign } = require('./LeadSaveService');
 const { createLeadGenerationActivity } = require('./CampaignActivityService');
-const CampaignModel = require('../models/CampaignModel');
+const CampaignRepository = require('../repositories/CampaignRepository');
 const logger = require('../../../core/utils/logger');
 
 /**
@@ -224,11 +224,11 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       const retryIntervalHours = process.env.LEAD_RETRY_INTERVAL_HOURS || 6;
       const nextRetryTime = new Date(now.getTime() + (retryIntervalHours * 60 * 60 * 1000));
       
-      await CampaignModel.updateExecutionState(campaignId, 'waiting_for_leads', {
+      await CampaignRepository.updateExecutionState(campaignId, 'waiting_for_leads', {
         lastLeadCheckAt: now.toISOString(),
         nextRunAt: nextRetryTime.toISOString(),
         lastExecutionReason: 'Apollo Leads feature access required. Please upgrade your plan to enable lead generation.'
-      });
+      }, null);
       
       // Return success but with 0 leads
       return {
@@ -248,9 +248,9 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       });
       
       // Set execution state to error
-      await CampaignModel.updateExecutionState(campaignId, 'error', {
+      await CampaignRepository.updateExecutionState(campaignId, 'error', {
         lastExecutionReason: `Lead search failed: ${searchError}`
-      });
+      }, null);
       
       // Return error so caller knows what happened
       return {
@@ -288,10 +288,11 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       // Use whichever is earlier: 6 hours from now, or tomorrow at configured time
       const nextRunAt = tomorrow < nextRetryTime ? tomorrow : nextRetryTime;
       
-      await CampaignModel.updateExecutionState(campaignId, 'waiting_for_leads', {
+      await CampaignRepository.updateExecutionState(campaignId, 'waiting_for_leads', {
         lastLeadCheckAt: now.toISOString(),
         nextRunAt: nextRunAt.toISOString(),
         lastExecutionReason: `No leads found. Retrying in ${retryIntervalHours}h or tomorrow at ${dailyRetryHour}:${dailyRetryMinute.toString().padStart(2, '0')}`
+      }, null);
       });
       
       logger.info('[Campaign Execution] Campaign set to waiting_for_leads state', { nextRetry: nextRunAt.toISOString() });
@@ -386,9 +387,9 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       // But keep state as 'active' for now so workflow steps can execute
     } else {
       // Leads found but not at limit - set to active
-      await CampaignModel.updateExecutionState(campaignId, 'active', {
+      await CampaignRepository.updateExecutionState(campaignId, 'active', {
         lastExecutionReason: `Leads found (${dailyLeadsGenerated}/${dailyLimit}). Campaign active.`
-      });
+      }, null);
       
       logger.info('[Campaign Execution] Campaign set to active state', { dailyLeadsGenerated, dailyLimit });
     }

@@ -3,7 +3,9 @@
  * Handles basic CRUD operations for campaigns
  */
 
+const CampaignRepository = require('../repositories/CampaignRepository');
 const CampaignModel = require('../models/CampaignModel');
+const CampaignStepRepository = require('../repositories/CampaignStepRepository');
 const CampaignStepModel = require('../models/CampaignStepModel');
 const CampaignExecutionService = require('../services/CampaignExecutionService');
 const logger = require('../../../core/utils/logger');
@@ -18,18 +20,20 @@ class CampaignCRUDController {
       const tenantId = req.user.tenantId;
       const { search, status, limit, offset } = req.query;
 
-      const campaigns = await CampaignModel.list(tenantId, {
+      const dbCampaigns = await CampaignRepository.list(tenantId, {
         search,
         status,
         limit: parseInt(limit) || 50,
         offset: parseInt(offset) || 0
-      });
+      }, req);
+      const campaigns = dbCampaigns.map(campaign => CampaignModel.mapCampaignFromDB(campaign));
 
       // Fetch steps for each campaign
       const campaignsWithSteps = await Promise.all(
         campaigns.map(async (campaign) => {
           try {
-            const steps = await CampaignStepModel.getStepsByCampaignId(campaign.id, tenantId);
+            const dbSteps = await CampaignStepRepository.getStepsByCampaignId(campaign.id, tenantId, req);
+            const steps = dbSteps.map(step => CampaignStepModel.mapStepFromDB(step));
             return {
               ...campaign,
               steps: steps || [],
@@ -81,7 +85,7 @@ class CampaignCRUDController {
     try {
       const tenantId = req.user.tenantId;
 
-      const stats = await CampaignModel.getStats(tenantId);
+      const stats = await CampaignRepository.getStats(tenantId, req);
 
       // Handle empty results from database (mock DB or no data)
       if (!stats) {
@@ -131,7 +135,8 @@ class CampaignCRUDController {
       const tenantId = req.user.tenantId;
       const { id } = req.params;
 
-      const campaign = await CampaignModel.getById(id, tenantId);
+      const dbCampaign = await CampaignRepository.getById(id, tenantId, req);
+      const campaign = CampaignModel.mapCampaignFromDB(dbCampaign);
 
       if (!campaign) {
         return res.status(404).json({
@@ -141,7 +146,8 @@ class CampaignCRUDController {
       }
 
       // Get steps
-      const steps = await CampaignStepModel.getStepsByCampaignId(id, tenantId);
+      const dbSteps = await CampaignStepRepository.getStepsByCampaignId(id, tenantId, req);
+      const steps = dbSteps.map(step => CampaignStepModel.mapStepFromDB(step));
 
       res.json({
         success: true,
@@ -213,17 +219,19 @@ class CampaignCRUDController {
       const dbStatus = status === 'active' ? 'running' : (status || 'draft');
       
       // Create campaign
-      const campaign = await CampaignModel.create({
+      const dbCampaign = await CampaignRepository.create({
         name,
         status: dbStatus,
         createdBy: userId,
         config: campaignConfig
-      }, tenantId);
+      }, tenantId, req);
+      const campaign = CampaignModel.mapCampaignFromDB(dbCampaign);
 
       // Create steps if provided
       let createdSteps = [];
       if (steps && Array.isArray(steps) && steps.length > 0) {
-        createdSteps = await CampaignStepModel.bulkCreate(campaign.id, tenantId, steps);
+        const dbSteps = await CampaignStepRepository.bulkCreate(campaign.id, tenantId, steps, req);
+        createdSteps = dbSteps.map(step => CampaignStepModel.mapStepFromDB(step));
       }
 
       // If campaign is created with status='running' (mapped from 'active'), trigger immediate lead generation
@@ -233,9 +241,9 @@ class CampaignCRUDController {
         
         // Set execution_state to active for immediate processing
         try {
-          await CampaignModel.updateExecutionState(campaign.id, 'active', {
+          await CampaignRepository.updateExecutionState(campaign.id, 'active', {
             lastExecutionReason: 'Campaign created and started immediately'
-          });
+          }, req);
         } catch (stateError) {
           // If execution_state columns don't exist, continue anyway
           logger.warn('[Campaign CRUD] Could not set execution state', { error: stateError.message });
@@ -285,7 +293,8 @@ class CampaignCRUDController {
       const { id } = req.params;
       const updates = req.body;
 
-      const campaign = await CampaignModel.update(id, tenantId, updates);
+      const dbCampaign = await CampaignRepository.update(id, tenantId, updates, req);
+      const campaign = CampaignModel.mapCampaignFromDB(dbCampaign);
 
       if (!campaign) {
         return res.status(404).json({
@@ -317,7 +326,7 @@ class CampaignCRUDController {
       const tenantId = req.user.tenantId;
       const { id } = req.params;
 
-      const result = await CampaignModel.delete(id, tenantId);
+      const result = await CampaignRepository.delete(id, tenantId, req);
 
       if (!result) {
         return res.status(404).json({
