@@ -2,6 +2,7 @@ const { pool } = require('../utils/dbConnection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const stepExecutor = require('./stepExecutor');
 const conditionEvaluator = require('./conditionEvaluator');
+const logger = require('../../../core/utils/logger');
 
 /**
  * Main workflow execution engine
@@ -11,14 +12,14 @@ class WorkflowEngine {
   /**
    * Process a campaign - execute all steps for all leads
    */
-  async processCampaign(campaignId, userId, orgId) {
+  async processCampaign(campaignId, userId, tenantId) {
     try {
-      console.log(`[WorkflowEngine] Processing campaign ${campaignId}...`);
+      logger.info('[WorkflowEngine] Processing campaign', { campaignId });
 
-      // Per TDD: Use lad_dev schema
+      // Per TDD: Use dynamic schema
+      const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
       const campaignResult = await pool.query(
-        const schema = getSchema(req);
-        'SELECT * FROM ${schema}.campaigns WHERE id = $1 AND is_deleted = FALSE',
+        `SELECT * FROM ${schema}.campaigns WHERE id = $1 AND is_deleted = FALSE`,
         [campaignId]
       );
 
@@ -27,7 +28,7 @@ class WorkflowEngine {
       }
 
       const campaign = campaignResult.rows[0];
-      console.log(`[WorkflowEngine] Campaign: ${campaign.name}`);
+      logger.info('[WorkflowEngine] Campaign found', { campaignId, campaignName: campaign.name });
 
       // Parse workflow
       const workflow = typeof campaign.workflow === 'string' 
@@ -38,23 +39,23 @@ class WorkflowEngine {
         throw new Error('Invalid workflow configuration');
       }
 
-      // Per TDD: Use lad_dev schema
+      // Per TDD: Use dynamic schema
       const leadsResult = await pool.query(
-        'SELECT * FROM ${schema}.campaign_leads WHERE campaign_id = $1 AND is_deleted = FALSE',
+        `SELECT * FROM ${schema}.campaign_leads WHERE campaign_id = $1 AND is_deleted = FALSE`,
         [campaignId]
       );
 
-      console.log(`[WorkflowEngine] Found ${leadsResult.rows.length} leads`);
+      logger.info('[WorkflowEngine] Found leads', { campaignId, leadCount: leadsResult.rows.length });
 
       // Process each lead through the workflow
       for (const lead of leadsResult.rows) {
-        await this.processLeadWorkflow(campaignId, lead, workflow, userId, orgId);
+        await this.processLeadWorkflow(campaignId, lead, workflow, userId, tenantId);
       }
 
-      console.log(`[WorkflowEngine] Campaign ${campaignId} processing complete`);
+      logger.info('[WorkflowEngine] Campaign processing complete', { campaignId });
       return { success: true };
     } catch (error) {
-      console.error(`[WorkflowEngine] Error processing campaign:`, error);
+      logger.error('[WorkflowEngine] Error processing campaign', { campaignId, error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -62,9 +63,9 @@ class WorkflowEngine {
   /**
    * Process a single lead through the workflow
    */
-  async processLeadWorkflow(campaignId, lead, workflow, userId, orgId) {
+  async processLeadWorkflow(campaignId, lead, workflow, userId, tenantId) {
     try {
-      console.log(`[WorkflowEngine] Processing lead ${lead.id} for campaign ${campaignId}`);
+      logger.info('[WorkflowEngine] Processing lead workflow', { campaignId, leadId: lead.id });
 
       // Per TDD: Use current_step_order (integer) instead of current_step_id
       // Note: This code uses step IDs but TDD schema tracks step_order (integer)
@@ -89,11 +90,11 @@ class WorkflowEngine {
 
         const currentStep = workflow.steps.find(s => s.id === currentStepId);
         if (!currentStep) {
-          console.error(`[WorkflowEngine] Step ${currentStepId} not found in workflow`);
+          logger.error('[WorkflowEngine] Step not found in workflow', { stepId: currentStepId });
           break;
         }
 
-        console.log(`[WorkflowEngine] Executing step ${currentStep.id} (${currentStep.type})`);
+        logger.debug('[WorkflowEngine] Executing step', { stepId: currentStep.id, stepType: currentStep.type });
 
         // Execute the step
         const result = await stepExecutor.executeStepForLead(
@@ -101,44 +102,44 @@ class WorkflowEngine {
           lead,
           currentStep,
           userId,
-          orgId
+          tenantId
         );
 
         if (!result.success) {
-          console.error(`[WorkflowEngine] Step execution failed: ${result.error}`);
+          logger.error('[WorkflowEngine] Step execution failed', { stepId: currentStep.id, error: result.error });
           break;
         }
 
         // If step is a delay and not yet completed, stop here
         if (currentStep.type === 'delay' && result.delayPending) {
-          console.log(`[WorkflowEngine] Delay pending until ${result.delayUntil}`);
+          logger.info('[WorkflowEngine] Delay pending', { delayUntil: result.delayUntil });
           break;
         }
 
         // Determine next step
         currentStepId = await this.getNextStep(currentStep, lead, workflow, result);
 
-        // Per TDD: Use lad_dev schema
+        // Per TDD: Use dynamic schema
+        const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
         await pool.query(
-          const schema = getSchema(req);
-          'UPDATE ${schema}.campaign_leads SET current_step_order = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND is_deleted = FALSE',
+          `UPDATE ${schema}.campaign_leads SET current_step_order = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND is_deleted = FALSE`,
           [currentStepId, lead.id]
         );
 
         // If we've reached an end step, break
         if (currentStep.type === 'end') {
-          console.log(`[WorkflowEngine] Reached end step for lead ${lead.id}`);
+          logger.info('[WorkflowEngine] Reached end step', { leadId: lead.id });
           break;
         }
       }
 
       if (iterations >= maxIterations) {
-        console.warn(`[WorkflowEngine] Max iterations reached for lead ${lead.id}`);
+        logger.warn('[WorkflowEngine] Max iterations reached', { leadId: lead.id });
       }
 
       return { success: true };
     } catch (error) {
-      console.error(`[WorkflowEngine] Error processing lead workflow:`, error);
+      logger.error('[WorkflowEngine] Error processing lead workflow', { leadId: lead.id, error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -172,12 +173,12 @@ class WorkflowEngine {
   /**
    * Get all pending delayed leads that are ready to execute
    */
-  async getPendingDelayedLeads() {
+  async getPendingDelayedLeads(tenantId = null) {
     try {
-      // Per TDD: Use lad_dev schema
+      // Per TDD: Use dynamic schema
+      const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
       const result = await pool.query(`
-        SELECT DISTINCT cl.*, c.config as workflow, c.created_by_user_id as user_id, c.tenant_id as org_id
-        const schema = getSchema(req);
+        SELECT DISTINCT cl.*, c.config as workflow, c.created_by_user_id as user_id, c.tenant_id
         FROM ${schema}.campaign_leads cl
         JOIN ${schema}.campaigns c ON cl.campaign_id = c.id
         JOIN ${schema}.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id
@@ -191,7 +192,7 @@ class WorkflowEngine {
 
       return result.rows;
     } catch (error) {
-      console.error('[WorkflowEngine] Error getting pending delayed leads:', error);
+      logger.error('[WorkflowEngine] Error getting pending delayed leads', { error: error.message, stack: error.stack });
       return [];
     }
   }

@@ -6,6 +6,7 @@
 const linkedInService = require('../services/LinkedInIntegrationService');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const linkedInAccountStorage = require('../services/LinkedInAccountStorageService');
+const logger = require('../../../core/utils/logger');
 
 class LinkedInAuthController {
   /**
@@ -34,7 +35,7 @@ class LinkedInAuthController {
         });
       }
       
-      console.log('[LinkedIn Auth] Starting OAuth for user:', userId);
+      logger.info('[LinkedIn Auth] Starting OAuth', { userId });
       
       const authUrl = await linkedInService.startLinkedInConnection(userId, redirectUri);
       
@@ -44,7 +45,7 @@ class LinkedInAuthController {
         message: 'Redirect user to authUrl to complete LinkedIn connection'
       });
     } catch (error) {
-      console.error('[LinkedIn Auth] Error starting auth:', error);
+      logger.error('[LinkedIn Auth] Error starting auth', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to start LinkedIn authentication'
@@ -86,7 +87,7 @@ class LinkedInAuthController {
         });
       }
       
-      console.log('[LinkedIn Auth] Handling callback for user:', userId);
+      logger.info('[LinkedIn Auth] Handling callback', { userId });
       
       const result = await linkedInService.handleLinkedInCallback(userId, code, redirectUri);
       
@@ -102,7 +103,7 @@ class LinkedInAuthController {
       
       res.redirect(successUrl);
     } catch (error) {
-      console.error('[LinkedIn Auth] Error handling callback:', error);
+      logger.error('[LinkedIn Auth] Error handling callback', { error: error.message, stack: error.stack });
       const frontendUrl = process.env.FRONTEND_URL;
       if (!frontendUrl) {
         return res.status(500).json({
@@ -185,7 +186,7 @@ class LinkedInAuthController {
         }
         
         // Handle other errors
-        console.error('[LinkedIn Auth] Connection error:', error);
+        logger.error('[LinkedIn Auth] Connection error', { error: error.message, stack: error.stack, status: error.response?.status });
         return res.status(error.response?.status || 500).json({
           success: false,
           error: errorMessage,
@@ -195,7 +196,7 @@ class LinkedInAuthController {
 
       // Check if result is a checkpoint (OTP/2FA required)
       if (result && result.object === 'Checkpoint' && result.checkpoint) {
-        console.log('[LinkedIn Auth] ⚠️ Checkpoint required, returning checkpoint info to frontend');
+        logger.info('[LinkedIn Auth] Checkpoint required, returning checkpoint info to frontend');
         
         const accountId = result.account_id || result.id || result._id;
         const tenantId = req.user.tenantId || req.user.userId || req.user.user_id;
@@ -227,7 +228,7 @@ class LinkedInAuthController {
       const unipileAccountId = result.account_id || result.id || result._id || result.accountId;
       
       if (unipileAccountId) {
-        console.log('[LinkedIn Auth] Account connected, ID:', unipileAccountId);
+            logger.info('[LinkedIn Auth] Account connected', { accountId: unipileAccountId });
         
         // SDK response might already contain account details, try to use them first
         let accountDetails = result;
@@ -235,10 +236,10 @@ class LinkedInAuthController {
         // If SDK response doesn't have profile info, fetch it
         if (!accountDetails.profile_name && !accountDetails.profile_url && !accountDetails.name) {
           try {
-            console.log('[LinkedIn Auth] Fetching account details from Unipile...');
+            logger.debug('[LinkedIn Auth] Fetching account details from Unipile');
             accountDetails = await linkedInService.getAccountDetails(unipileAccountId);
           } catch (detailError) {
-            console.warn('[LinkedIn Auth] Could not fetch account details, using connection response:', detailError.message);
+            logger.warn('[LinkedIn Auth] Could not fetch account details, using connection response', { error: detailError.message });
             // Use the connection response as fallback
             accountDetails = result;
           }
@@ -284,7 +285,7 @@ class LinkedInAuthController {
             connected_at: new Date().toISOString()
           };
 
-          console.log('[LinkedIn Auth] Saving account to database:', {
+          logger.info('[LinkedIn Auth] Saving account to database', {
             tenant_id: tenantId,
             unipile_account_id: unipileAccountId,
             profile_name: profileName,
@@ -295,8 +296,7 @@ class LinkedInAuthController {
           await linkedInAccountStorage.saveLinkedInAccount(tenantId, credentials);
         }
       } else {
-        console.warn('[LinkedIn Auth] ⚠️ Connection successful but no account ID found in response');
-        console.warn('[LinkedIn Auth] Response keys:', Object.keys(result || {}));
+        logger.warn('[LinkedIn Auth] Connection successful but no account ID found in response', { responseKeys: Object.keys(result || {}) });
       }
 
       res.json({
@@ -305,7 +305,7 @@ class LinkedInAuthController {
         result
       });
     } catch (error) {
-      console.error('[LinkedIn Auth] Error connecting:', error);
+      logger.error('[LinkedIn Auth] Error connecting', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to connect account'
@@ -346,7 +346,7 @@ class LinkedInAuthController {
         result
       });
     } catch (error) {
-      console.error('[LinkedIn Auth] Error reconnecting:', error);
+      logger.error('[LinkedIn Auth] Error reconnecting', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to reconnect account'
@@ -354,174 +354,21 @@ class LinkedInAuthController {
     }
   }
 
-  /**
-   * Solve checkpoint (Yes/No validation)
-   * POST /api/campaigns/linkedin/solve-checkpoint
-   */
+  // Checkpoint methods moved to LinkedInCheckpointController.js
+  // Import and delegate:
   static async solveCheckpoint(req, res) {
-    try {
-      const userId = req.user.userId || req.user.user_id;
-      const { answer, account_id, email } = req.body;
-      
-      if (!answer || (answer !== 'YES' && answer !== 'NO')) {
-        return res.status(400).json({
-          success: false,
-          error: 'Answer is required and must be YES or NO'
-        });
-      }
-
-      // Get account ID from request or database
-      let unipileAccountId = account_id;
-      if (!unipileAccountId) {
-        const accounts = await linkedInService.getUserLinkedInAccounts(userId);
-        if (accounts.length > 0) {
-          unipileAccountId = accounts[0].unipile_account_id;
-        }
-      }
-
-      if (!unipileAccountId) {
-        return res.status(400).json({
-          success: false,
-          error: 'Account ID is required'
-        });
-      }
-
-      // Get checkpoint type from database (default: IN_APP_VALIDATION)
-      let checkpointType = 'IN_APP_VALIDATION';
-      try {
-        const { pool } = require('../utils/dbConnection');
-        const tenantId = req.user.tenantId || userId;
-        
-        // Try TDD schema first
-        const checkpointQuery = `
-          SELECT metadata
-          const schema = getSchema(req);
-          FROM ${schema}.linkedin_accounts
-          WHERE unipile_account_id = $1 AND tenant_id = $2 AND is_active = TRUE
-          ORDER BY created_at DESC
-          LIMIT 1
-        `;
-        const checkpointResult = await pool.query(checkpointQuery, [unipileAccountId, tenantId]);
-        
-        if (checkpointResult.rows.length > 0) {
-          const metadata = typeof checkpointResult.rows[0].metadata === 'string'
-            ? JSON.parse(checkpointResult.rows[0].metadata)
-            : (checkpointResult.rows[0].metadata || {});
-          checkpointType = metadata.checkpoint?.type || 'IN_APP_VALIDATION';
-        }
-      } catch (dbError) {
-        console.warn('[LinkedIn Auth] Could not get checkpoint type from database, using default:', dbError.message);
-      }
-
-      const result = await linkedInService.solveCheckpoint(unipileAccountId, answer, checkpointType);
-      
-      res.json({
-        success: true,
-        message: 'Checkpoint solved successfully',
-        result
-      });
-    } catch (error) {
-      console.error('[LinkedIn Auth] Error solving checkpoint:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message || 'Failed to solve checkpoint'
-      });
-    }
+    const LinkedInCheckpointController = require('./LinkedInCheckpointController');
+    return LinkedInCheckpointController.solveCheckpoint(req, res);
   }
 
-  /**
-   * Verify OTP
-   * POST /api/campaigns/linkedin/verify-otp
-   */
   static async verifyOTP(req, res) {
-    try {
-      const userId = req.user.userId || req.user.user_id;
-      const { otp, account_id, email } = req.body;
-      
-      if (!otp) {
-        return res.status(400).json({
-          success: false,
-          error: 'OTP is required'
-        });
-      }
-
-      // Get account ID from request or database
-      let unipileAccountId = account_id;
-      if (!unipileAccountId) {
-        const accounts = await linkedInService.getUserLinkedInAccounts(userId);
-        if (accounts.length > 0) {
-          unipileAccountId = accounts[0].unipile_account_id;
-        }
-      }
-
-      if (!unipileAccountId) {
-        return res.status(400).json({
-          success: false,
-          error: 'Account ID is required'
-        });
-      }
-
-      const result = await linkedInService.verifyOTP(unipileAccountId, otp);
-      
-      res.json({
-        success: true,
-        message: 'OTP verified successfully',
-        result
-      });
-    } catch (error) {
-      console.error('[LinkedIn Auth] Error verifying OTP:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message || 'Failed to verify OTP'
-      });
-    }
+    const LinkedInCheckpointController = require('./LinkedInCheckpointController');
+    return LinkedInCheckpointController.verifyOTP(req, res);
   }
 
-  /**
-   * Get checkpoint status (for polling Yes/No checkpoints)
-   * GET /api/campaigns/linkedin/checkpoint-status
-   */
   static async getCheckpointStatus(req, res) {
-    try {
-      const userId = req.user.userId || req.user.user_id;
-      const { account_id } = req.query;
-      
-      // Get account ID
-      let unipileAccountId = account_id;
-      if (!unipileAccountId) {
-        const accounts = await linkedInService.getUserLinkedInAccounts(userId);
-        if (accounts.length > 0) {
-          unipileAccountId = accounts[0].unipile_account_id;
-        }
-      }
-
-      if (!unipileAccountId) {
-        return res.status(400).json({
-          success: false,
-          error: 'Account ID is required'
-        });
-      }
-
-      // Get account details from Unipile to check checkpoint status
-      const accountDetails = await linkedInService.getAccountDetails(unipileAccountId);
-      
-      // Check if account is still in checkpoint state
-      const isCheckpoint = accountDetails?.checkpoint && accountDetails.checkpoint.required;
-      const isConnected = accountDetails?.state === 'connected' || accountDetails?.status === 'connected';
-      
-      res.json({
-        success: true,
-        connected: isConnected && !isCheckpoint,
-        status: isConnected ? 'connected' : (isCheckpoint ? 'checkpoint' : 'disconnected'),
-        checkpoint: accountDetails?.checkpoint || null
-      });
-    } catch (error) {
-      console.error('[LinkedIn Auth] Error getting checkpoint status:', error);
-      res.status(500).json({
-        success: false,
-        error: error.message || 'Failed to get checkpoint status'
-      });
-    }
+    const LinkedInCheckpointController = require('./LinkedInCheckpointController');
+    return LinkedInCheckpointController.getCheckpointStatus(req, res);
   }
 }
 

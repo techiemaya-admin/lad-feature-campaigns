@@ -5,6 +5,7 @@
 
 const { pool } = require('../utils/dbConnection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
+const logger = require('../../../core/utils/logger');
 
 /**
  * Get all connected LinkedIn accounts for a user/tenant
@@ -12,7 +13,7 @@ const { getSchema } = require('../../../core/utils/schemaHelper');
  */
 async function getUserLinkedInAccounts(userId) {
   try {
-    const schema = getSchema(req);
+    const schema = userId ? getSchema({ user: { tenant_id: userId } }) : getSchema(null);
     // Use ${schema}.linkedin_accounts table per TDD
     // First try the TDD schema, fallback to old schema if needed
     let query = `
@@ -39,7 +40,7 @@ async function getUserLinkedInAccounts(userId) {
       result = await pool.query(query, [userId]);
     } catch (tddError) {
       // Fallback to old schema if TDD table doesn't exist
-      console.warn('[LinkedIn Account Query] TDD table not found, using fallback:', tddError.message);
+      logger.warn('[LinkedIn Account Query] TDD table not found, using fallback', { error: tddError.message });
       useTddSchema = false;
       query = `
         SELECT id, credentials, is_connected, connected_at
@@ -53,7 +54,7 @@ async function getUserLinkedInAccounts(userId) {
       try {
         result = await pool.query(query, [userId]);
       } catch (fallbackError) {
-        console.error('[LinkedIn Account Query] Fallback query also failed:', fallbackError.message);
+        logger.error('[LinkedIn Account Query] Fallback query also failed', { error: fallbackError.message, stack: fallbackError.stack });
         return [];
       }
     }
@@ -96,7 +97,7 @@ async function getUserLinkedInAccounts(userId) {
       });
     }
   } catch (error) {
-    console.error('[LinkedIn Account Query] Error getting LinkedIn accounts:', error);
+    logger.error('[LinkedIn Account Query] Error getting LinkedIn accounts', { error: error.message, stack: error.stack });
     return [];
   }
 }
@@ -107,10 +108,10 @@ async function getUserLinkedInAccounts(userId) {
 async function findAccountByUnipileId(tenantId, unipileAccountId) {
   try {
     // Try TDD schema first
+    const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
     try {
       const result = await pool.query(
         `SELECT id, unipile_account_id, is_active
-         const schema = getSchema(req);
          FROM ${schema}.linkedin_accounts
          WHERE tenant_id = $1 
          AND unipile_account_id = $2
@@ -142,7 +143,7 @@ async function findAccountByUnipileId(tenantId, unipileAccountId) {
     
     return null;
   } catch (error) {
-    console.error('[LinkedIn Account Query] Error finding account:', error);
+    logger.error('[LinkedIn Account Query] Error finding account', { error: error.message, stack: error.stack });
     return null;
   }
 }

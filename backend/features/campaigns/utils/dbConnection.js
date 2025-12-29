@@ -5,18 +5,23 @@
 
 const path = require('path');
 const fs = require('fs');
+const logger = require('../../../core/utils/logger');
 
 function getDatabaseConnection() {
   // Priority 1: Try main LAD backend (for feature repos in development)
-  const mainLADPath = '/Users/naveenreddy/Desktop/AI-Maya/LAD/backend/shared/database/connection';
-  try {
-    const connection = require(mainLADPath);
-    if (connection && connection.pool) {
-      console.log(`[DB Connection] ✅ Loaded from main LAD: ${mainLADPath}`);
-      return connection;
+  // Use environment variable for path, no hardcoded developer paths
+  const mainLADPath = process.env.LAD_BACKEND_DB_PATH || process.env.LAD_DB_CONNECTION_PATH;
+  if (mainLADPath) {
+    try {
+      const connection = require(mainLADPath);
+      if (connection && connection.pool) {
+        logger.info('[DB Connection] Loaded from main LAD', { path: mainLADPath });
+        return connection;
+      }
+    } catch (error) {
+      logger.debug('[DB Connection] Failed to load from LAD_BACKEND_DB_PATH', { path: mainLADPath, error: error.message });
+      // Continue to other methods
     }
-  } catch (error) {
-    // Continue to other methods
   }
 
   // Priority 2: Try to find shared folder by going up the directory tree
@@ -34,7 +39,7 @@ function getDatabaseConnection() {
       try {
         const connection = require(sharedPath);
         if (connection && connection.pool) {
-          console.log(`[DB Connection] ✅ Loaded from: ${sharedPath}`);
+          logger.info('[DB Connection] Loaded from shared path', { path: sharedPath });
           return connection;
         }
       } catch (error) {
@@ -75,7 +80,7 @@ function getDatabaseConnection() {
       }
       
       if (connection && connection.pool) {
-        console.log(`[DB Connection] ✅ Loaded from: ${dbPath}`);
+        logger.info('[DB Connection] Loaded from path', { path: dbPath });
         return connection;
       }
     } catch (error) {

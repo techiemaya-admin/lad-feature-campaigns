@@ -1,4 +1,5 @@
 const axios = require('axios');
+const logger = require('../../../../core/utils/logger');
 
 const BACKEND_URL = process.env.BACKEND_INTERNAL_URL || process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL;
 if (!BACKEND_URL) {
@@ -13,19 +14,19 @@ class VoiceDispatcher {
   /**
    * Execute voice action
    */
-  async execute(stepType, lead, stepConfig, userId, orgId) {
+  async execute(stepType, lead, stepConfig, userId, tenantId) {
     try {
-      console.log(`[VoiceDispatcher] Executing ${stepType} for lead ${lead.id}`);
+      logger.info('[VoiceDispatcher] Executing step', { stepType, leadId: lead.id });
 
       switch (stepType) {
         case 'voice_agent_call':
-          return await this.makeVoiceCall(lead, stepConfig, userId, orgId);
+          return await this.makeVoiceCall(lead, stepConfig, userId, tenantId);
 
         default:
           return { success: false, error: `Unsupported voice action: ${stepType}` };
       }
     } catch (error) {
-      console.error('[VoiceDispatcher] Error:', error);
+      logger.error('[VoiceDispatcher] Error', { error: error.message, stack: error.stack });
       return { success: false, error: error.message };
     }
   }
@@ -33,7 +34,7 @@ class VoiceDispatcher {
   /**
    * Make voice call using voice agent
    */
-  async makeVoiceCall(lead, stepConfig, userId, orgId) {
+  async makeVoiceCall(lead, stepConfig, userId, tenantId) {
     try {
       const leadData = lead.lead_data || {};
       const phoneNumber = leadData.phone || leadData.mobile_phone || leadData.phone_number;
@@ -62,7 +63,7 @@ class VoiceDispatcher {
           lead_id: lead.id,
           campaign_id: lead.campaign_id,
           user_id: userId,
-          org_id: orgId
+          tenant_id: tenantId
         },
         {
           headers: {
@@ -84,7 +85,7 @@ class VoiceDispatcher {
         throw new Error(response.data?.message || 'Voice call failed');
       }
     } catch (error) {
-      console.error('[VoiceDispatcher] Voice call failed:', error);
+      logger.error('[VoiceDispatcher] Voice call failed', { error: error.message, stack: error.stack });
       throw error;
     }
   }

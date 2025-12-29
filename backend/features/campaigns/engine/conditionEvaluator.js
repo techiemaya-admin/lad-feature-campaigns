@@ -1,6 +1,8 @@
 /**
  * Condition Evaluator - evaluates workflow conditions
  */
+const logger = require('../../../core/utils/logger');
+
 class ConditionEvaluator {
   /**
    * Evaluate a condition step
@@ -30,11 +32,11 @@ class ConditionEvaluator {
           return this.checkCustomField(lead, stepConfig);
 
         default:
-          console.warn(`[ConditionEvaluator] Unknown condition type: ${conditionType}`);
+          logger.warn('[ConditionEvaluator] Unknown condition type', { conditionType });
           return false;
       }
     } catch (error) {
-      console.error('[ConditionEvaluator] Error evaluating condition:', error);
+      logger.error('[ConditionEvaluator] Error evaluating condition', { error: error.message, stack: error.stack });
       return false;
     }
   }

@@ -1,11 +1,13 @@
 /**
  * Workflow Processor
  * Handles processing leads through workflow steps
+ * LAD Architecture Compliant - Uses logger instead of console
  */
 
 const { pool } = require('../utils/dbConnection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const { validateStepConfig } = require('./StepValidators');
+const logger = require('../../../core/utils/logger');
 // Lazy load executeStepForLead to avoid circular dependency with CampaignProcessor
 // CampaignProcessor imports processLeadThroughWorkflow from this file,
 // so we can't import executeStepForLead at the top level
@@ -15,13 +17,13 @@ const { executeConditionStep } = require('./StepExecutors');
 /**
  * Process a lead through the workflow steps
  */
-async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId, orgId, authToken = null) {
+async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId, tenantId, authToken = null) {
   try {
     // Find the last successfully completed step for this lead
     // This ensures we don't re-execute steps that were already completed
-    // Per TDD: Use lad_dev schema
+    // LAD Architecture: Get schema from tenant context
+    const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
     const lastSuccessfulActivityResult = await pool.query(
-      const schema = getSchema(req);
       `SELECT step_id, status, created_at FROM ${schema}.campaign_lead_activities 
        WHERE campaign_lead_id = $1 
        AND status IN ('delivered', 'connected', 'replied')
@@ -36,11 +38,11 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
       if (lastSuccessfulStepIndex >= 0) {
         // Advance to the step after the last successfully completed step
         nextStepIndex = lastSuccessfulStepIndex + 1;
-        console.log(`[Campaign Execution] Last successful step for lead ${campaignLead.id}: step ${lastSuccessfulStepIndex} (${lastSuccessfulActivity.step_id}), advancing to step ${nextStepIndex}`);
+        logger.info('[Campaign Execution] Last successful step found', { leadId: campaignLead.id, lastStepIndex: lastSuccessfulStepIndex, stepId: lastSuccessfulActivity.step_id, nextStepIndex });
       }
     } else {
       // No successful activities yet, start from the beginning
-      console.log(`[Campaign Execution] No successful activities found for lead ${campaignLead.id}, starting from step 0`);
+      logger.info('[Campaign Execution] No successful activities found, starting from step 0', { leadId: campaignLead.id });
     }
     
     if (nextStepIndex >= steps.length) {
@@ -69,14 +71,14 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     
     if (existingActivityResult.rows.length > 0) {
       const existingActivity = existingActivityResult.rows[0];
-      console.log(`[Campaign Execution] ⏭️  Step ${nextStep.id} (${nextStep.type}) already completed for lead ${campaignLead.id} with status: ${existingActivity.status}. Skipping duplicate execution.`);
+      logger.info('[Campaign Execution] Step already completed, skipping', { stepId: nextStep.id, stepType: nextStep.type, leadId: campaignLead.id, status: existingActivity.status });
       
       // Step already completed successfully, advance to next step
       const currentStepIndex = steps.findIndex(s => s.id === nextStep.id);
       if (currentStepIndex >= 0 && currentStepIndex < steps.length - 1) {
         // Recursively process the next step
         const remainingSteps = steps.slice(currentStepIndex + 1);
-        await processLeadThroughWorkflow(campaign, remainingSteps, campaignLead, userId, orgId, authToken);
+        await processLeadThroughWorkflow(campaign, remainingSteps, campaignLead, userId, tenantId, authToken);
       }
       return;
     }
@@ -87,10 +89,7 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     
     if (!validation.valid) {
       // Step validation failed - required fields not filled by user
-      console.error(`[Campaign Execution] Step ${nextStep.id} (${nextStep.type}) validation failed for lead ${campaignLead.id}`);
-      console.error(`[Campaign Execution] Error: ${validation.error}`);
-      console.error(`[Campaign Execution] Missing required fields: ${validation.missingFields.join(', ')}`);
-      console.error(`[Campaign Execution] User must fill all required fields in step settings before execution`);
+      logger.error('[Campaign Execution] Step validation failed', { stepId: nextStep.id, stepType: nextStep.type, leadId: campaignLead.id, error: validation.error, missingFields: validation.missingFields });
       
       // Record validation error in activity
       // Per TDD: Use lad_dev schema and include tenant_id and campaign_id
@@ -124,11 +123,11 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
         [campaignLead.id]
       );
       
-      console.log(`[Campaign Execution] Lead ${campaignLead.id} stopped due to incomplete step configuration. User must complete step settings.`);
+      logger.warn('[Campaign Execution] Lead stopped due to incomplete step configuration', { leadId: campaignLead.id });
       return;
     }
     
-    console.log(`[Campaign Execution] Step ${nextStep.id} (${nextStep.type}) validation passed - all required fields configured`);
+    logger.debug('[Campaign Execution] Step validation passed', { stepId: nextStep.id, stepType: nextStep.type });
     
     // Check if this is a delay step - if so, check if delay has passed
     // (stepConfig already parsed above during validation)
@@ -171,10 +170,59 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
       const CampaignProcessor = require('./CampaignProcessor');
       executeStepForLead = CampaignProcessor.executeStepForLead;
     }
-    await executeStepForLead(campaign.id, nextStep, campaignLead, userId, orgId, authToken);
+    
+    const stepResult = await executeStepForLead(campaign.id, nextStep, campaignLead, userId, tenantId, authToken);
+    
+    // CRITICAL FIX: After executing a step, continue to the next step if successful
+    // This ensures the workflow continues through all steps instead of stopping after the first one
+    if (stepResult && stepResult.success) {
+      logger.info('[Campaign Execution] Step executed successfully, continuing to next step', { 
+        stepId: nextStep.id, 
+        stepType: nextStep.type, 
+        leadId: campaignLead.id 
+      });
+      
+      // Find the index of the current step
+      const currentStepIndex = steps.findIndex(s => s.id === nextStep.id);
+      
+      // If there are more steps, recursively process them
+      if (currentStepIndex >= 0 && currentStepIndex < steps.length - 1) {
+        const remainingSteps = steps.slice(currentStepIndex + 1);
+        logger.debug('[Campaign Execution] Processing remaining steps', { 
+          remainingCount: remainingSteps.length, 
+          nextStepType: remainingSteps[0]?.type 
+        });
+        
+        // Recursively process remaining steps
+        await processLeadThroughWorkflow(campaign, remainingSteps, campaignLead, userId, tenantId, authToken);
+      } else {
+        logger.info('[Campaign Execution] All steps completed for lead', { leadId: campaignLead.id });
+        
+        // Mark lead as completed if all steps are done
+        await pool.query(
+          `UPDATE ${schema}.campaign_leads SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+          [campaignLead.id]
+        );
+      }
+    } else {
+      // Step failed - log error but don't stop workflow (some steps might fail but workflow should continue)
+      logger.warn('[Campaign Execution] Step execution failed, but continuing workflow', { 
+        stepId: nextStep.id, 
+        stepType: nextStep.type, 
+        error: stepResult?.error,
+        leadId: campaignLead.id 
+      });
+      
+      // Even if step fails, try to continue to next step (user can retry failed steps later)
+      const currentStepIndex = steps.findIndex(s => s.id === nextStep.id);
+      if (currentStepIndex >= 0 && currentStepIndex < steps.length - 1) {
+        const remainingSteps = steps.slice(currentStepIndex + 1);
+        await processLeadThroughWorkflow(campaign, remainingSteps, campaignLead, userId, tenantId, authToken);
+      }
+    }
     
   } catch (error) {
-    console.error(`[Campaign Execution] Error processing lead ${campaignLead.id}:`, error);
+    logger.error('[Campaign Execution] Error processing lead', { leadId: campaignLead.id, error: error.message, stack: error.stack });
   }
 }
 

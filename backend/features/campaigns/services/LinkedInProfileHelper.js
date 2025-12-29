@@ -2,6 +2,7 @@
  * LinkedIn Profile Helper
  * Handles profile URL extraction and checkpoint detection
  */
+const logger = require('../../../core/utils/logger');
 
 /**
  * Extract LinkedIn profile URL from Unipile response
@@ -35,7 +36,7 @@ function extractLinkedInProfileUrl(unipileResponse) {
       if (trimmedUrl.startsWith('http://') || trimmedUrl.startsWith('https://')) {
         // Ensure it's a LinkedIn URL
         if (trimmedUrl.includes('linkedin.com')) {
-          console.log('[LinkedIn Profile URL] ✅ Found valid profile URL:', trimmedUrl);
+          logger.debug('[LinkedIn Profile URL] Found valid profile URL', { url: trimmedUrl });
           return trimmedUrl;
         }
       }
@@ -47,7 +48,7 @@ function extractLinkedInProfileUrl(unipileResponse) {
     const publicIdentifier = unipileResponse.connection_params.im.publicIdentifier;
     if (typeof publicIdentifier === 'string' && publicIdentifier.trim() !== '') {
       const constructedUrl = `https://www.linkedin.com/in/${publicIdentifier.trim()}`;
-      console.log('[LinkedIn Profile URL] ✅ Constructed URL from connection_params.im.publicIdentifier:', constructedUrl);
+      logger.debug('[LinkedIn Profile URL] Constructed URL from connection_params.im.publicIdentifier', { url: constructedUrl });
       return constructedUrl;
     }
   }
@@ -69,23 +70,18 @@ function extractLinkedInProfileUrl(unipileResponse) {
     // Only construct if it looks like a valid LinkedIn profile ID (not email-based)
     if (typeof profileId === 'string' && profileId.length > 0 && !profileId.includes('@')) {
       const constructedUrl = `https://www.linkedin.com/in/${profileId}`;
-      console.log('[LinkedIn Profile URL] ⚠️ Constructed URL from profile ID:', constructedUrl);
+      logger.debug('[LinkedIn Profile URL] Constructed URL from profile ID', { url: constructedUrl });
       return constructedUrl;
     }
   }
   
-  console.log('[LinkedIn Profile URL] ❌ No valid profile URL found in Unipile response');
-  console.log('[LinkedIn Profile URL] Response keys:', Object.keys(unipileResponse));
-  if (unipileResponse.profile) {
-    console.log('[LinkedIn Profile URL] Profile keys:', Object.keys(unipileResponse.profile));
-  }
-  if (unipileResponse.connection_params) {
-    console.log('[LinkedIn Profile URL] connection_params keys:', Object.keys(unipileResponse.connection_params));
-    if (unipileResponse.connection_params.im) {
-      console.log('[LinkedIn Profile URL] connection_params.im keys:', Object.keys(unipileResponse.connection_params.im));
-      console.log('[LinkedIn Profile URL] connection_params.im.publicIdentifier:', unipileResponse.connection_params.im.publicIdentifier);
-    }
-  }
+  logger.debug('[LinkedIn Profile URL] No valid profile URL found in Unipile response', {
+    responseKeys: Object.keys(unipileResponse),
+    profileKeys: unipileResponse.profile ? Object.keys(unipileResponse.profile) : null,
+    connectionParamsKeys: unipileResponse.connection_params ? Object.keys(unipileResponse.connection_params) : null,
+    imKeys: unipileResponse.connection_params?.im ? Object.keys(unipileResponse.connection_params.im) : null,
+    publicIdentifier: unipileResponse.connection_params?.im?.publicIdentifier
+  });
   
   return null;
 }
@@ -140,7 +136,7 @@ async function extractCheckpointInfo(account, unipile, accountId) {
       }
     }
   } catch (detailError) {
-    console.warn('[LinkedIn Profile Helper] Could not fetch account details for checkpoint info:', detailError.message);
+    logger.warn('[LinkedIn Profile Helper] Could not fetch account details for checkpoint info', { error: detailError.message });
   }
   
   // Extract checkpoint fields from response

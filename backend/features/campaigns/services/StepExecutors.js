@@ -6,6 +6,7 @@
 const { pool } = require('../utils/dbConnection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const axios = require('axios');
+const logger = require('../../../core/utils/logger');
 
 const BACKEND_URL = process.env.BACKEND_INTERNAL_URL || process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL;
 if (!BACKEND_URL) {
@@ -16,11 +17,11 @@ if (!BACKEND_URL) {
  * Helper function to get lead data from campaign_leads table
  * Tries lead_data first, falls back to custom_fields if lead_data doesn't exist
  */
-// Per TDD: Use lad_dev schema
-async function getLeadData(campaignLeadId) {
+// Per TDD: Use dynamic schema
+async function getLeadData(campaignLeadId, req = null) {
   try {
+    const schema = getSchema(req);
     const leadDataResult = await pool.query(
-      const schema = getSchema(req);
       `SELECT lead_data, snapshot FROM ${schema}.campaign_leads WHERE id = $1 AND is_deleted = FALSE`,
       [campaignLeadId]
     );
@@ -35,7 +36,7 @@ async function getLeadData(campaignLeadId) {
     
     return typeof leadData === 'string' ? JSON.parse(leadData) : leadData;
   } catch (err) {
-    console.error('[StepExecutors] Error getting lead data:', err);
+    logger.error('[StepExecutors] Error getting lead data', { error: err.message, stack: err.stack });
     throw err;
   }
 }
@@ -43,9 +44,9 @@ async function getLeadData(campaignLeadId) {
 /**
  * Execute email step
  */
-async function executeEmailStep(stepType, stepConfig, campaignLead, userId, orgId) {
+async function executeEmailStep(stepType, stepConfig, campaignLead, userId, tenantId) {
   try {
-    console.log(`[Campaign Execution] Executing email step: ${stepType}`);
+    logger.info('[Campaign Execution] Executing email step', { stepType });
     
     // Get lead data
     const leadData = await getLeadData(campaignLead.id);
@@ -62,11 +63,11 @@ async function executeEmailStep(stepType, stepConfig, campaignLead, userId, orgI
     const body = stepConfig.body || stepConfig.emailBody || stepConfig.message || 'Hi {{first_name}},...';
     
     // TODO: Implement actual email sending via SMTP or email service
-    console.log(`[Campaign Execution] Email step recorded - would send to ${email}`);
+    logger.debug('[Campaign Execution] Email step recorded - would send', { email });
     
     return { success: true, email, subject, body };
   } catch (error) {
-    console.error('[Campaign Execution] Email step error:', error);
+    logger.error('[Campaign Execution] Email step error', { error: error.message, stack: error.stack });
     return { success: false, error: error.message };
   }
 }
@@ -74,9 +75,9 @@ async function executeEmailStep(stepType, stepConfig, campaignLead, userId, orgI
 /**
  * Execute WhatsApp step
  */
-async function executeWhatsAppStep(stepType, stepConfig, campaignLead, userId, orgId) {
+async function executeWhatsAppStep(stepType, stepConfig, campaignLead, userId, tenantId) {
   try {
-    console.log(`[Campaign Execution] Executing WhatsApp step: ${stepType}`);
+    logger.info('[Campaign Execution] Executing WhatsApp step', { stepType });
     
     // Get lead data
     const leadData = await getLeadData(campaignLead.id);
@@ -92,11 +93,11 @@ async function executeWhatsAppStep(stepType, stepConfig, campaignLead, userId, o
     const message = stepConfig.whatsappMessage || stepConfig.message || 'Hi {{first_name}},...';
     
     // TODO: Implement actual WhatsApp sending
-    console.log(`[Campaign Execution] WhatsApp step recorded - would send to ${phone}`);
+    logger.debug('[Campaign Execution] WhatsApp step recorded - would send', { phone });
     
     return { success: true, phone, message };
   } catch (error) {
-    console.error('[Campaign Execution] WhatsApp step error:', error);
+    logger.error('[Campaign Execution] WhatsApp step error', { error: error.message, stack: error.stack });
     return { success: false, error: error.message };
   }
 }
@@ -104,9 +105,9 @@ async function executeWhatsAppStep(stepType, stepConfig, campaignLead, userId, o
 /**
  * Execute Instagram step
  */
-async function executeInstagramStep(stepType, stepConfig, campaignLead, userId, orgId) {
+async function executeInstagramStep(stepType, stepConfig, campaignLead, userId, tenantId) {
   try {
-    console.log(`[Campaign Execution] Executing Instagram step: ${stepType}`);
+    logger.info('[Campaign Execution] Executing Instagram step', { stepType });
     
     // Get lead data
     const leadData = await getLeadData(campaignLead.id);
@@ -115,11 +116,11 @@ async function executeInstagramStep(stepType, stepConfig, campaignLead, userId, 
     }
     
     // TODO: Implement actual Instagram actions
-    console.log(`[Campaign Execution] Instagram step recorded: ${stepType}`);
+    logger.debug('[Campaign Execution] Instagram step recorded', { stepType });
     
     return { success: true, stepType };
   } catch (error) {
-    console.error('[Campaign Execution] Instagram step error:', error);
+    logger.error('[Campaign Execution] Instagram step error', { error: error.message, stack: error.stack });
     return { success: false, error: error.message };
   }
 }
@@ -127,9 +128,9 @@ async function executeInstagramStep(stepType, stepConfig, campaignLead, userId, 
 /**
  * Execute voice agent step
  */
-async function executeVoiceAgentStep(stepConfig, campaignLead, userId, orgId) {
+async function executeVoiceAgentStep(stepConfig, campaignLead, userId, tenantId) {
   try {
-    console.log('[Campaign Execution] Executing voice agent step...');
+    logger.info('[Campaign Execution] Executing voice agent step');
     
     // Get lead data
     const leadData = await getLeadData(campaignLead.id);
@@ -170,7 +171,7 @@ async function executeVoiceAgentStep(stepConfig, campaignLead, userId, orgId) {
       return { success: false, error: response.data?.error || 'Failed to initiate call' };
     }
   } catch (error) {
-    console.error('[Campaign Execution] Voice agent step error:', error);
+    logger.error('[Campaign Execution] Voice agent step error', { error: error.message, stack: error.stack });
     return { success: false, error: error.message };
   }
 }
@@ -183,7 +184,7 @@ async function executeDelayStep(stepConfig) {
   const delayHours = stepConfig.delay_hours || stepConfig.delayHours || 0;
   const totalMs = (delayDays * 24 * 60 * 60 * 1000) + (delayHours * 60 * 60 * 1000);
   
-  console.log(`[Campaign Execution] Delaying for ${delayDays} days, ${delayHours} hours`);
+  logger.debug('[Campaign Execution] Delaying', { delayDays, delayHours });
   
   // In a real implementation, you'd schedule this for later
   // For now, we'll just return success (the delay should be handled by the scheduler)
@@ -196,9 +197,9 @@ async function executeDelayStep(stepConfig) {
 async function executeConditionStep(stepConfig, campaignLead) {
   const conditionType = stepConfig.condition || stepConfig.conditionType;
   
-  // Per TDD: Use lad_dev schema
+  // Per TDD: Use dynamic schema
+  const schema = getSchema(null);
   const activitiesResult = await pool.query(
-    const schema = getSchema(req);
     `SELECT status FROM ${schema}.campaign_lead_activities 
      WHERE campaign_lead_id = $1 AND is_deleted = FALSE
      ORDER BY created_at DESC LIMIT 10`,

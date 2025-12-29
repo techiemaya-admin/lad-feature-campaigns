@@ -6,6 +6,7 @@
 
 const { pool } = require('../utils/dbConnection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
+const logger = require('../../../core/utils/logger');
 
 class LinkedInAccountStorageService {
   /**
@@ -20,7 +21,7 @@ class LinkedInAccountStorageService {
       throw new Error('unipile_account_id is required');
     }
 
-    const schema = getSchema(req);
+    const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
     // Use TDD schema: ${schema}.linkedin_accounts
     // First try TDD schema, fallback to old schema if needed
     try {
@@ -52,10 +53,10 @@ class LinkedInAccountStorageService {
         JSON.stringify(metadata)
       ]);
 
-      console.log('[LinkedIn Storage] ✅ Account saved to ${schema}.linkedin_accounts');
+      logger.info('[LinkedIn Storage] Account saved to linkedin_accounts', { schema });
     } catch (tddError) {
       // Fallback to old schema if TDD table doesn't exist
-      console.warn('[LinkedIn Storage] TDD table not found, using fallback:', tddError.message);
+      logger.warn('[LinkedIn Storage] TDD table not found, using fallback', { error: tddError.message });
       
       // Try old schema with user_id as text (in case it's actually text, not integer)
       try {
@@ -67,9 +68,9 @@ class LinkedInAccountStorageService {
            SET credentials = $2::jsonb, is_connected = TRUE, connected_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP`,
           [tenantId, JSON.stringify(credentials)]
         );
-        console.log('[LinkedIn Storage] ✅ Account saved to voice_agent.user_integrations_voiceagent (fallback)');
+        logger.info('[LinkedIn Storage] Account saved to user_integrations_voiceagent (fallback)');
       } catch (fallbackError) {
-        console.error('[LinkedIn Storage] ❌ Both TDD and fallback schemas failed:', fallbackError.message);
+        logger.error('[LinkedIn Storage] Both TDD and fallback schemas failed', { error: fallbackError.message, stack: fallbackError.stack });
         throw fallbackError;
       }
     }

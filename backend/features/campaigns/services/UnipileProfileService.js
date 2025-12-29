@@ -1,10 +1,12 @@
 /**
  * Unipile Profile Service
  * Handles LinkedIn profile operations (follow, get contact details)
+ * LAD Architecture Compliant - Uses logger instead of console
  */
 
 const axios = require('axios');
 const { getSchema } = require('../../../core/utils/schemaHelper');
+const logger = require('../../../core/utils/logger');
 
 class UnipileProfileService {
     constructor(baseService) {
@@ -90,11 +92,7 @@ class UnipileProfileService {
                 data: response.data
             };
         } catch (error) {
-            console.error('[Unipile] Error following LinkedIn profile:', error.message);
-            if (error.response) {
-                console.error('[Unipile] Response status:', error.response.status);
-                console.error('[Unipile] Response data:', error.response.data);
-            }
+            logger.error('[Unipile] Error following LinkedIn profile', { error: error.message, status: error.response?.status, responseData: error.response?.data });
             return {
                 success: false,
                 error: error.message
@@ -139,12 +137,7 @@ class UnipileProfileService {
                 linkedin_sections: '*'
             };
 
-            console.log(`[Unipile] Fetching LinkedIn profile with contact info for: ${publicIdentifier}`);
-            console.log(`[Unipile] Endpoint: ${endpoint}`);
-            console.log(`[Unipile] Account ID: ${accountId}`);
-            console.log(`[Unipile] Base URL: ${baseUrl}`);
-            console.log(`[Unipile] Token present: ${headers.Authorization ? 'Yes (Bearer ...)' : 'No'}`);
-            console.log(`[Unipile] Token length: ${headers.Authorization ? headers.Authorization.length : 0}`);
+            logger.debug('[Unipile] Fetching LinkedIn profile with contact info', { publicIdentifier, endpoint, accountId, baseUrl, hasToken: !!headers.Authorization, tokenLength: headers.Authorization?.length || 0 });
 
             const response = await axios.get(endpoint, {
                 headers: headers,
@@ -159,21 +152,21 @@ class UnipileProfileService {
                     
                     // Check if it's a missing credentials error
                     if (errorType.includes('missing_credentials') || errorTitle.includes('Missing credentials')) {
-                        console.error(`[Unipile] ⚠️ Account ${accountId} credentials expired or invalid. Marking as inactive.`);
+                        logger.warn('[Unipile] Account credentials expired or invalid, marking as inactive', { accountId });
                         
                         // Mark account as inactive in database
                         try {
                             const { pool } = require('../utils/dbConnection');
+                            const schema = getSchema(null); // No req available in this context
                             await pool.query(
-                                const schema = getSchema(req);
                                 `UPDATE ${schema}.linkedin_accounts 
                                  SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP 
                                  WHERE unipile_account_id = $1`,
                                 [accountId]
                             );
-                            console.log(`[Unipile] ✅ Marked account ${accountId} as inactive due to expired credentials`);
+                            logger.info('[Unipile] Marked account as inactive due to expired credentials', { accountId });
                         } catch (dbError) {
-                            console.error(`[Unipile] Error updating account status:`, dbError.message);
+                            logger.error('[Unipile] Error updating account status', { accountId, error: dbError.message });
                         }
                     }
                 }
@@ -184,13 +177,11 @@ class UnipileProfileService {
             
             // Debug: Log contact_info structure
             if (profileData.contact_info) {
-                console.log(`[Unipile] 📋 Contact info keys:`, Object.keys(profileData.contact_info));
-                if (profileData.contact_info.phones) {
-                    console.log(`[Unipile] 📱 Phones array length:`, profileData.contact_info.phones.length);
-                }
-                if (profileData.contact_info.phone_numbers) {
-                    console.log(`[Unipile] 📱 Phone_numbers array length:`, profileData.contact_info.phone_numbers.length);
-                }
+                logger.debug('[Unipile] Contact info structure', { 
+                    keys: Object.keys(profileData.contact_info),
+                    phonesLength: profileData.contact_info.phones?.length || 0,
+                    phoneNumbersLength: profileData.contact_info.phone_numbers?.length || 0
+                });
             }
             
             // Extract contact information from profile
@@ -231,7 +222,7 @@ class UnipileProfileService {
                 phone = String(profileData.contact_info.phone_number).trim();
             }
 
-            console.log(`[Unipile] Contact details found - Phone: ${phone ? `Yes (${phone})` : 'No'}, Email: ${email ? `Yes (${email})` : 'No'}`);
+            logger.info('[Unipile] Contact details found', { hasPhone: !!phone, hasEmail: !!email });
 
             return {
                 success: true,
@@ -251,47 +242,45 @@ class UnipileProfileService {
             };
 
         } catch (error) {
-            console.error(`[Unipile] Error fetching LinkedIn contact details:`, error.message);
-            if (error.response) {
-                console.error(`[Unipile] Response status: ${error.response.status}`);
-                console.error(`[Unipile] Response data:`, error.response.data);
+            logger.error('[Unipile] Error fetching LinkedIn contact details', { error: error.message, status: error.response?.status, responseData: error.response?.data });
+            
+            // Handle 401 errors - account credentials may have expired
+            if (error.response && error.response.status === 401) {
+                const errorData = error.response.data || {};
+                const errorType = errorData.type || '';
+                const errorTitle = errorData.title || '';
                 
-                // Handle 401 errors - account credentials may have expired
-                if (error.response.status === 401) {
-                    const errorData = error.response.data || {};
-                    const errorType = errorData.type || '';
-                    const errorTitle = errorData.title || '';
+                // Check if it's a missing credentials error
+                if (errorType.includes('missing_credentials') || errorTitle.includes('Missing credentials')) {
+                    logger.warn('[Unipile] Account credentials expired or invalid, marking as inactive', { accountId });
                     
-                    // Check if it's a missing credentials error
-                    if (errorType.includes('missing_credentials') || errorTitle.includes('Missing credentials')) {
-                        console.error(`[Unipile] ⚠️ Account ${accountId} credentials expired or invalid. Marking as inactive.`);
+                    // Mark account as inactive in database
+                    try {
+                        const { pool } = require('../utils/dbConnection');
+                        const schema = getSchema(null); // No req available in this context
+                        await pool.query(
+                            `UPDATE ${schema}.linkedin_accounts 
+                             SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP 
+                             WHERE unipile_account_id = $1`,
+                            [accountId]
+                        );
+                        logger.info('[Unipile] Marked account as inactive due to expired credentials', { accountId });
                         
-                        // Mark account as inactive in database
+                        // Also try to update old schema if it exists
                         try {
-                            const { pool } = require('../utils/dbConnection');
                             await pool.query(
-                                `UPDATE ${schema}.linkedin_accounts 
-                                 SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP 
-                                 WHERE unipile_account_id = $1`,
+                                `UPDATE voice_agent.user_integrations_voiceagent 
+                                 SET is_connected = FALSE, updated_at = CURRENT_TIMESTAMP 
+                                 WHERE (credentials->>'unipile_account_id' = $1 OR credentials->>'account_id' = $1)
+                                 AND provider = 'linkedin'`,
                                 [accountId]
                             );
-                            console.log(`[Unipile] ✅ Marked account ${accountId} as inactive due to expired credentials`);
-                            
-                            // Also try to update old schema if it exists
-                            try {
-                                await pool.query(
-                                    `UPDATE voice_agent.user_integrations_voiceagent 
-                                     SET is_connected = FALSE, updated_at = CURRENT_TIMESTAMP 
-                                     WHERE (credentials->>'unipile_account_id' = $1 OR credentials->>'account_id' = $1)
-                                     AND provider = 'linkedin'`,
-                                    [accountId]
-                                );
-                            } catch (oldSchemaError) {
-                                // Old schema might not exist, that's okay
-                            }
-                        } catch (dbError) {
-                            console.error(`[Unipile] Error updating account status:`, dbError.message);
+                        } catch (oldSchemaError) {
+                            // Old schema might not exist, that's okay
                         }
+                    } catch (dbError) {
+                        logger.error('[Unipile] Error updating account status', { accountId, error: dbError.message });
+                    }
                         
                         return {
                             success: false,

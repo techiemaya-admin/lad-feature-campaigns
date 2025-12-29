@@ -4,6 +4,7 @@
  */
 
 const axios = require('axios');
+const logger = require('../../../core/utils/logger');
 
 class UnipileConnectionService {
     constructor(baseService) {
@@ -45,11 +46,10 @@ class UnipileConnectionService {
             // Normalize the URL (remove trailing slashes, ensure https)
             linkedInUrl = linkedInUrl.replace(/\/$/, '').replace(/^http:\/\//, 'https://');
 
-            console.log(`[Unipile] Sending invitation to: ${employee.fullname || 'Unknown'} (${linkedInUrl})`);
-            console.log(`[Unipile] Using account ID: ${accountId}`);
+            logger.info('[Unipile] Sending invitation', { employeeName: employee.fullname || 'Unknown', linkedInUrl, accountId });
 
             // STEP 1: Lookup to get the actual provider_id for the TARGET profile
-            console.log(`[Unipile] Step 1: Looking up provider_id for TARGET profile...`);
+            logger.debug('[Unipile] Step 1: Looking up provider_id for TARGET profile');
             
             const match = linkedInUrl.match(/\/in\/([^/?]+)/);
             if (!match) {
@@ -57,19 +57,19 @@ class UnipileConnectionService {
             }
             const publicId = match[1];
             
-            console.log(`[Unipile] Target profile public identifier: ${publicId}`);
+            logger.debug('[Unipile] Target profile public identifier', { publicId });
             
             const baseUrl = this.base.getBaseUrl();
-            console.log(`[Unipile] Using base URL: ${baseUrl}`);
+            logger.debug('[Unipile] Using base URL', { baseUrl });
             const headers = this.base.getAuthHeaders();
             
             // Debug: Log auth headers (mask token for security)
             const authHeader = headers['X-API-KEY'] || headers['x-api-key'];
             if (authHeader) {
                 const tokenPreview = authHeader.substring(0, 10) + '...';
-                console.log(`[Unipile] Auth header present: YES (X-API-KEY preview: ${tokenPreview})`);
+                logger.debug('[Unipile] Auth header present', { tokenPreview });
             } else {
-                console.error(`[Unipile] ⚠️ WARNING: No X-API-KEY header found!`);
+                logger.warn('[Unipile] WARNING: No X-API-KEY header found');
             }
 
             // Lookup the TARGET profile to get the encoded provider_id
@@ -90,7 +90,7 @@ class UnipileConnectionService {
                 if (lookupError.response?.status === 404) {
                     const errorDetail = lookupError.response.data?.detail || lookupError.response.data?.message || '';
                     if (errorDetail.includes('Account not found')) {
-                        console.error(`[Unipile] ❌ Account ${accountId} not found in Unipile (404)`);
+                        logger.error('[Unipile] Account not found in Unipile', { accountId, status: 404 });
                         return {
                             success: false,
                             error: `Account not found in Unipile: ${accountId}`,
@@ -104,7 +104,7 @@ class UnipileConnectionService {
                 throw lookupError;
             }
 
-            console.log(`[Unipile] Lookup response:`, JSON.stringify(lookupResponse.data, null, 2));
+            logger.debug('[Unipile] Lookup response', { responseData: lookupResponse.data });
 
             // Handle response structure (may be wrapped in 'data' object)
             const responseData = lookupResponse.data?.data || lookupResponse.data;
@@ -112,9 +112,7 @@ class UnipileConnectionService {
             // Validate that we got the correct profile
             const returnedPublicId = responseData?.public_identifier;
             if (returnedPublicId && returnedPublicId.toLowerCase() !== publicId.toLowerCase()) {
-                console.warn(`[Unipile] ⚠️ WARNING: Profile mismatch!`);
-                console.warn(`[Unipile]   Requested: ${publicId}`);
-                console.warn(`[Unipile]   Returned: ${returnedPublicId}`);
+                logger.warn('[Unipile] WARNING: Profile mismatch', { requested: publicId, returned: returnedPublicId });
             }
 
             // Extract the encoded provider_id from lookup response
@@ -124,10 +122,10 @@ class UnipileConnectionService {
                 throw new Error('No provider_id found in lookup response');
             }
 
-            console.log(`[Unipile] ✅ Found target provider_id: ${encodedProviderId}`);
+            logger.info('[Unipile] Found target provider_id', { providerId: encodedProviderId });
 
             // STEP 2: Send invitation with the ENCODED provider_id
-            console.log(`[Unipile] Step 2: Sending invitation...`);
+            logger.debug('[Unipile] Step 2: Sending invitation');
 
             const payload = {
                 provider: 'LINKEDIN',
@@ -138,13 +136,12 @@ class UnipileConnectionService {
             // Only include message if explicitly provided
             if (customMessage) {
                 payload.message = customMessage;
-                console.log(`[Unipile] Including custom message in connection request`);
+                logger.debug('[Unipile] Including custom message in connection request');
             } else {
-                console.log(`[Unipile] No custom message provided. Sending connection request without message to avoid monthly limit.`);
+                logger.debug('[Unipile] No custom message provided. Sending connection request without message to avoid monthly limit');
             }
 
-            console.log(`[Unipile] Request payload:`, JSON.stringify(payload, null, 2));
-            console.log(`[Unipile] Invitation endpoint: ${baseUrl}/users/invite`);
+            logger.debug('[Unipile] Request payload', { payload, endpoint: `${baseUrl}/users/invite` });
 
             let response;
             try {
@@ -160,11 +157,11 @@ class UnipileConnectionService {
                 const statusCode = response.status;
                 const responseData = response.data;
                 
-                console.log(`[Unipile] ✅ Invitation API call successful! Status: ${statusCode}`);
+                logger.info('[Unipile] Invitation API call successful', { status: statusCode });
                 
                 if (statusCode >= 200 && statusCode < 300) {
                     if (responseData?.error || responseData?.type?.includes('error')) {
-                        console.error(`[Unipile] ❌ Response contains error despite ${statusCode} status:`, responseData);
+                        logger.error('[Unipile] Response contains error despite success status', { status: statusCode, responseData });
                         return {
                             success: false,
                             error: responseData?.detail || responseData?.message || 'API returned error in response',
@@ -174,7 +171,7 @@ class UnipileConnectionService {
                         };
                     }
                     
-                    console.log(`[Unipile] ✅ Confirmed: Invitation was actually sent to LinkedIn`);
+                    logger.info('[Unipile] Confirmed: Invitation was actually sent to LinkedIn');
                     return {
                         success: true,
                         data: responseData,
@@ -185,7 +182,7 @@ class UnipileConnectionService {
                         }
                     };
                 } else {
-                    console.error(`[Unipile] ❌ Unexpected status code: ${statusCode}`);
+                    logger.error('[Unipile] Unexpected status code', { status: statusCode, responseData });
                     return {
                         success: false,
                         error: `Unexpected status code: ${statusCode}`,
@@ -196,7 +193,7 @@ class UnipileConnectionService {
             } catch (inviteError) {
                 // Handle 409 (already sent)
                 if (inviteError.response?.status === 409) {
-                    console.warn(`[Unipile] ⚠️ Invitation already sent (409)`);
+                    logger.warn('[Unipile] Invitation already sent', { status: 409 });
                     return {
                         success: true,
                         alreadySent: true,
@@ -211,11 +208,11 @@ class UnipileConnectionService {
                     const errorType = errorData?.type || '';
                     const errorDetail = errorData?.detail || errorData?.message || '';
                     
-                    console.error(`[Unipile] ❌ 422 Error:`, errorDetail);
+                    logger.error('[Unipile] 422 Error', { errorDetail, errorType });
                     
                     if (errorType.includes('already_invited') || 
                         (errorDetail.includes('already') && errorDetail.includes('invited') && !errorDetail.includes('limit'))) {
-                        console.warn(`[Unipile] ⚠️ Invitation already sent (422) - treating as success`);
+                        logger.warn('[Unipile] Invitation already sent (422) - treating as success');
                         return {
                             success: true,
                             alreadySent: true,
@@ -227,7 +224,7 @@ class UnipileConnectionService {
                     if (errorType.includes('cannot_resend_yet') || 
                         errorDetail.includes('temporary provider limit') ||
                         errorDetail.includes('provider limit')) {
-                        console.error(`[Unipile] ❌ Rate limit error - request was NOT sent. Error: ${errorDetail}`);
+                        logger.error('[Unipile] Rate limit error - request was NOT sent', { errorDetail });
                         return {
                             success: false,
                             error: `Rate limit: ${errorDetail}`,
@@ -250,7 +247,7 @@ class UnipileConnectionService {
                 // Handle 400 errors
                 if (inviteError.response?.status === 400) {
                     const detail = inviteError.response.data?.detail || '';
-                    console.error(`[Unipile] ❌ 400 Error: ${detail}`);
+                    logger.error('[Unipile] 400 Error', { detail });
                     
                     if (detail.includes('format')) {
                         return {
@@ -265,14 +262,11 @@ class UnipileConnectionService {
             }
 
         } catch (error) {
-            console.error(`[Unipile] ❌ Error:`, error.message);
-            if (error.response?.data) {
-                console.error(`[Unipile] Response:`, error.response.data);
-            }
+            logger.error('[Unipile] Error', { error: error.message, stack: error.stack, responseData: error.response?.data });
             
             // Handle 429 rate limit errors
             if (error.response?.status === 429) {
-                console.error(`[Unipile] 🚫 Rate limit exceeded (429)`);
+                logger.error('[Unipile] Rate limit exceeded', { status: 429 });
                 return {
                     success: false,
                     error: 'Rate limit exceeded - too many requests',
@@ -319,7 +313,7 @@ class UnipileConnectionService {
         } = options;
 
         if (!this.base.isConfigured()) {
-            console.warn('[Unipile] Unipile not configured. Skipping batch connection requests.');
+            logger.warn('[Unipile] Unipile not configured. Skipping batch connection requests');
             return {
                 success: false,
                 error: 'Unipile is not configured',
@@ -328,7 +322,7 @@ class UnipileConnectionService {
         }
 
         if (!accountId) {
-            console.warn('[Unipile] Account ID not provided. Skipping batch connection requests.');
+            logger.warn('[Unipile] Account ID not provided. Skipping batch connection requests');
             return {
                 success: false,
                 error: 'Account ID is required. Please connect your LinkedIn account first.',
@@ -356,7 +350,7 @@ class UnipileConnectionService {
                     results.failed++;
                     
                     if (stopOnError) {
-                        console.log(`[Unipile] Stopping batch due to error for: ${employee.fullname}`);
+                        logger.info('[Unipile] Stopping batch due to error', { employeeName: employee.fullname });
                         break;
                     }
                 }
@@ -372,7 +366,7 @@ class UnipileConnectionService {
                 });
                 
                 if (stopOnError) {
-                    console.log(`[Unipile] Stopping batch due to exception: ${error.message}`);
+                    logger.info('[Unipile] Stopping batch due to exception', { error: error.message });
                     break;
                 }
             }
@@ -383,7 +377,7 @@ class UnipileConnectionService {
             }
         }
 
-        console.log(`[Unipile] Batch complete: ${results.successful} successful, ${results.failed} failed out of ${results.total} total`);
+        logger.info('[Unipile] Batch complete', { successful: results.successful, failed: results.failed, total: results.total });
 
         return {
             success: results.failed === 0,
@@ -419,7 +413,7 @@ class UnipileConnectionService {
                 data: response.data
             };
         } catch (error) {
-            console.error('[Unipile] Error fetching invitations status:', error.message);
+            logger.error('[Unipile] Error fetching invitations status', { error: error.message, stack: error.stack });
             throw error;
         }
     }

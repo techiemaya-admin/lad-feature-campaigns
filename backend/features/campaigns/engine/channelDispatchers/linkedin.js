@@ -1,6 +1,7 @@
 const unipileService = require('../services/unipileService');
 const { getSchema } = require('../../../../core/utils/schemaHelper');
 const { pool } = require('../../utils/dbConnection');
+const logger = require('../../../../core/utils/logger');
 
 /**
  * LinkedIn Channel Dispatcher
@@ -10,9 +11,9 @@ class LinkedInDispatcher {
   /**
    * Execute LinkedIn action
    */
-  async execute(stepType, lead, stepConfig, userId, orgId) {
+  async execute(stepType, lead, stepConfig, userId, tenantId) {
     try {
-      console.log(`[LinkedInDispatcher] Executing ${stepType} for lead ${lead.id}`);
+      logger.info('[LinkedInDispatcher] Executing step', { stepType, leadId: lead.id });
 
       switch (stepType) {
         case 'linkedin_connect':
@@ -31,7 +32,7 @@ class LinkedInDispatcher {
           return { success: false, error: `Unsupported LinkedIn action: ${stepType}` };
       }
     } catch (error) {
-      console.error('[LinkedInDispatcher] Error:', error);
+      logger.error('[LinkedInDispatcher] Error', { error: error.message, stack: error.stack });
       return { success: false, error: error.message };
     }
   }
@@ -62,7 +63,7 @@ class LinkedInDispatcher {
         data: result
       };
     } catch (error) {
-      console.error('[LinkedInDispatcher] Connection request failed:', error);
+      logger.error('[LinkedInDispatcher] Connection request failed', { error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -92,7 +93,7 @@ class LinkedInDispatcher {
         data: result
       };
     } catch (error) {
-      console.error('[LinkedInDispatcher] Message send failed:', error);
+      logger.error('[LinkedInDispatcher] Message send failed', { error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -125,7 +126,7 @@ class LinkedInDispatcher {
           linkedinAccountId = accountQuery.rows[0].unipile_account_id;
         }
       } catch (accountErr) {
-        console.warn('[LinkedInDispatcher] Could not get LinkedIn account ID:', accountErr.message);
+        logger.warn('[LinkedInDispatcher] Could not get LinkedIn account ID', { error: accountErr.message });
       }
 
       // Visit profile and get contact details
@@ -175,20 +176,20 @@ Generate a concise, professional summary highlighting their role, expertise, and
               const response = await geminiResult.response;
               summary = response.text().trim();
               
-              console.log(`[LinkedInDispatcher] ✅ Profile summary generated for ${name}`);
+              logger.info('[LinkedInDispatcher] Profile summary generated', { name });
             } else {
-              console.warn(`[LinkedInDispatcher] ⚠️ GEMINI_API_KEY not set, skipping summary generation`);
+              logger.warn('[LinkedInDispatcher] GEMINI_API_KEY not set, skipping summary generation');
             }
           } catch (geminiErr) {
-            console.error('[LinkedInDispatcher] Error calling Gemini API:', geminiErr.message);
+            logger.error('[LinkedInDispatcher] Error calling Gemini API', { error: geminiErr.message, stack: geminiErr.stack });
           }
           
-          // Per TDD: Use lad_dev schema - Save summary to campaign_leads table
+          // Per TDD: Use dynamic schema - Save summary to campaign_leads table
           if (summary && lead.id) {
             try {
               // Get current lead_data
+              const schema = getSchema(null);
               const leadDataQuery = await pool.query(
-                const schema = getSchema(req);
                 `SELECT lead_data FROM ${schema}.campaign_leads WHERE id = $1 AND is_deleted = FALSE`,
                 [lead.id]
               );
@@ -212,14 +213,14 @@ Generate a concise, professional summary highlighting their role, expertise, and
                 [JSON.stringify(currentLeadData), lead.id]
               );
               
-              console.log(`[LinkedInDispatcher] ✅ Profile summary saved to database for lead ${lead.id}`);
+              logger.info('[LinkedInDispatcher] Profile summary saved to database', { leadId: lead.id });
             } catch (dbErr) {
-              console.error('[LinkedInDispatcher] Error saving summary to database:', dbErr.message);
+              logger.error('[LinkedInDispatcher] Error saving summary to database', { error: dbErr.message, stack: dbErr.stack });
             }
           }
         } catch (summaryErr) {
           // Don't fail the visit if summary generation fails
-          console.error('[LinkedInDispatcher] Error generating profile summary:', summaryErr.message);
+          logger.error('[LinkedInDispatcher] Error generating profile summary', { error: summaryErr.message, stack: summaryErr.stack });
         }
       }
 
@@ -228,7 +229,7 @@ Generate a concise, professional summary highlighting their role, expertise, and
         data: result
       };
     } catch (error) {
-      console.error('[LinkedInDispatcher] Profile visit failed:', error);
+      logger.error('[LinkedInDispatcher] Profile visit failed', { error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -252,7 +253,7 @@ Generate a concise, professional summary highlighting their role, expertise, and
         data: result
       };
     } catch (error) {
-      console.error('[LinkedInDispatcher] Follow failed:', error);
+      logger.error('[LinkedInDispatcher] Follow failed', { error: error.message, stack: error.stack });
       throw error;
     }
   }

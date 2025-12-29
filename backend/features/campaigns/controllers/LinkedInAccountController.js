@@ -4,6 +4,7 @@
  */
 
 const linkedInService = require('../services/LinkedInIntegrationService');
+const logger = require('../../../core/utils/logger');
 
 class LinkedInAccountController {
   /**
@@ -21,7 +22,7 @@ class LinkedInAccountController {
         });
       }
       
-      console.log('[LinkedIn Account] Getting accounts for user:', userId);
+      logger.info('[LinkedIn Account] Getting accounts for user', { userId });
       
       const accounts = await linkedInService.getUserLinkedInAccounts(userId);
       
@@ -32,7 +33,7 @@ class LinkedInAccountController {
         totalAccounts: accounts.length
       });
     } catch (error) {
-      console.error('[LinkedIn Account] Error getting accounts:', error);
+      logger.error('[LinkedIn Account] Error getting accounts', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to get LinkedIn accounts'
@@ -55,7 +56,7 @@ class LinkedInAccountController {
         });
       }
       
-      console.log('[LinkedIn Account] Getting status for user:', userId);
+      logger.info('[LinkedIn Account] Getting status for user', { userId });
       
       const accounts = await linkedInService.getUserLinkedInAccounts(userId);
       
@@ -82,7 +83,7 @@ class LinkedInAccountController {
         totalConnections: connections.length
       });
     } catch (error) {
-      console.error('[LinkedIn Account] Error getting status:', error);
+      logger.error('[LinkedIn Account] Error getting status', { error: error.message, stack: error.stack });
       res.status(500).json({
         connected: false,
         status: 'error',
@@ -123,7 +124,7 @@ class LinkedInAccountController {
         account: accountDetails
       });
     } catch (error) {
-      console.error('[LinkedIn Account] Error getting account status:', error);
+      logger.error('[LinkedIn Account] Error getting account status', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to get account status'
@@ -154,7 +155,7 @@ class LinkedInAccountController {
         });
       }
       
-      console.log('[LinkedIn Account] Disconnecting account:', unipileAccountId, 'for user:', userId);
+      logger.info('[LinkedIn Account] Disconnecting account', { unipileAccountId, userId });
       
       const result = await linkedInService.disconnectAccount(userId, unipileAccountId);
       
@@ -188,7 +189,7 @@ class LinkedInAccountController {
         totalConnections: connections.length
       });
     } catch (error) {
-      console.error('[LinkedIn Account] Error disconnecting:', error);
+      logger.error('[LinkedIn Account] Error disconnecting', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to disconnect LinkedIn account'
@@ -212,7 +213,7 @@ class LinkedInAccountController {
         });
       }
       
-      console.log('[LinkedIn Account] Syncing account data for user:', userId);
+      logger.info('[LinkedIn Account] Syncing account data for user', { userId });
       
       // Get user accounts
       const accounts = await linkedInService.getUserLinkedInAccounts(userId);
@@ -245,7 +246,7 @@ class LinkedInAccountController {
         results: syncResults
       });
     } catch (error) {
-      console.error('[LinkedIn Account] Error syncing:', error);
+      logger.error('[LinkedIn Account] Error syncing', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to sync account data'
@@ -281,7 +282,7 @@ class LinkedInAccountController {
       
       res.json(result);
     } catch (error) {
-      console.error('[LinkedIn Account] Error syncing from Unipile:', error);
+      logger.error('[LinkedIn Account] Error syncing from Unipile', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to sync from Unipile'
@@ -325,7 +326,7 @@ class LinkedInAccountController {
         account: updatedAccount
       });
     } catch (error) {
-      console.error('[LinkedIn Account] Error refreshing token:', error);
+      logger.error('[LinkedIn Account] Error refreshing token', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to refresh token'

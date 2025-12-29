@@ -4,13 +4,14 @@
  */
 
 const { pool } = require('../utils/dbConnection');
+const logger = require('../../../core/utils/logger');
 
 /**
  * Generate and save profile summary for a LinkedIn visit
  */
 async function generateAndSaveProfileSummary(campaignLeadId, leadData, profileData, employee) {
   try {
-    console.log(`[Profile Summary] Generating profile summary for ${employee.fullname} after visit`);
+    logger.info('[Profile Summary] Generating profile summary', { employeeName: employee.fullname, leadId: campaignLeadId });
     
     // Generate summary using Gemini AI
     let summary = null;
@@ -37,12 +38,12 @@ Generate a concise, professional summary highlighting their role, expertise, and
         const response = await result.response;
         summary = response.text().trim();
         
-        console.log(`[Profile Summary] ✅ Profile summary generated for ${employee.fullname}`);
+        logger.info('[Profile Summary] Profile summary generated', { employeeName: employee.fullname });
       } else {
-        console.warn(`[Profile Summary] ⚠️ GEMINI_API_KEY not set, skipping summary generation`);
+        logger.warn('[Profile Summary] GEMINI_API_KEY not set, skipping summary generation');
       }
     } catch (geminiErr) {
-      console.error('[Profile Summary] Error calling Gemini API:', geminiErr.message);
+      logger.error('[Profile Summary] Error calling Gemini API', { error: geminiErr.message, stack: geminiErr.stack });
     }
     
     // Save summary to campaign_leads table (in lead_data JSONB or metadata)
@@ -73,16 +74,16 @@ Generate a concise, professional summary highlighting their role, expertise, and
           [JSON.stringify(currentLeadData), campaignLeadId]
         );
         
-        console.log(`[Profile Summary] ✅ Profile summary saved to database for ${employee.fullname}`);
+        logger.info('[Profile Summary] Profile summary saved to database', { employeeName: employee.fullname, leadId: campaignLeadId });
       } catch (dbErr) {
-        console.error('[Profile Summary] Error saving summary to database:', dbErr.message);
+        logger.error('[Profile Summary] Error saving summary to database', { error: dbErr.message, stack: dbErr.stack });
       }
     }
     
     return summary;
   } catch (summaryErr) {
     // Don't fail the visit step if summary generation fails
-    console.error('[Profile Summary] Error generating profile summary after visit:', summaryErr);
+    logger.error('[Profile Summary] Error generating profile summary after visit', { error: summaryErr.message, stack: summaryErr.stack });
     return null;
   }
 }
