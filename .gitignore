@@ -87,8 +87,9 @@ debug*.js
 verify*.js
 test-*.js
 
-# Ignore core and shared folders
-backend/core/
-backend/shared/
-shared/
-core/
+# NOTE: backend/core/ and shared/ contain critical production files
+# They are used extensively by the campaigns feature and MUST be committed
+
+# Mock middleware for testing (DO NOT commit)
+backend/core/middleware/auth.js
+**/middleware/auth.js
