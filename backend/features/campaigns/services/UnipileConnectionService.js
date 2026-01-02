@@ -4,7 +4,7 @@
  */
 
 const axios = require('axios');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 
 class UnipileConnectionService {
     constructor(baseService) {

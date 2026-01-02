@@ -1,9 +1,9 @@
-const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { pool } = require('../utils/database');
+const { getSchema } = require('../utils/schema');
 const linkedinDispatcher = require('./channelDispatchers/linkedin');
 const voiceDispatcher = require('./channelDispatchers/voice');
 const emailDispatcher = require('./channelDispatchers/email');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 
 /**
  * Step Executor - executes individual workflow steps
@@ -130,10 +130,35 @@ class StepExecutor {
    * Execute lead generation step
    */
   async executeLeadGeneration(campaignId, step, stepConfig, userId, tenantId) {
-    // This would integrate with Apollo or other lead gen services
-    // For now, return success
-    logger.info('[StepExecutor] Lead generation executed', { campaignId });
-    return { success: true, leadsGenerated: 0 };
+    try {
+      // Import the LeadGenerationService to handle actual lead generation
+      const { executeLeadGeneration } = require('../services/LeadGenerationService');
+      
+      logger.info('[StepExecutor] Calling LeadGenerationService', { campaignId });
+      
+      // Call the actual lead generation service
+      const result = await executeLeadGeneration(campaignId, step, stepConfig, userId, tenantId);
+      
+      logger.info('[StepExecutor] LeadGenerationService completed', { 
+        campaignId, 
+        success: result.success, 
+        leadsGenerated: result.leadsGenerated || result.leadsSaved || 0 
+      });
+      
+      return result;
+    } catch (error) {
+      logger.error('[StepExecutor] Lead generation error', { 
+        campaignId, 
+        error: error.message, 
+        stack: error.stack 
+      });
+      
+      return { 
+        success: false, 
+        error: error.message, 
+        leadsGenerated: 0 
+      };
+    }
   }
 
   /**

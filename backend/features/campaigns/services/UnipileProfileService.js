@@ -5,8 +5,8 @@
  */
 
 const axios = require('axios');
-const { getSchema } = require('../../../core/utils/schemaHelper');
-const logger = require('../../../core/utils/logger');
+const { getSchema } = require('../utils/schema');
+const logger = require('../utils/logger');
 
 class UnipileProfileService {
     constructor(baseService) {
@@ -156,7 +156,7 @@ class UnipileProfileService {
                         
                         // Mark account as inactive in database
                         try {
-                            const { pool } = require('../utils/dbConnection');
+                            const { pool } = require('../utils/database');
                             const schema = getSchema(null); // No req available in this context
                             await pool.query(
                                 `UPDATE ${schema}.linkedin_accounts 
@@ -256,7 +256,7 @@ class UnipileProfileService {
                     
                     // Mark account as inactive in database
                     try {
-                        const { pool } = require('../utils/dbConnection');
+                        const { pool } = require('../utils/database');
                         const schema = getSchema(null); // No req available in this context
                         await pool.query(
                             `UPDATE ${schema}.linkedin_accounts 

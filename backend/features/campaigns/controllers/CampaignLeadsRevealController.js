@@ -7,8 +7,8 @@
 const axios = require('axios');
 const CampaignLeadRepository = require('../repositories/CampaignLeadRepository');
 const CampaignLeadModel = require('../models/CampaignLeadModel');
-const { getSchema } = require('../../../core/utils/schemaHelper');
-const logger = require('../../../core/utils/logger');
+const { getSchema } = require('../utils/schema');
+const logger = require('../utils/logger');
 
 /**
  * Get backend URL from environment variables
@@ -20,6 +20,17 @@ function getBackendUrl() {
   if (process.env.NEXT_PUBLIC_BACKEND_URL) return process.env.NEXT_PUBLIC_BACKEND_URL;
   throw new Error('BACKEND_URL, BACKEND_INTERNAL_URL, or NEXT_PUBLIC_BACKEND_URL must be configured');
 }
+
+/**
+ * Get Apollo Leads URL specifically for Apollo service calls
+ */
+function getApolloLeadsUrl() {
+  if (process.env.APOLLO_LEADS_URL) return process.env.APOLLO_LEADS_URL;
+  return getBackendUrl();
+}
+
+const BACKEND_URL = getBackendUrl();
+const APOLLO_LEADS_URL = getApolloLeadsUrl();
 
 /**
  * Get authentication headers from request
@@ -135,7 +146,7 @@ class CampaignLeadsRevealController {
       logger.info('[Campaign Leads Reveal] Revealing email via Apollo API', { campaignId, leadId, apollo_person_id });
 
       const apolloResponse = await axios.post(
-        `${BACKEND_URL}/api/apollo-leads/reveal-email`,
+        `${APOLLO_LEADS_URL}/api/apollo-leads/reveal-email`,
         {
           person_id: apollo_person_id,
           campaign_id: campaignId,
@@ -199,7 +210,7 @@ class CampaignLeadsRevealController {
       logger.info('[Campaign Leads Reveal] Revealing phone via Apollo API', { campaignId, leadId, apollo_person_id });
 
       const apolloResponse = await axios.post(
-        `${BACKEND_URL}/api/apollo-leads/reveal-phone`,
+        `${APOLLO_LEADS_URL}/api/apollo-leads/reveal-phone`,
         {
           person_id: apollo_person_id,
           campaign_id: campaignId,

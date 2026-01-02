@@ -3,8 +3,8 @@
  * Helper functions for lead generation service
  */
 
-const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { pool } = require('../utils/database');
+const { getSchema } = require('../utils/schema');
 
 /**
  * Check if lead already exists in campaign

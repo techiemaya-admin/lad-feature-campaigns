@@ -3,12 +3,12 @@
  * Handles account management operations
  */
 
-const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { pool } = require('../utils/database');
+const { getSchema } = require('../utils/schema');
 const UnipileBaseService = require('./UnipileBaseService');
 const axios = require('axios');
 const { getUserLinkedInAccounts, findAccountByUnipileId } = require('./LinkedInAccountQueryService');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 
 class LinkedInAccountService {
   constructor() {
@@ -424,6 +424,41 @@ class LinkedInAccountService {
     } catch (error) {
       logger.error('[LinkedIn Account] Error verifying OTP', { error: error.message, stack: error.stack });
       throw error;
+    }
+  }
+
+  /**
+   * Get checkpoint type from database metadata
+   * @param {string} unipileAccountId - Unipile account ID
+   * @param {string} tenantId - Tenant ID
+   * @param {string} schema - Database schema
+   * @returns {string} Checkpoint type (default: 'IN_APP_VALIDATION')
+   */
+  async getCheckpointType(unipileAccountId, tenantId, schema) {
+    try {
+      const checkpointQuery = `
+        SELECT metadata
+        FROM ${schema}.linkedin_accounts
+        WHERE unipile_account_id = $1 AND tenant_id = $2 AND is_active = TRUE
+        ORDER BY created_at DESC
+        LIMIT 1
+      `;
+      const checkpointResult = await pool.query(checkpointQuery, [unipileAccountId, tenantId]);
+      
+      if (checkpointResult.rows.length > 0) {
+        const metadata = typeof checkpointResult.rows[0].metadata === 'string'
+          ? JSON.parse(checkpointResult.rows[0].metadata)
+          : (checkpointResult.rows[0].metadata || {});
+        return metadata.checkpoint?.type || 'IN_APP_VALIDATION';
+      }
+      return 'IN_APP_VALIDATION';
+    } catch (dbError) {
+      logger.warn('[LinkedIn Account] Could not get checkpoint type from database, using default', { 
+        error: dbError.message,
+        unipileAccountId,
+        tenantId 
+      });
+      return 'IN_APP_VALIDATION';
     }
   }
 }

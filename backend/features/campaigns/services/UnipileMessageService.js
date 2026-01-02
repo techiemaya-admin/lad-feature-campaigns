@@ -4,7 +4,7 @@
  */
 
 const axios = require('axios');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 
 class UnipileMessageService {
     constructor(baseService) {
@@ -85,6 +85,7 @@ class UnipileMessageService {
             const chatPayload = {
                 provider: 'linkedin',
                 account_id: accountId,
+                attendees_ids: [providerId], // Fixed: Use attendees_ids instead of participants
                 participants: [
                     {
                         provider: 'linkedin',

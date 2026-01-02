@@ -3,9 +3,9 @@
  * Handles database queries for LinkedIn accounts
  */
 
-const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
-const logger = require('../../../core/utils/logger');
+const { pool } = require('../utils/database');
+const { getSchema } = require('../utils/schema');
+const logger = require('../utils/logger');
 
 /**
  * Get all connected LinkedIn accounts for a user/tenant

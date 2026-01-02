@@ -1,3 +1,18 @@
+// Helper: Map campaign setup answers to lead_generation step
+export function buildLeadGenerationStep({ organization_industries, organization_locations, person_titles }: {
+  organization_industries: string[];
+  organization_locations: string[];
+  person_titles: string[];
+}): LeadGenerationStep {
+  return {
+    type: 'lead_generation',
+    leadGenerationFilters: {
+      organization_industries,
+      organization_locations,
+      person_titles
+    }
+  };
+}
 /**
  * Campaigns Feature - TypeScript Types
  * 
@@ -44,10 +59,28 @@ export interface CampaignFilters {
   status?: CampaignStatus | 'all';
 }
 
+
+// Lead Generation Step Filters
+export interface LeadGenerationFilters {
+  organization_industries?: string[];
+  organization_locations?: string[];
+  person_titles?: string[];
+}
+
+// Step type for lead_generation
+export interface LeadGenerationStep {
+  type: 'lead_generation';
+  leadGenerationFilters: LeadGenerationFilters;
+  [key: string]: any;
+}
+
+// Other step types can be extended here as needed
+export type CampaignStep = LeadGenerationStep | { type: string; [key: string]: any };
+
 export interface CreateCampaignRequest {
   name: string;
   status?: CampaignStatus;
-  steps?: Array<{ type: string; [key: string]: any }>;
+  steps?: CampaignStep[];
 }
 
 export interface UpdateCampaignRequest {

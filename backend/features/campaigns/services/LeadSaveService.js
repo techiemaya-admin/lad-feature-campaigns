@@ -3,15 +3,15 @@
  * Handles saving leads to database (leads and campaign_leads tables)
  */
 
-const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { pool } = require('../utils/database');
+const { getSchema } = require('../utils/schema');
 const {
   checkLeadExists,
   extractLeadFields,
   createSnapshot,
   saveLeadToCampaign
 } = require('./LeadGenerationHelpers');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 
 /**
  * Save multiple leads to campaign
