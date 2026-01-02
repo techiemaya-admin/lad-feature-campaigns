@@ -26,7 +26,6 @@ class LinkedInAccountService {
     try {
       logger.info('[LinkedIn Account] Disconnecting account', { unipileAccountId, tenantId });
       
-      const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
       // Try TDD schema first (${schema}.linkedin_accounts)
       const accountResult = await findAccountByUnipileId(tenantId, unipileAccountId);
       
@@ -35,7 +34,7 @@ class LinkedInAccountService {
       }
       
       const account = accountResult.account;
-      const schema = accountResult.schema;
+      const schema = accountResult.schema || (tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null));
       
       // Try to delete from Unipile using SDK (don't fail if it errors)
       if (this.baseService.isConfigured()) {

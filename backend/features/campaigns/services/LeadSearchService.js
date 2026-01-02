@@ -45,12 +45,106 @@ function getAuthHeaders(authToken) {
  * @param {number} offsetInPage - Offset within page
  * @param {number} dailyLimit - Daily limit of leads needed
  * @param {string} authToken - Optional JWT token for authentication
+ * @param {string} tenantId - Tenant ID for multi-tenant context
  * @returns {Object} { employees, fromSource }
  */
-async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dailyLimit, authToken = null) {
+async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dailyLimit, authToken = null, tenantId = null) {
   logger.debug('[Lead Search] Searching database for leads', { searchParams, page, offsetInPage, dailyLimit });
   try {
     logger.debug('[Lead Search] Checking database (employees_cache)', { page });
+    
+    // For internal service-to-service calls, use the service directly instead of HTTP
+    if (!authToken && process.env.NODE_ENV === 'production') {
+      // Use provided tenantId or fall back to default
+      const effectiveTenantId = tenantId || process.env.DEFAULT_TENANT_ID || '00000000-0000-0000-0000-000000000001';
+      
+      logger.info('[Lead Search] Using direct service call for internal request', { 
+        effectiveTenantId, 
+        providedTenantId: tenantId,
+        env: process.env.NODE_ENV,
+        usingProvidedTenant: !!tenantId
+      });
+      
+      const ApolloLeadsService = require('../../apollo-leads/services/ApolloLeadsService');
+      
+      // Create a mock request object with proper tenant context matching ApolloLeadsController expectations
+      const mockReq = {
+        body: {
+          ...searchParams,
+          page: page,
+          per_page: 100
+        },
+        user: { 
+          tenant_id: effectiveTenantId  // This matches the controller's req.user?.tenant_id check
+        },
+        headers: {
+          'x-tenant-id': effectiveTenantId  // Backup header for tenant context
+        }
+      };
+      
+      try {
+        logger.debug('[Lead Search] Calling ApolloLeadsService.searchEmployeesFromDb directly', { 
+          tenantId: effectiveTenantId, 
+          hasUser: !!mockReq.user,
+          hasTenantId: !!mockReq.user?.tenant_id 
+        });
+        
+        const result = await ApolloLeadsService.searchEmployeesFromDb(mockReq.body, mockReq);
+        
+        logger.debug('[Lead Search] Direct service call result', { 
+          hasResult: !!result, 
+          success: result?.success,
+          employeeCount: result?.employees?.length || 0 
+        });
+        
+        if (result && result.success !== false) {
+          const dbEmployees = result.employees || result || [];
+          logger.info('[Lead Search] Found leads in database (direct call)', { count: dbEmployees.length, page });
+          
+          // Apply offset within this page and take daily limit
+          const availableFromDb = dbEmployees.slice(offsetInPage, offsetInPage + dailyLimit);
+          
+          if (availableFromDb.length >= dailyLimit) {
+            // We have enough from database
+            return {
+              employees: availableFromDb.slice(0, dailyLimit),
+              fromSource: 'database'
+            };
+          } else {
+            // Not enough in database, take what we have
+            return {
+              employees: availableFromDb,
+              fromSource: 'mixed'
+            };
+          }
+        }
+        
+        logger.warn('[Lead Search] Direct service call returned no results or failed', { result });
+        return { employees: [], fromSource: 'database' };
+      } catch (serviceError) {
+        logger.error('[Lead Search] Direct service call failed, falling back to HTTP', { 
+          error: serviceError.message, 
+          stack: serviceError.stack,
+          tenantId: effectiveTenantId 
+        });
+        // Fall through to HTTP call with better error handling
+      }
+    }
+    
+    // HTTP fallback call with tenant context header
+    const effectiveTenantId = tenantId || process.env.DEFAULT_TENANT_ID || '00000000-0000-0000-0000-000000000001';
+    const headers = {
+      ...getAuthHeaders(authToken),
+      'x-tenant-id': effectiveTenantId  // Add tenant context for internal calls
+    };
+    
+    logger.debug('[Lead Search] Making HTTP call to search-employees-from-db', {
+      url: `${BACKEND_URL}/api/apollo-leads/search-employees-from-db`,
+      hasAuthToken: !!authToken,
+      tenantId: effectiveTenantId,
+      providedTenantId: tenantId,
+      usingProvidedTenant: !!tenantId
+    });
     
     const dbResponse = await axios.post(
       `${BACKEND_URL}/api/apollo-leads/search-employees-from-db`,
@@ -60,7 +154,7 @@ async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dai
         per_page: 100
       },
       {
-        headers: getAuthHeaders(authToken),
+        headers: headers,
         timeout: 60000
       }
     );
@@ -199,7 +293,7 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
  * @param {string} authToken - Optional JWT token for authentication
  * @returns {Object} { employees, fromSource }
  */
-async function searchEmployees(searchParams, page, offsetInPage, dailyLimit, authToken = null) {
+async function searchEmployees(searchParams, page, offsetInPage, dailyLimit, authToken = null, tenantId = null) {
   logger.info('[Lead Search] Starting employee search', { searchParams, page, offsetInPage, dailyLimit, backendUrl: BACKEND_URL });
   
   // STEP 1: Try to get leads from database first

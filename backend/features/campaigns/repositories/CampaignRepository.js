@@ -137,7 +137,7 @@ class CampaignRepository {
         COUNT(DISTINCT CASE WHEN cla.status = 'clicked' THEN cla.id END) as clicked_count
       FROM ${schema}.campaigns c
       LEFT JOIN ${schema}.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND COALESCE(cl.is_deleted, FALSE) = FALSE
-      LEFT JOIN ${schema}.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id AND cla.tenant_id = $1 AND COALESCE(cla.is_deleted, FALSE) = FALSE
+      LEFT JOIN ${schema}.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id AND cla.tenant_id = $1
       WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
     `;
 
@@ -376,7 +376,7 @@ class CampaignRepository {
         COUNT(DISTINCT CASE WHEN cla.status = 'connected' THEN cla.id END) as total_connected,
         COUNT(DISTINCT CASE WHEN cla.status = 'replied' THEN cla.id END) as total_replied
       FROM ${schema}.campaigns c
-      LEFT JOIN ${schema}.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1
+      LEFT JOIN ${schema}.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND cl.is_deleted = FALSE
       LEFT JOIN ${schema}.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id AND cla.tenant_id = $1
       WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
     `;
@@ -387,7 +387,7 @@ class CampaignRepository {
     } catch (error) {
       const errorMsg = error.message?.toLowerCase() || '';
       if (errorMsg.includes('campaign_lead_activities') || errorMsg.includes('does not exist') || errorMsg.includes('relation') || errorMsg.includes('undefined table')) {
-        logger.warn('[CampaignRepository] Activities table not available for stats, using simplified query:', error.message);
+        logger.warn('[CampaignRepository] Activities table not available, using simplified query:', error.message);
         const fallbackQuery = `
           SELECT
             COUNT(DISTINCT c.id) as total_campaigns,
@@ -398,7 +398,7 @@ class CampaignRepository {
             0 as total_connected,
             0 as total_replied
           FROM ${schema}.campaigns c
-          LEFT JOIN ${schema}.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1
+          LEFT JOIN ${schema}.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND cl.is_deleted = FALSE
           WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
         `;
         const result = await pool.query(fallbackQuery, [tenantId]);

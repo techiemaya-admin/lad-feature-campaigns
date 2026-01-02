@@ -74,10 +74,10 @@ async function saveLeadToCampaign(campaignId, tenantId, leadId, snapshot, leadDa
 /**
  * Update campaign config with offset and date
  */
-async function updateCampaignConfig(campaignId, config, req = null) {
+async function updateCampaignConfig(campaignId, config, tenantId = null, req = null) {
   try {
-    // Per TDD: Use dynamic schema
-    const schema = getSchema(req);
+    // Per TDD: Use dynamic schema with tenantId
+    const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(req);
     await pool.query(
       `UPDATE ${schema}.campaigns SET config = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
       [JSON.stringify(config), campaignId]
@@ -92,10 +92,10 @@ async function updateCampaignConfig(campaignId, config, req = null) {
 /**
  * Update step config with offset and date
  */
-async function updateStepConfig(stepId, stepConfig, req = null) {
+async function updateStepConfig(stepId, stepConfig, tenantId = null, req = null) {
   try {
-    // Per TDD: Use dynamic schema
-    const schema = getSchema(req);
+    // Per TDD: Use dynamic schema with tenantId
+    const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(req);
     await pool.query(
       `UPDATE ${schema}.campaign_steps SET config = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
       [JSON.stringify(stepConfig), stepId]

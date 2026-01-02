@@ -281,16 +281,15 @@ class UnipileProfileService {
                     } catch (dbError) {
                         logger.error('[Unipile] Error updating account status', { accountId, error: dbError.message });
                     }
-                        
-                        return {
-                            success: false,
-                            phone: null,
-                            email: null,
-                            error: 'LinkedIn account credentials expired. Please reconnect your LinkedIn account in Settings.',
-                            accountExpired: true,
-                            accountId: accountId
-                        };
-                    }
+                    
+                    return {
+                        success: false,
+                        phone: null,
+                        email: null,
+                        error: 'LinkedIn account credentials expired. Please reconnect your LinkedIn account in Settings.',
+                        accountExpired: true,
+                        accountId: accountId
+                    };
                 }
             }
             

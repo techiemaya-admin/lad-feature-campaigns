@@ -28,6 +28,9 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
   try {
     logger.info('[Campaign Execution] Executing lead generation', { campaignId, userId, tenantId });
     
+    // LAD Architecture: Use dynamic schema resolution with tenantId
+    const schema = getSchema({ user: { tenant_id: tenantId } });
+    
     // Ensure stepConfig is parsed if it's a string
     if (typeof stepConfig === 'string') {
       stepConfig = JSON.parse(stepConfig);
@@ -38,8 +41,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     let campaignConfig = {};
     let configColumnExists = false;
     try {
-      // LAD Architecture: Use dynamic schema resolution
-      const schema = getSchema(null); // No req available, will use default
+      // Try to get config from campaigns table (if config column exists)
       const campaignResult = await pool.query(
         `SELECT config FROM ${schema}.campaigns WHERE id = $1`,
         [campaignId]
@@ -149,13 +151,10 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       searchParams.organization_industries = Array.isArray(filters.industries) ? filters.industries : [filters.industries];
     }
     
-    if (tenantId) {
-      searchParams.tenant_id = tenantId;
-    }
+    // Note: tenant_id and user_id are passed separately to search functions, not in searchParams
+    // searchParams only contains Apollo API parameters (titles, locations, industries, etc.)
     
-    if (userId) {
-      searchParams.user_id = userId;
-    }
+    // Add disable_leads_sync flag if configured
     
     logger.info('[Campaign Execution] Lead generation parameters', { dailyLimit, currentOffset, page, offsetInPage });
     
@@ -180,7 +179,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     
     try {
       // First, try to get leads from database (employees_cache)
-      const dbSearchResult = await searchEmployeesFromDatabase(searchParams, page, offsetInPage, dailyLimit, authToken);
+      const dbSearchResult = await searchEmployeesFromDatabase(searchParams, page, offsetInPage, dailyLimit, authToken, tenantId);
       employees = dbSearchResult.employees || [];
       fromSource = dbSearchResult.fromSource || 'database';
       searchError = dbSearchResult.error || null;
@@ -194,7 +193,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       // If no leads from database and access is NOT denied, try Apollo API
       if (employees.length === 0 && !searchError && !accessDenied) {
         logger.debug('[Campaign Execution] STEP 2: No leads in employees_cache, calling Apollo API');
-        const apolloSearchResult = await searchEmployees(searchParams, page, offsetInPage, dailyLimit, authToken);
+        const apolloSearchResult = await searchEmployees(searchParams, page, offsetInPage, dailyLimit, authToken, tenantId);
         employees = apolloSearchResult.employees || [];
         fromSource = apolloSearchResult.fromSource || 'apollo';
         searchError = apolloSearchResult.error || null;
@@ -242,9 +241,17 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     
     // Handle actual errors (not access denied)
     if (searchError) {
+      // Safe way to get backend URL for logging without throwing
+      let backendUrl = 'not set';
+      try {
+        backendUrl = require('./LeadSearchService').BACKEND_URL || 'not set';
+      } catch (e) {
+        backendUrl = 'error retrieving URL';
+      }
+      
       logger.error('[Campaign Execution] Lead search returned error', { 
         error: searchError,
-        backendUrl: require('./LeadSearchService').BACKEND_URL || 'not set'
+        backendUrl
       });
       
       // Set execution state to error
@@ -293,7 +300,6 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
         nextRunAt: nextRunAt.toISOString(),
         lastExecutionReason: `No leads found. Retrying in ${retryIntervalHours}h or tomorrow at ${dailyRetryHour}:${dailyRetryMinute.toString().padStart(2, '0')}`
       }, null);
-      });
       
       logger.info('[Campaign Execution] Campaign set to waiting_for_leads state', { nextRetry: nextRunAt.toISOString() });
       
@@ -311,15 +317,19 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     
     const employeesList = employees || [];
     
-    // Get tenant_id from campaign
+    // Use tenant_id from parameter (already available)
+    // Verify campaign exists
     const campaignQuery = await pool.query(
       `SELECT tenant_id FROM ${schema}.campaigns WHERE id = $1 AND is_deleted = FALSE`,
       [campaignId]
     );
-    const tenantId = campaignQuery.rows[0]?.tenant_id;
+    
+    if (!campaignQuery.rows[0]) {
+      throw new Error(`Campaign ${campaignId} not found`);
+    }
     
     if (!tenantId) {
-      throw new Error(`Campaign ${campaignId} not found or missing tenant_id`);
+      throw new Error(`Campaign ${campaignId} missing tenant_id parameter`);
     }
       
     // Save leads to campaign_leads table (only the daily limit)
@@ -340,7 +350,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     
     // Try to update config column (may not exist in all schemas)
     try {
-      await updateCampaignConfig(campaignId, updatedConfig);
+      await updateCampaignConfig(campaignId, updatedConfig, tenantId);
     } catch (updateError) {
       // If config column doesn't exist, store offset in step config as fallback
       logger.debug('[Campaign Execution] Config column not available, storing offset in step config');
@@ -353,7 +363,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
           leads_per_day: leadsPerDay
         };
         
-        await updateStepConfig(step.id, updatedStepConfig);
+        await updateStepConfig(step.id, updatedStepConfig, tenantId);
         logger.info('[Campaign Execution] Stored offset in step config', { offset: newOffset, date: today });
       } catch (stepUpdateErr) {
         logger.error('[Campaign Execution] Error storing offset in step config', { error: stepUpdateErr.message, stack: stepUpdateErr.stack });
