@@ -71,6 +71,7 @@ package-lock.json
 
 # Documentation files
 *.md
+!README.md
 
 # Test files
 **/*test*.js
@@ -79,6 +80,11 @@ package-lock.json
 **/*spec*.ts
 test/
 tests/
+
+# Local utility scripts
+update-imports.js
+fix-*.js
+migrate-*.js
 
 # Check/debug scripts (local testing only)
 check*.js
