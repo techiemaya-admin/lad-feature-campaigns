@@ -5,6 +5,7 @@
  */
 
 const linkedInService = require('../services/LinkedInIntegrationService');
+const linkedInAccountService = require('../services/LinkedInAccountService');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const logger = require('../../../core/utils/logger');
 
@@ -41,31 +42,10 @@ class LinkedInCheckpointController {
         });
       }
 
-      // Get checkpoint type from database (default: IN_APP_VALIDATION)
-      let checkpointType = 'IN_APP_VALIDATION';
-      try {
-        const { pool } = require('../utils/dbConnection');
-        const tenantId = req.user.tenantId || userId;
-        const schema = getSchema(req);
-        
-        const checkpointQuery = `
-          SELECT metadata
-          FROM ${schema}.linkedin_accounts
-          WHERE unipile_account_id = $1 AND tenant_id = $2 AND is_active = TRUE
-          ORDER BY created_at DESC
-          LIMIT 1
-        `;
-        const checkpointResult = await pool.query(checkpointQuery, [unipileAccountId, tenantId]);
-        
-        if (checkpointResult.rows.length > 0) {
-          const metadata = typeof checkpointResult.rows[0].metadata === 'string'
-            ? JSON.parse(checkpointResult.rows[0].metadata)
-            : (checkpointResult.rows[0].metadata || {});
-          checkpointType = metadata.checkpoint?.type || 'IN_APP_VALIDATION';
-        }
-      } catch (dbError) {
-        logger.warn('[LinkedIn Checkpoint] Could not get checkpoint type from database, using default', { error: dbError.message });
-      }
+      // Get checkpoint type from database via service layer (default: IN_APP_VALIDATION)
+      const tenantId = req.user.tenantId || userId;
+      const schema = getSchema(req);
+      const checkpointType = await linkedInAccountService.getCheckpointType(unipileAccountId, tenantId, schema);
 
       const result = await linkedInService.solveCheckpoint(unipileAccountId, answer, checkpointType);
       

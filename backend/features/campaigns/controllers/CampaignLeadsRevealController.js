@@ -22,6 +22,17 @@ function getBackendUrl() {
 }
 
 /**
+ * Get Apollo Leads URL specifically for Apollo service calls
+ */
+function getApolloLeadsUrl() {
+  if (process.env.APOLLO_LEADS_URL) return process.env.APOLLO_LEADS_URL;
+  return getBackendUrl();
+}
+
+const BACKEND_URL = getBackendUrl();
+const APOLLO_LEADS_URL = getApolloLeadsUrl();
+
+/**
  * Get authentication headers from request
  */
 function getAuthHeaders(req) {
@@ -135,7 +146,7 @@ class CampaignLeadsRevealController {
       logger.info('[Campaign Leads Reveal] Revealing email via Apollo API', { campaignId, leadId, apollo_person_id });
 
       const apolloResponse = await axios.post(
-        `${BACKEND_URL}/api/apollo-leads/reveal-email`,
+        `${APOLLO_LEADS_URL}/api/apollo-leads/reveal-email`,
         {
           person_id: apollo_person_id,
           campaign_id: campaignId,
@@ -199,7 +210,7 @@ class CampaignLeadsRevealController {
       logger.info('[Campaign Leads Reveal] Revealing phone via Apollo API', { campaignId, leadId, apollo_person_id });
 
       const apolloResponse = await axios.post(
-        `${BACKEND_URL}/api/apollo-leads/reveal-phone`,
+        `${APOLLO_LEADS_URL}/api/apollo-leads/reveal-phone`,
         {
           person_id: apollo_person_id,
           campaign_id: campaignId,

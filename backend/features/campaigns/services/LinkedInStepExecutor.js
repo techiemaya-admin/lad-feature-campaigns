@@ -63,23 +63,24 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
     
     // Handle all LinkedIn step types dynamically
     if (stepType === 'linkedin_connect') {
+      // FIXED: NEVER send connection requests with messages
+      // User requested: Send connection first, then send message AFTER they accept
       // LinkedIn allows unlimited connection requests WITHOUT messages
       // But only 4-5 connection requests WITH messages per month
-      // User can select "send with message" in UI - if limit exceeded, fallback to without message
-      const userWantsMessage = stepConfig.sendWithMessage === true || stepConfig.sendWithMessage === 'true' || stepConfig.connectionMessage !== null;
-      const message = stepConfig.message || stepConfig.connectionMessage || null;
+      const userWantsMessage = false; // Always false - no messages with connection requests
+      const message = null; // Never include message with connection request
       
-      logger.debug('[Campaign Execution] LinkedIn connect step', { userWantsMessage, hasMessage: !!message });
+      logger.debug('[Campaign Execution] LinkedIn connect step', { userWantsMessage: false, hasMessage: false, note: 'Connection without message - message sent later after acceptance' });
       
       // Get all available LinkedIn accounts for fallback
       const allAccounts = await getAllLinkedInAccountsForTenant(tenantId, userId);
       logger.info('[Campaign Execution] Found LinkedIn accounts available for fallback', { count: allAccounts.length });
       
-      // Try connection request with smart fallback logic
+      // Try connection request without message (always)
       result = await sendConnectionRequestWithFallback(
         employee,
-        message,
-        userWantsMessage,
+        message, // Will be null
+        userWantsMessage, // Will be false
         linkedinAccountId,
         allAccounts
       );

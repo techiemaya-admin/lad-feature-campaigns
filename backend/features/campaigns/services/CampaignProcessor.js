@@ -3,7 +3,6 @@
  * Handles main campaign processing and step execution
  * Note: processLeadThroughWorkflow has been moved to WorkflowProcessor.js
  */
-
 const { pool } = require('../utils/dbConnection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const { validateStepConfig } = require('./StepValidators');
@@ -28,16 +27,13 @@ const logger = require('../../../core/utils/logger');
 async function executeStepForLead(campaignId, step, campaignLead, userId, tenantId, authToken = null) {
   // Declare activityId outside try block so it's accessible in catch
   let activityId = null;
-  
   try {
     const stepType = step.step_type || step.type;
     const stepConfig = typeof step.config === 'string' ? JSON.parse(step.config) : step.config;
-    
     // VALIDATE: Check if all required fields are filled before executing
     const validation = validateStepConfig(stepType, stepConfig);
     if (!validation.valid) {
       logger.error('[Campaign Execution] Step validation failed', { stepId: step.id, stepType, error: validation.error, missingFields: validation.missingFields });
-      
       return {
         success: false,
         error: validation.error,
@@ -50,7 +46,6 @@ async function executeStepForLead(campaignId, step, campaignLead, userId, tenant
     const leadId = campaignLead?.lead_id || campaignLead?.id || 'N/A';
     logger.info('[Campaign Execution] Executing step', { stepId: step.id, stepType, leadId });
     logger.debug('[Campaign Execution] Step config validated - all required fields present');
-    
     // Record activity start (skip for lead generation as it's campaign-level and creates leads)
     if (stepType !== 'lead_generation' && campaignLead && campaignLead.id) {
       // Get tenant_id from campaign
@@ -59,15 +54,12 @@ async function executeStepForLead(campaignId, step, campaignLead, userId, tenant
         `SELECT tenant_id FROM ${schema}.campaigns WHERE id = $1 AND is_deleted = FALSE`,
         [campaignId]
       );
-      
       if (campaignQuery.rows.length > 0) {
         const tenantId = campaignQuery.rows[0].tenant_id;
         activityId = await createActivity(campaignId, tenantId, campaignLead.id, step.id, stepType);
       }
     }
-    
     let result = { success: false, error: 'Unknown step type' };
-    
     // Handle all step types dynamically based on step type
     if (stepType === 'lead_generation') {
       result = await executeLeadGeneration(campaignId, step, stepConfig, userId, tenantId, authToken);
@@ -102,16 +94,13 @@ async function executeStepForLead(campaignId, step, campaignLead, userId, tenant
       const status = result.success ? 'delivered' : 'error';
       await updateActivityStatus(activityId, status, result.error || null);
     }
-    
     return result;
   } catch (error) {
     logger.error('[Campaign Execution] Error executing step', { stepId: step.id, error: error.message, stack: error.stack });
-    
     // If activity was created, update it to error status
     if (activityId) {
       await updateActivityStatus(activityId, 'error', error.message || 'Unknown error occurred');
     }
-    
     return { success: false, error: error.message };
   }
 }
@@ -120,7 +109,6 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
   try {
     logger.info('[Campaign Execution] Starting processCampaign', { campaignId, tenantId });
     logger.debug('[Campaign Execution] Timestamp', { timestamp: new Date().toISOString() });
-
     // Test database connection first
     try {
       const testResult = await pool.query('SELECT NOW() as now');
@@ -142,16 +130,13 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
     const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
     let query = `SELECT * FROM ${schema}.campaigns WHERE id = $1 AND status = 'running'`;
     let params = [campaignId];
-
     // Try with is_deleted first, fallback without it
     try {
       query += ` AND is_deleted = FALSE`;
     } catch (e) {
       // is_deleted column might not exist, continue without it
     }
-    
     logger.debug('[Campaign Execution] Querying campaign', { query, params });
-
     let campaignResult;
     try {
       campaignResult = await pool.query(query, params);
@@ -165,7 +150,6 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
         throw error;
       }
     }
-
     if (campaignResult.rows.length === 0) {
       logger.warn('[Campaign Execution] Campaign not found or not running', { campaignId, rowsReturned: campaignResult.rows.length });
       return;
@@ -177,32 +161,25 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
     const executionState = campaign.execution_state || 'active';
     const nextRunAt = campaign.next_run_at;
     const lastLeadCheckAt = campaign.last_lead_check_at;
-
     logger.info('[Campaign Execution] Found campaign', { campaignId: campaign.id, campaignName: campaign.name || 'unnamed', status: campaign.status, executionState, userId: userIdFromCampaign, tenantId: tenantIdFromCampaign });
-
     // PRODUCTION-GRADE: Check execution state before processing
     // This prevents unnecessary retries and wasted compute
     const now = new Date();
-    
     if (executionState === 'waiting_for_leads') {
       // Check if retry time has been reached
       const retryIntervalHours = process.env.LEAD_RETRY_INTERVAL_HOURS || 6; // Default 6 hours
       const retryIntervalMs = retryIntervalHours * 60 * 60 * 1000;
-      
       if (lastLeadCheckAt) {
         const lastCheckTime = new Date(lastLeadCheckAt);
         const timeSinceLastCheck = now.getTime() - lastCheckTime.getTime();
-        
         if (timeSinceLastCheck < retryIntervalMs) {
           const hoursUntilRetry = Math.ceil((retryIntervalMs - timeSinceLastCheck) / (60 * 60 * 1000));
           const reason = `Campaign skipped: waiting for leads (retry in ${hoursUntilRetry}h)`;
           logger.info('[Campaign Execution] Skipping campaign', { reason });
-          
           // Update last_execution_reason for visibility
           await CampaignRepository.updateExecutionState(campaignId, 'waiting_for_leads', {
             lastExecutionReason: reason
           }, null);
-          
           return; // Skip execution
         }
       }
@@ -214,11 +191,9 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
           const minutesUntilNextRun = Math.ceil((nextRunTime.getTime() - now.getTime()) / (60 * 1000));
           const reason = `Campaign skipped: waiting for leads (scheduled retry in ${minutesUntilNextRun} minutes)`;
           logger.info('[Campaign Execution] Skipping campaign', { reason });
-          
           await CampaignRepository.updateExecutionState(campaignId, 'waiting_for_leads', {
             lastExecutionReason: reason
           }, null);
-          
           return; // Skip execution
         }
       }
@@ -229,7 +204,6 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
         lastExecutionReason: 'Retry time reached, checking for leads again'
       }, null);
     }
-    
     if (executionState === 'sleeping_until_next_day') {
       if (nextRunAt) {
         const nextRunTime = new Date(nextRunAt);
@@ -237,11 +211,9 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
           const hoursUntilNextDay = Math.ceil((nextRunTime.getTime() - now.getTime()) / (60 * 60 * 1000));
           const reason = `Campaign sleeping until next day (resumes in ${hoursUntilNextDay}h)`;
           logger.info('[Campaign Execution] Skipping campaign', { reason });
-          
           await CampaignRepository.updateExecutionState(campaignId, 'sleeping_until_next_day', {
             lastExecutionReason: reason
           }, null);
-          
           return; // Skip execution
         }
       }
@@ -253,7 +225,6 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
         lastExecutionReason: 'Next day reached, resuming execution'
       }, null);
     }
-    
     if (executionState === 'error') {
       // Error state - log but don't process (user should investigate)
       logger.warn('[Campaign Execution] Campaign in error state', { campaignId, reason: campaign.last_execution_reason || 'Unknown error' });
@@ -300,11 +271,9 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       }
     }
     const steps = stepsResult.rows;
-
     if (steps.length === 0) {
       logger.warn('[Campaign Execution] Campaign has no steps, skipping execution', { campaignId });
       logger.info('[Campaign Execution] TIP: Steps must be created for the campaign before it can run. Check if steps were created when the campaign was created, or add steps via POST /api/campaigns/:id/steps');
-      
       // Debug: Check if steps exist with different tenant_id
       try {
         const debugResult = await pool.query(
@@ -317,20 +286,14 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       } catch (debugError) {
         // Ignore debug errors
       }
-      
       return;
     }
-
     logger.info('[Campaign Execution] Found steps for campaign', { campaignId, stepCount: steps.length, stepTypes: steps.map(s => ({ id: s.id, type: s.step_type || s.type, order: s.step_order || s.order })) });
-    
     const leadGenerationStep = steps.find(s => (s.step_type || s.type) === 'lead_generation');
-    
     // Declare leadGenResult outside the if block so it's accessible later
     let leadGenResult = null;
-
     if (leadGenerationStep) {
       logger.info('[Campaign Execution] Found lead generation step', { stepId: leadGenerationStep.id, order: leadGenerationStep.step_order || leadGenerationStep.order, configType: typeof leadGenerationStep.config });
-      
       // Parse step config
       let stepWithParsedConfig = { ...leadGenerationStep };
       if (typeof leadGenerationStep.config === 'string') {
@@ -352,13 +315,9 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       // Create a dummy lead object for the initial call to executeStepForLead
       // The actual leads will be generated and saved by executeLeadGeneration
       const dummyLead = { id: null, campaign_id: campaignId }; 
-
       logger.info('[Campaign Execution] Executing lead generation', { campaignId, hasAuthToken: !!authToken, userId: userIdFromCampaign, tenantId: tenantIdFromCampaign });
-      
       leadGenResult = await executeStepForLead(campaignId, stepWithParsedConfig, dummyLead, userIdFromCampaign, tenantIdFromCampaign, authToken);
-      
       logger.debug('[Campaign Execution] Lead generation result', { result: leadGenResult });
-
       if (!leadGenResult.success) {
         logger.error('[Campaign Execution] Lead generation failed', { campaignId, error: leadGenResult.error, fullResult: leadGenResult });
         // Don't return here - continue processing existing leads even if generation failed
@@ -374,11 +333,12 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
     let leadsResult;
     try {
       // Try with all columns first
+      // FIXED: Include 'completed' leads from lead generation for LinkedIn processing
       leadsResult = await pool.query(
         `SELECT id, campaign_id, lead_id, status, snapshot, lead_data 
          FROM ${schema}.campaign_leads 
          WHERE campaign_id = $1 
-         AND status = 'active' 
+         AND status IN ('active', 'completed', 'ready_for_linkedin')
          AND is_deleted = FALSE`,
         [campaignId]
       );
@@ -392,7 +352,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
             `SELECT id, campaign_id, lead_id, status, lead_data 
              FROM ${schema}.campaign_leads 
              WHERE campaign_id = $1 
-             AND status = 'active' 
+             AND status IN ('active', 'completed', 'ready_for_linkedin')
              AND is_deleted = FALSE`,
             [campaignId]
           );
@@ -404,7 +364,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
               `SELECT id, campaign_id, lead_id, status, lead_data 
                FROM ${schema}.campaign_leads 
                WHERE campaign_id = $1 
-               AND status = 'active'`,
+               AND status IN ('active', 'completed', 'ready_for_linkedin')`,
               [campaignId]
             );
           } else {
@@ -419,7 +379,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
             `SELECT id, campaign_id, lead_id, status, snapshot, lead_data 
              FROM ${schema}.campaign_leads 
              WHERE campaign_id = $1 
-             AND status = 'active'`,
+             AND status IN ('active', 'completed', 'ready_for_linkedin')`,
             [campaignId]
           );
         } catch (error2) {
@@ -430,7 +390,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
               `SELECT id, campaign_id, lead_id, status, lead_data 
                FROM ${schema}.campaign_leads 
                WHERE campaign_id = $1 
-               AND status = 'active'`,
+               AND status IN ('active', 'completed', 'ready_for_linkedin')`,
               [campaignId]
             );
           } else {
@@ -443,7 +403,6 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
     }
     
     const leads = leadsResult.rows;
-    
     // Process each lead through the workflow (skip lead generation, start, and end steps)
     const workflowSteps = steps.filter(s => {
       const stepType = s.step_type || s.type;
@@ -451,14 +410,11 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
              stepType !== 'start' && 
              stepType !== 'end';
     });
-    
     // Per TDD: Use tenant_id and created_by_user_id
     for (const lead of leads) {
       await processLeadThroughWorkflow(campaign, workflowSteps, lead, userIdFromCampaign, tenantIdFromCampaign, authToken);
     }
-    
     logger.info('[Campaign Execution] Processed leads for campaign', { campaignId, leadCount: leads.length });
-    
     // PRODUCTION-GRADE: After processing all leads, check if we should sleep
     // Only set to sleep if daily limit was reached AND all leads have been processed
     if (leadGenResult && leadGenResult.success && leadGenResult.dailyLimitReached) {
@@ -468,12 +424,10 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       const tomorrow = new Date(now);
       tomorrow.setDate(tomorrow.getDate() + 1);
       tomorrow.setHours(0, 0, 0, 0); // Start of next day
-      
       await CampaignRepository.updateExecutionState(campaignId, 'sleeping_until_next_day', {
         nextRunAt: tomorrow.toISOString(),
         lastExecutionReason: `Daily limit reached. All leads processed. Resuming tomorrow.`
       }, null);
-      
       logger.info('[Campaign Execution] Campaign set to sleeping_until_next_day after processing all leads', { campaignId, resumesAt: tomorrow.toISOString() });
     } else if (!leadGenResult || !leadGenResult.success) {
       // If lead generation didn't run or failed, but we have existing leads, keep active
@@ -494,4 +448,3 @@ module.exports = {
   executeStepForLead,
   processCampaign
 };
-

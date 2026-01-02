@@ -74,8 +74,7 @@ class UnipileBaseService {
 
     /**
      * Get authentication headers for Unipile API
-     * According to Unipile docs: Uses Authorization: Bearer <token> for native auth endpoints
-     * (pluto_campaigns uses this format)
+     * According to Unipile docs: Uses X-API-KEY header for authentication
      */
     getAuthHeaders() {
         const trimmedToken = (this.token || '').trim();
@@ -84,9 +83,9 @@ class UnipileBaseService {
             throw new Error('UNIPILE_TOKEN is not configured');
         }
 
-        // Unipile API uses Authorization: Bearer <token> (like pluto_campaigns)
+        // Unipile API uses X-API-KEY header for authentication
         return {
-            'Authorization': `Bearer ${trimmedToken}`,
+            'X-API-KEY': trimmedToken,
             'Content-Type': 'application/json',
             'accept': 'application/json'
         };

@@ -18,7 +18,15 @@ function getBackendUrl() {
   throw new Error('BACKEND_URL, BACKEND_INTERNAL_URL, or NEXT_PUBLIC_BACKEND_URL must be set');
 }
 
+// Get Apollo Leads URL specifically for Apollo service calls
+function getApolloLeadsUrl() {
+  // Prefer dedicated Apollo URL, fallback to backend URL
+  if (process.env.APOLLO_LEADS_URL) return process.env.APOLLO_LEADS_URL;
+  return getBackendUrl();
+}
+
 const BACKEND_URL = getBackendUrl();
+const APOLLO_LEADS_URL = getApolloLeadsUrl();
 
 /**
  * Get authentication headers for API calls
@@ -139,7 +147,7 @@ async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dai
     };
     
     logger.debug('[Lead Search] Making HTTP call to search-employees-from-db', {
-      url: `${BACKEND_URL}/api/apollo-leads/search-employees-from-db`,
+      url: `${APOLLO_LEADS_URL}/api/apollo-leads/search-employees-from-db`,
       hasAuthToken: !!authToken,
       tenantId: effectiveTenantId,
       providedTenantId: tenantId,
@@ -147,7 +155,7 @@ async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dai
     });
     
     const dbResponse = await axios.post(
-      `${BACKEND_URL}/api/apollo-leads/search-employees-from-db`,
+      `${APOLLO_LEADS_URL}/api/apollo-leads/search-employees-from-db`,
       {
         ...searchParams,
         page: page,
@@ -225,12 +233,12 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
     };
     
     // Try calling Apollo API directly - if endpoint doesn't exist, fallback to database endpoint
-    logger.debug('[Lead Search] Calling Apollo API', { url: `${BACKEND_URL}/api/apollo-leads/search-employees`, searchParams: apolloParams });
+    logger.debug('[Lead Search] Calling Apollo API', { url: `${APOLLO_LEADS_URL}/api/apollo-leads/search-employees`, searchParams: apolloParams });
     
     let apolloResponse;
     try {
       apolloResponse = await axios.post(
-        `${BACKEND_URL}/api/apollo-leads/search-employees`,
+        `${APOLLO_LEADS_URL}/api/apollo-leads/search-employees`,
         apolloParams,
         {
           headers: getAuthHeaders(authToken),
@@ -243,7 +251,7 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
       logger.warn('[Lead Search] Apollo endpoint failed, trying database endpoint', { error: apolloEndpointError.message, status: apolloEndpointError.response?.status, responseData: apolloEndpointError.response?.data });
       try {
         apolloResponse = await axios.post(
-          `${BACKEND_URL}/api/apollo-leads/search-employees-from-db`,
+          `${APOLLO_LEADS_URL}/api/apollo-leads/search-employees-from-db`,
           apolloParams,
           {
             headers: getAuthHeaders(authToken),
@@ -275,7 +283,7 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
       return [];
     }
     
-    logger.error('[Lead Search] Error fetching from Apollo', { error: apolloError.message, status: apolloError.response?.status, responseData: apolloError.response?.data, code: apolloError.code, url: `${BACKEND_URL}/api/apollo-leads/search-employees` });
+    logger.error('[Lead Search] Error fetching from Apollo', { error: apolloError.message, status: apolloError.response?.status, responseData: apolloError.response?.data, code: apolloError.code, url: `${APOLLO_LEADS_URL}/api/apollo-leads/search-employees` });
     if (apolloError.code === 'ECONNREFUSED' || apolloError.code === 'ENOTFOUND') {
       logger.error('[Lead Search] Cannot reach backend server', { backendUrl: BACKEND_URL, message: 'This will cause lead generation to fail silently!' });
     }

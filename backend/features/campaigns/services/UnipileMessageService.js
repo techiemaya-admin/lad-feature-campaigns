@@ -85,6 +85,7 @@ class UnipileMessageService {
             const chatPayload = {
                 provider: 'linkedin',
                 account_id: accountId,
+                attendees_ids: [providerId], // Fixed: Use attendees_ids instead of participants
                 participants: [
                     {
                         provider: 'linkedin',

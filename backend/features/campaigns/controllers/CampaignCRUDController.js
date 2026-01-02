@@ -234,36 +234,35 @@ class CampaignCRUDController {
         createdSteps = dbSteps.map(step => CampaignStepModel.mapStepFromDB(step));
       }
 
-      // If campaign is created with status='running' (mapped from 'active'), trigger immediate lead generation
-      // This ensures leads are scraped right away when campaign is created and started
-      if (campaign.status === 'running' || status === 'active') {
-        logger.info('[Campaign CRUD] Campaign created with status=running, triggering immediate lead generation', { campaignId: campaign.id, tenantId });
-        
-        // Set execution_state to active for immediate processing
-        try {
-          await CampaignRepository.updateExecutionState(campaign.id, 'active', {
-            lastExecutionReason: 'Campaign created and started immediately'
-          }, req);
-        } catch (stateError) {
-          // If execution_state columns don't exist, continue anyway
-          logger.warn('[Campaign CRUD] Could not set execution state', { error: stateError.message });
-        }
-        
-        // Extract auth token from request headers
-        const authToken = req.headers.authorization 
-          ? req.headers.authorization.replace('Bearer ', '').trim()
-          : null;
-        
-        // Trigger campaign execution immediately (fire and forget)
-        CampaignExecutionService.processCampaign(campaign.id, tenantId, authToken)
-          .then(() => {
-            logger.info('[Campaign CRUD] Immediate lead generation completed', { campaignId: campaign.id });
-          })
-          .catch(err => {
-            logger.error('[Campaign CRUD] Error in immediate lead generation', { campaignId: campaign.id, error: err.message, stack: err.stack });
-            // Don't fail the creation - campaign is created, just log the error
-          });
+      // ENHANCED: Trigger immediate campaign execution for ALL campaigns
+      // User wants campaigns to execute immediately when created, not wait 5 minutes
+      logger.info('[Campaign CRUD] Triggering immediate campaign execution', { campaignId: campaign.id, tenantId, status: campaign.status });
+      
+      // Set execution_state to active for immediate processing
+      try {
+        await CampaignRepository.updateExecutionState(campaign.id, 'active', {
+          lastExecutionReason: 'Campaign created - immediate execution requested'
+        }, req);
+      } catch (stateError) {
+        // If execution_state columns don't exist, continue anyway
+        logger.warn('[Campaign CRUD] Could not set execution state', { error: stateError.message });
       }
+      
+      // Extract auth token from request headers
+      const authToken = req.headers.authorization 
+        ? req.headers.authorization.replace('Bearer ', '').trim()
+        : null;
+      
+      // Trigger campaign execution immediately (fire and forget)
+      // This executes IMMEDIATELY when campaign is created, not in 5 minutes
+      CampaignExecutionService.processCampaign(campaign.id, tenantId, authToken)
+        .then(() => {
+          logger.info('[Campaign CRUD] Immediate campaign execution completed', { campaignId: campaign.id });
+        })
+        .catch(err => {
+          logger.error('[Campaign CRUD] Error in immediate campaign execution', { campaignId: campaign.id, error: err.message, stack: err.stack });
+          // Don't fail the creation - campaign is created, just log the error
+        });
 
       res.status(201).json({
         success: true,
