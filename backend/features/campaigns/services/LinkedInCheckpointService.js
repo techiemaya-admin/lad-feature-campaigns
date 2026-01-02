@@ -4,7 +4,7 @@
  */
 
 const { extractCheckpointInfo } = require('./LinkedInProfileHelper');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 
 /**
  * Handle checkpoint response from Unipile SDK

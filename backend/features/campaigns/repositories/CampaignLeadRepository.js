@@ -4,7 +4,7 @@
  */
 
 const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { getSchema } = require('../utils/schema');
 const { randomUUID } = require('crypto');
 
 class CampaignLeadRepository {

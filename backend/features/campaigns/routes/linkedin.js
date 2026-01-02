@@ -4,11 +4,11 @@
  */
 
 const express = require('express');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { getSchema } = require('../utils/schema');
 const router = express.Router();
-const { authenticateToken: jwtAuth } = require('../../../core/middleware/auth');
+const { authenticateToken: jwtAuth } = require('../middleware/auth');
 const linkedInIntegrationService = require('../services/LinkedInIntegrationService');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 
 // GET /api/campaigns/linkedin/status - Check LinkedIn connection status
 router.get('/status', jwtAuth, async (req, res) => {

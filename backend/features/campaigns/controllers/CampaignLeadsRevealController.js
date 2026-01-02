@@ -7,8 +7,8 @@
 const axios = require('axios');
 const CampaignLeadRepository = require('../repositories/CampaignLeadRepository');
 const CampaignLeadModel = require('../models/CampaignLeadModel');
-const { getSchema } = require('../../../core/utils/schemaHelper');
-const logger = require('../../../core/utils/logger');
+const { getSchema } = require('../utils/schema');
+const logger = require('../utils/logger');
 
 /**
  * Get backend URL from environment variables

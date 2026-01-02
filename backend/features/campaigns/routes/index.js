@@ -9,7 +9,7 @@ const CampaignController = require('../controllers/CampaignController');
 const CampaignLeadsSummaryController = require('../controllers/CampaignLeadsSummaryController');
 const CampaignLeadsRevealController = require('../controllers/CampaignLeadsRevealController');
 const linkedInRoutes = require('./linkedin');
-const { authenticateToken: jwtAuth } = require('../../../core/middleware/auth');
+const { authenticateToken: jwtAuth } = require('../middleware/auth');
 const {
   validateCampaignCreation,
   validateCampaignUpdate,

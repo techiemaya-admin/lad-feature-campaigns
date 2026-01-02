@@ -4,9 +4,9 @@
  */
 
 const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { getSchema } = require('../utils/schema');
 const axios = require('axios');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 
 const BACKEND_URL = process.env.BACKEND_INTERNAL_URL || process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL;
 if (!BACKEND_URL) {

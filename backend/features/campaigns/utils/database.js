@@ -1,6 +1,6 @@
 /**
- * Real Database Connection
- * Connects to PostgreSQL database using environment variables
+ * Database Connection Utility
+ * LAD Architecture: Each feature manages its own database connection
  */
 
 const { Pool } = require('pg');
@@ -27,16 +27,7 @@ const pool = new Pool({
   connectionTimeoutMillis: 5000,
 });
 
-// Log connection
-pool.on('connect', () => {
-  // Database connected successfully
-});
-
-pool.on('error', (err) => {
-  // Handle unexpected database errors
-});
-
-// Export both pool and query function
+// Export pool and query function
 module.exports = {
   pool,
   query: (text, params) => pool.query(text, params)

@@ -3,10 +3,10 @@
  * SQL queries only - no business logic
  */
 const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { getSchema } = require('../utils/schema');
 const { hasColumn, hasTable } = require('../utils/schemaChecker');
 const SchemaQueryBuilder = require('./SchemaQueryBuilder');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 class CampaignRepository {
   /**
    * Create a new campaign

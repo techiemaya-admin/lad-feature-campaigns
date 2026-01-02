@@ -4,7 +4,7 @@
  */
 
 const { pool } = require('../utils/dbConnection');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 
 /**
  * Generate and save profile summary for a LinkedIn visit

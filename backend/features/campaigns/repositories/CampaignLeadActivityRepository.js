@@ -3,7 +3,7 @@
  * SQL queries only - no business logic
  */
 
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { getSchema } = require('../utils/schema');
 const { pool } = require('../utils/dbConnection');
 
 class CampaignLeadActivityRepository {

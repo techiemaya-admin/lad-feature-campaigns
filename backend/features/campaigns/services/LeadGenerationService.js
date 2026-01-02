@@ -3,7 +3,7 @@
  * Handles lead generation with daily limits and offset tracking
  */
 const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { getSchema } = require('../utils/schema');
 const { searchEmployees, searchEmployeesFromDatabase } = require('./LeadSearchService');
 const {
   updateCampaignConfig,
@@ -12,7 +12,7 @@ const {
 const { saveLeadsToCampaign } = require('./LeadSaveService');
 const { createLeadGenerationActivity } = require('./CampaignActivityService');
 const CampaignRepository = require('../repositories/CampaignRepository');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 
 /**
  * Execute lead generation step with daily limit support

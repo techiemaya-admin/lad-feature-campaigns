@@ -3,7 +3,7 @@
  * Helper for building dynamic SQL queries with schema compatibility checks
  */
 const { hasColumn, hasTable } = require('../utils/schemaChecker');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 class SchemaQueryBuilder {
   /**
    * Extract clean schema name

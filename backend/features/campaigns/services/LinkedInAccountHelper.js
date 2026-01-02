@@ -4,7 +4,7 @@
  */
 
 const unipileService = require('./unipileService');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 const accountLookup = require('./LinkedInAccountLookup');
 const accountVerification = require('./LinkedInAccountVerification');
 

@@ -6,7 +6,7 @@
 const { pool } = require('../utils/dbConnection');
 const UnipileBaseService = require('./UnipileBaseService');
 const axios = require('axios');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 
 class LinkedInTokenService {
   constructor() {

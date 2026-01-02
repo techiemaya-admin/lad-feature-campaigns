@@ -1,9 +1,9 @@
 const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { getSchema } = require('../utils/schema');
 const linkedinDispatcher = require('./channelDispatchers/linkedin');
 const voiceDispatcher = require('./channelDispatchers/voice');
 const emailDispatcher = require('./channelDispatchers/email');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 
 /**
  * Step Executor - executes individual workflow steps

@@ -5,7 +5,7 @@
  */
 
 const { pool } = require('./dbConnection');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 
 // Memory cache for column existence checks
 const columnCache = new Map();

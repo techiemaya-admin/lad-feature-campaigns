@@ -91,5 +91,5 @@ test-*.js
 # They are used extensively by the campaigns feature and MUST be committed
 
 # Mock middleware for testing (DO NOT commit)
-backend/core/middleware/auth.js
-**/middleware/auth.js
+backend/features/campaigns/middleware/auth.js
+**/features/**/middleware/auth.js

@@ -6,7 +6,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 const { API_CONFIG } = require('../constants');
 
 // Load .env file from project root (lad-feature-campaigns/.env)

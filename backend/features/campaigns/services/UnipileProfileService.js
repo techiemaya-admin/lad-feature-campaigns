@@ -5,8 +5,8 @@
  */
 
 const axios = require('axios');
-const { getSchema } = require('../../../core/utils/schemaHelper');
-const logger = require('../../../core/utils/logger');
+const { getSchema } = require('../utils/schema');
+const logger = require('../utils/logger');
 
 class UnipileProfileService {
     constructor(baseService) {

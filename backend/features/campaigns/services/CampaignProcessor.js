@@ -4,7 +4,7 @@
  * Note: processLeadThroughWorkflow has been moved to WorkflowProcessor.js
  */
 const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { getSchema } = require('../utils/schema');
 const { validateStepConfig } = require('./StepValidators');
 const { createActivity, updateActivityStatus } = require('./CampaignActivityService');
 const { executeLeadGeneration } = require('./LeadGenerationService');
@@ -19,7 +19,7 @@ const {
 } = require('./StepExecutors');
 const { processLeadThroughWorkflow } = require('./WorkflowProcessor');
 const CampaignRepository = require('../repositories/CampaignRepository');
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 
 /**
  * Execute a campaign step for a specific lead

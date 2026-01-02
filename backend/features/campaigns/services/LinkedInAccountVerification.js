@@ -3,7 +3,7 @@
  * Handles account health checks and validation
  */
 
-const logger = require('../../../core/utils/logger');
+const logger = require('../utils/logger');
 
 /**
  * Verify account health with Unipile
