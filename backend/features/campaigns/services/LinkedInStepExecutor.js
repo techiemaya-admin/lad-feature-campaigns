@@ -3,7 +3,7 @@
  * Handles all LinkedIn-related step executions
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../utils/database');
 const unipileService = require('./unipileService');
 const { getLeadData } = require('./StepExecutors');
 const {

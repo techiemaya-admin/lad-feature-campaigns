@@ -3,7 +3,7 @@
  * Handles campaign lead activity creation and updates
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../utils/database');
 const { getSchema } = require('../utils/schema');
 const { getChannelForStepType } = require('./StepValidators');
 const logger = require('../utils/logger');

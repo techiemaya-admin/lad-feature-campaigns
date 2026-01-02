@@ -2,7 +2,7 @@
  * Campaign Repository
  * SQL queries only - no business logic
  */
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../utils/database');
 const { getSchema } = require('../utils/schema');
 const { hasColumn, hasTable } = require('../utils/schemaChecker');
 const SchemaQueryBuilder = require('./SchemaQueryBuilder');

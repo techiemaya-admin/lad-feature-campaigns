@@ -4,7 +4,7 @@
  * LAD Architecture Compliant - Uses logger instead of console
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../utils/database');
 const { getSchema } = require('../utils/schema');
 const { validateStepConfig } = require('./StepValidators');
 const logger = require('../utils/logger');

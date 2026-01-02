@@ -4,7 +4,7 @@
  * Production-grade solution for multi-tenant vs single-tenant schema compatibility
  */
 
-const { pool } = require('./dbConnection');
+const { pool } = require('./database');
 const logger = require('../utils/logger');
 
 // Memory cache for column existence checks

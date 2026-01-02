@@ -3,7 +3,7 @@
  * Handles main campaign processing and step execution
  * Note: processLeadThroughWorkflow has been moved to WorkflowProcessor.js
  */
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../utils/database');
 const { getSchema } = require('../utils/schema');
 const { validateStepConfig } = require('./StepValidators');
 const { createActivity, updateActivityStatus } = require('./CampaignActivityService');

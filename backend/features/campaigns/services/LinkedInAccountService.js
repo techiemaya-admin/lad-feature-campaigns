@@ -3,7 +3,7 @@
  * Handles account management operations
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../utils/database');
 const { getSchema } = require('../utils/schema');
 const UnipileBaseService = require('./UnipileBaseService');
 const axios = require('axios');

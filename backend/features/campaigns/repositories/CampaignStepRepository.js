@@ -4,7 +4,7 @@
  */
 
 const { getSchema } = require('../utils/schema');
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../utils/database');
 const logger = require('../utils/logger');
 
 class CampaignStepRepository {

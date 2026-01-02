@@ -205,7 +205,7 @@ router.post('/disconnect', jwtAuth, async (req, res) => {
       logger.debug('[LinkedIn Routes] connection_id provided, looking up unipile_account_id', { connectionId });
       
       try {
-        const { pool } = require('../utils/dbConnection');
+        const { pool } = require('../utils/database');
         
         const schema = getSchema(req);
         // Check if connection_id is a UUID (from ${schema}.linkedin_accounts) or integer

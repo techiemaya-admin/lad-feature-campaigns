@@ -2,10 +2,10 @@
   "name": "lad-feature-campaigns",
   "version": "1.0.0",
   "description": "Campaigns feature module",
-  "main": "test-server.js",
+  "main": "backend/features/campaigns/index.js",
   "scripts": {
-    "test": "node test-server.js",
-    "start": "node test-server.js"
+    "test": "echo \"No tests specified\"",
+    "start": "node backend/features/campaigns/index.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

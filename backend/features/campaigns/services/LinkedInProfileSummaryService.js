@@ -3,7 +3,7 @@
  * Handles profile summary generation and saving
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../utils/database');
 const logger = require('../utils/logger');
 
 /**

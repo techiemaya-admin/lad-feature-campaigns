@@ -3,7 +3,7 @@
  * Handles LinkedIn account retrieval strategies
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../utils/database');
 const { getSchema } = require('../utils/schema');
 const logger = require('../utils/logger');
 

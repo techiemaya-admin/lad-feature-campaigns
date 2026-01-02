@@ -4,7 +4,7 @@
  * Uses TDD schema: ${schema}.linkedin_accounts with tenant_id (UUID)
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../utils/database');
 const { getSchema } = require('../utils/schema');
 const logger = require('../utils/logger');
 

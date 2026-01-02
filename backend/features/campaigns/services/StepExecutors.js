@@ -3,7 +3,7 @@
  * Handles execution of various campaign step types
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../utils/database');
 const { getSchema } = require('../utils/schema');
 const axios = require('axios');
 const logger = require('../utils/logger');

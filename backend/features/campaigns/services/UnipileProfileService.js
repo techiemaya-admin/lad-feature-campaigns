@@ -156,7 +156,7 @@ class UnipileProfileService {
                         
                         // Mark account as inactive in database
                         try {
-                            const { pool } = require('../utils/dbConnection');
+                            const { pool } = require('../utils/database');
                             const schema = getSchema(null); // No req available in this context
                             await pool.query(
                                 `UPDATE ${schema}.linkedin_accounts 
@@ -256,7 +256,7 @@ class UnipileProfileService {
                     
                     // Mark account as inactive in database
                     try {
-                        const { pool } = require('../utils/dbConnection');
+                        const { pool } = require('../utils/database');
                         const schema = getSchema(null); // No req available in this context
                         await pool.query(
                             `UPDATE ${schema}.linkedin_accounts 

@@ -3,7 +3,7 @@
  * Helper functions for lead generation service
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../utils/database');
 const { getSchema } = require('../utils/schema');
 
 /**

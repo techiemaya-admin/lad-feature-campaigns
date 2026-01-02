@@ -3,7 +3,7 @@
  * SQL queries only - no business logic
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../utils/database');
 const { getSchema } = require('../utils/schema');
 const { randomUUID } = require('crypto');
 

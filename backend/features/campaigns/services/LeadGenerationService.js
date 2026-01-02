@@ -2,7 +2,7 @@
  * Lead Generation Service
  * Handles lead generation with daily limits and offset tracking
  */
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../utils/database');
 const { getSchema } = require('../utils/schema');
 const { searchEmployees, searchEmployeesFromDatabase } = require('./LeadSearchService');
 const {
