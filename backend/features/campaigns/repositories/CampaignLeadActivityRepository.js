@@ -1,12 +1,12 @@
 /**
- * Campaign Lead Activity Model
- * Handles database operations for campaign lead activities (tracking actions)
+ * Campaign Lead Activity Repository
+ * SQL queries only - no business logic
  */
 
 const { getSchema } = require('../../../core/utils/schemaHelper');
-const { pool } = require('../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
 
-class CampaignLeadActivityModel {
+class CampaignLeadActivityRepository {
   /**
    * Create a new activity
    */
@@ -14,7 +14,7 @@ class CampaignLeadActivityModel {
     const schema = getSchema(req);
     const {
       tenantId,
-      campaignId, // Required in TDD schema
+      campaignId,
       campaignLeadId,
       stepId,
       stepType,
@@ -30,7 +30,6 @@ class CampaignLeadActivityModel {
       executedAt
     } = activityData;
 
-    // Per TDD: Use lad_dev schema with all required columns
     const query = `
       INSERT INTO ${schema}.campaign_lead_activities (
         tenant_id, campaign_id, campaign_lead_id, step_id, step_type, action_type, status,
@@ -68,7 +67,6 @@ class CampaignLeadActivityModel {
    */
   static async getById(activityId, tenantId, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema
     const query = `
       SELECT * FROM ${schema}.campaign_lead_activities
       WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
@@ -83,7 +81,6 @@ class CampaignLeadActivityModel {
    */
   static async getByLeadId(campaignLeadId, tenantId, limit = 100, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema
     const query = `
       SELECT * FROM ${schema}.campaign_lead_activities
       WHERE campaign_lead_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
@@ -100,7 +97,6 @@ class CampaignLeadActivityModel {
    */
   static async getLastSuccessfulActivity(campaignLeadId, tenantId, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema
     const query = `
       SELECT * FROM ${schema}.campaign_lead_activities
       WHERE campaign_lead_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
@@ -118,7 +114,6 @@ class CampaignLeadActivityModel {
    */
   static async stepAlreadyExecuted(campaignLeadId, stepId, tenantId, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema
     const query = `
       SELECT id, status FROM ${schema}.campaign_lead_activities
       WHERE campaign_lead_id = $1 AND step_id = $2 AND tenant_id = $3 AND is_deleted = FALSE
@@ -136,7 +131,6 @@ class CampaignLeadActivityModel {
    */
   static async update(activityId, tenantId, updates, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema, update allowed fields
     const allowedFields = [
       'status', 'error_message', 'metadata', 'message_content', 'subject',
       'provider', 'provider_event_id', 'executed_at'
@@ -149,7 +143,6 @@ class CampaignLeadActivityModel {
     for (const [key, value] of Object.entries(updates)) {
       if (allowedFields.includes(key)) {
         setClause.push(`${key} = $${paramIndex++}`);
-        // JSONB fields need to be stringified
         values.push(key === 'metadata' ? JSON.stringify(value) : value);
       }
     }
@@ -160,7 +153,6 @@ class CampaignLeadActivityModel {
 
     setClause.push(`updated_at = CURRENT_TIMESTAMP`);
 
-    // Per TDD: Use lad_dev schema
     const query = `
       UPDATE ${schema}.campaign_lead_activities
       SET ${setClause.join(', ')}
@@ -173,13 +165,12 @@ class CampaignLeadActivityModel {
   }
 
   /**
-   * Get activities by campaign ID (for analytics)
+   * Get activities by campaign ID
    */
   static async getByCampaignId(campaignId, tenantId, filters = {}, req = null) {
     const schema = getSchema(req);
     const { status, stepType, limit = 1000, offset = 0 } = filters;
 
-    // Per TDD: Use lad_dev schema
     let query = `
       SELECT cla.* FROM ${schema}.campaign_lead_activities cla
       INNER JOIN ${schema}.campaign_leads cl ON cla.campaign_lead_id = cl.id
@@ -211,7 +202,6 @@ class CampaignLeadActivityModel {
    */
   static async getCampaignStats(campaignId, tenantId, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema
     const query = `
       SELECT
         COUNT(*) as total_activities,
@@ -236,7 +226,6 @@ class CampaignLeadActivityModel {
    */
   static async deleteByLeadId(campaignLeadId, tenantId, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema (soft delete)
     const query = `
       UPDATE ${schema}.campaign_lead_activities
       SET is_deleted = TRUE, updated_at = CURRENT_TIMESTAMP
@@ -249,4 +238,5 @@ class CampaignLeadActivityModel {
   }
 }
 
-module.exports = CampaignLeadActivityModel;
+module.exports = CampaignLeadActivityRepository;
+

@@ -1,17 +1,15 @@
 /**
  * Constants for Campaigns Feature
- * Centralized location for all magic strings and enums
+ * Centralized location for feature-level constants and configuration
+ * 
+ * NOTE: Model-specific constants (CAMPAIGN_STATUS, LEAD_STATUS, STEP_TYPE, ACTIVITY_STATUS, ACTION_TYPE)
+ * are now defined in their respective model files. Import them from:
+ * - CampaignModel.CAMPAIGN_STATUS
+ * - CampaignLeadModel.LEAD_STATUS
+ * - CampaignStepModel.STEP_TYPE
+ * - CampaignLeadActivityModel.ACTIVITY_STATUS
+ * - CampaignLeadActivityModel.ACTION_TYPE
  */
-
-// Campaign Status
-const CAMPAIGN_STATUS = {
-  DRAFT: 'draft',
-  ACTIVE: 'active',
-  RUNNING: 'running',
-  PAUSED: 'paused',
-  COMPLETED: 'completed',
-  ARCHIVED: 'archived'
-};
 
 // Campaign Types
 const CAMPAIGN_TYPE = {
@@ -22,15 +20,6 @@ const CAMPAIGN_TYPE = {
   MULTI_CHANNEL: 'multi-channel'
 };
 
-// Campaign Lead Status
-const LEAD_STATUS = {
-  PENDING: 'pending',
-  IN_PROGRESS: 'in_progress',
-  COMPLETED: 'completed',
-  FAILED: 'failed',
-  SKIPPED: 'skipped'
-};
-
 // Campaign Step Status
 const STEP_STATUS = {
   PENDING: 'pending',
@@ -38,18 +27,6 @@ const STEP_STATUS = {
   COMPLETED: 'completed',
   FAILED: 'failed',
   SKIPPED: 'skipped'
-};
-
-// Step Types
-const STEP_TYPE = {
-  EMAIL: 'email',
-  SMS: 'sms',
-  VOICE: 'voice',
-  LINKEDIN_CONNECTION: 'linkedin_connection',
-  LINKEDIN_MESSAGE: 'linkedin_message',
-  LINKEDIN_INMAIL: 'linkedin_inmail',
-  DELAY: 'delay',
-  CONDITION: 'condition'
 };
 
 // Activity Types
@@ -126,11 +103,9 @@ const API_CONFIG = {
 };
 
 module.exports = {
-  CAMPAIGN_STATUS,
+  // Feature-level constants (not model-specific)
   CAMPAIGN_TYPE,
-  LEAD_STATUS,
   STEP_STATUS,
-  STEP_TYPE,
   ACTIVITY_TYPE,
   CHECKPOINT_TYPE,
   LINKEDIN_ACCOUNT_STATUS,

@@ -5,8 +5,8 @@
  */
 
 const CampaignLeadModel = require('../models/CampaignLeadModel');
-const { getSchema } = require('../../../../core/utils/schemaHelper');
-const logger = require('../../../../core/utils/logger');
+const { getSchema } = require('../../../core/utils/schemaHelper');
+const logger = require('../../../core/utils/logger');
 
 class CampaignLeadsSummaryController {
   /**

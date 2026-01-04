@@ -1,7 +1,7 @@
 const unipileService = require('../services/unipileService');
-const { getSchema } = require('../../../../core/utils/schemaHelper');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const { pool } = require('../../../../shared/database/connection');
-const logger = require('../../../../core/utils/logger');
+const logger = require('../../../core/utils/logger');
 
 /**
  * LinkedIn Channel Dispatcher
@@ -116,7 +116,7 @@ class LinkedInDispatcher {
       let linkedinAccountId = null;
       try {
         const accountQuery = await pool.query(
-          `SELECT unipile_account_id FROM linkedin_integrations 
+          `SELECT unipile_account_id FROM ${schema}.linkedin_integrations 
            WHERE user_id = $1 AND is_active = TRUE 
            ORDER BY connected_at DESC NULLS LAST 
            LIMIT 1`,

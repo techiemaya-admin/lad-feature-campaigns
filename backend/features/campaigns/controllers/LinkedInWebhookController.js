@@ -4,7 +4,7 @@
  */
 
 const linkedInService = require('../services/LinkedInIntegrationService');
-const logger = require('../../../../core/utils/logger');
+const logger = require('../../../core/utils/logger');
 
 class LinkedInWebhookController {
   /**

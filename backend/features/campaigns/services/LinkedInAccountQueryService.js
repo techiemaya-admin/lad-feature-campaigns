@@ -4,8 +4,8 @@
  */
 
 const { pool } = require('../../../shared/database/connection');
-const { getSchema } = require('../../../../core/utils/schemaHelper');
-const logger = require('../../../../core/utils/logger');
+const { getSchema } = require('../../../core/utils/schemaHelper');
+const logger = require('../../../core/utils/logger');
 
 /**
  * Get all connected LinkedIn accounts for a user/tenant

@@ -1,8 +1,8 @@
 const { pool } = require('../../../shared/database/connection');
-const { getSchema } = require('../../../../core/utils/schemaHelper');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const stepExecutor = require('./stepExecutor');
 const conditionEvaluator = require('./conditionEvaluator');
-const logger = require('../../../../core/utils/logger');
+const logger = require('../../../core/utils/logger');
 
 /**
  * Main workflow execution engine

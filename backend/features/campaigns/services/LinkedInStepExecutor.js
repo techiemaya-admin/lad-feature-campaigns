@@ -12,7 +12,7 @@ const {
   sendConnectionRequestWithFallback
 } = require('./LinkedInAccountHelper');
 const { generateAndSaveProfileSummary } = require('./LinkedInProfileSummaryService');
-const logger = require('../../../../core/utils/logger');
+const logger = require('../../../core/utils/logger');
 
 /**
  * Execute LinkedIn step

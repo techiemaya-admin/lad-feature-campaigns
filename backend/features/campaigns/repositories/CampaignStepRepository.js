@@ -1,13 +1,13 @@
 /**
- * Campaign Step Model
- * Handles database operations for campaign steps (workflow builder)
+ * Campaign Step Repository
+ * SQL queries only - no business logic
  */
 
 const { getSchema } = require('../../../core/utils/schemaHelper');
-const { pool } = require('../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
 const logger = require('../../../core/utils/logger');
 
-class CampaignStepModel {
+class CampaignStepRepository {
   /**
    * Create a new campaign step
    */
@@ -22,7 +22,6 @@ class CampaignStepModel {
       config = {}
     } = stepData;
 
-    // Per TDD: Use lad_dev schema, step_type and step_order columns
     const query = `
       INSERT INTO ${schema}.campaign_steps (
         tenant_id, campaign_id, step_type, step_order, title, description, config, created_at, updated_at
@@ -50,8 +49,6 @@ class CampaignStepModel {
    */
   static async getStepsByCampaignId(campaignId, tenantId, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema and step_order column, alias for compatibility
-    // Try with step_type/step_order first, fallback to type/order if columns don't exist
     let query = `
       SELECT 
         id, tenant_id, campaign_id,
@@ -69,9 +66,8 @@ class CampaignStepModel {
       return result.rows;
     } catch (error) {
       const errorMsg = error.message?.toLowerCase() || '';
-      // If step_type or step_order columns don't exist, try with type and order
       if (errorMsg.includes('column "step_type"') || errorMsg.includes('column "step_order"')) {
-        logger.warn('[CampaignStepModel] step_type/step_order columns not found, trying type/order:', error.message);
+        logger.warn('[CampaignStepRepository] step_type/step_order columns not found, trying type/order:', error.message);
         query = `
           SELECT 
             id, tenant_id, campaign_id,
@@ -88,9 +84,8 @@ class CampaignStepModel {
           return result.rows;
         } catch (fallbackError) {
           const fallbackErrorMsg = fallbackError.message?.toLowerCase() || '';
-          // If is_deleted column also doesn't exist, try without it
           if (fallbackErrorMsg.includes('column "is_deleted"')) {
-            logger.warn('[CampaignStepModel] is_deleted column not found, trying without it:', fallbackError.message);
+            logger.warn('[CampaignStepRepository] is_deleted column not found, trying without it:', fallbackError.message);
             query = `
               SELECT 
                 id, tenant_id, campaign_id,
@@ -108,8 +103,7 @@ class CampaignStepModel {
           throw fallbackError;
         }
       } else if (errorMsg.includes('column "is_deleted"')) {
-        // If only is_deleted is missing, try without it but keep step_type/step_order
-        logger.warn('[CampaignStepModel] is_deleted column not found, trying without it:', error.message);
+        logger.warn('[CampaignStepRepository] is_deleted column not found, trying without it:', error.message);
         query = `
           SELECT 
             id, tenant_id, campaign_id,
@@ -126,9 +120,8 @@ class CampaignStepModel {
           return result.rows;
         } catch (fallbackError) {
           const fallbackErrorMsg = fallbackError.message?.toLowerCase() || '';
-          // If step_type/step_order also don't exist, try with type/order
           if (fallbackErrorMsg.includes('column "step_type"') || fallbackErrorMsg.includes('column "step_order"')) {
-            logger.warn('[CampaignStepModel] step_type/step_order also not found, trying type/order:', fallbackError.message);
+            logger.warn('[CampaignStepRepository] step_type/step_order also not found, trying type/order:', fallbackError.message);
             query = `
               SELECT 
                 id, tenant_id, campaign_id,
@@ -155,8 +148,6 @@ class CampaignStepModel {
    */
   static async getById(stepId, tenantId, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema, alias for compatibility
-    // Try with step_type/step_order first, fallback to type/order if columns don't exist
     let query = `
       SELECT 
         id, tenant_id, campaign_id,
@@ -173,9 +164,8 @@ class CampaignStepModel {
       return result.rows[0];
     } catch (error) {
       const errorMsg = error.message?.toLowerCase() || '';
-      // If step_type or step_order columns don't exist, try with type and order
       if (errorMsg.includes('column "step_type"') || errorMsg.includes('column "step_order"')) {
-        logger.warn('[CampaignStepModel] step_type/step_order columns not found, trying type/order:', error.message);
+        logger.warn('[CampaignStepRepository] step_type/step_order columns not found, trying type/order:', error.message);
         query = `
           SELECT 
             id, tenant_id, campaign_id,
@@ -191,9 +181,8 @@ class CampaignStepModel {
           return result.rows[0];
         } catch (fallbackError) {
           const fallbackErrorMsg = fallbackError.message?.toLowerCase() || '';
-          // If is_deleted column also doesn't exist, try without it
           if (fallbackErrorMsg.includes('column "is_deleted"')) {
-            logger.warn('[CampaignStepModel] is_deleted column not found, trying without it:', fallbackError.message);
+            logger.warn('[CampaignStepRepository] is_deleted column not found, trying without it:', fallbackError.message);
             query = `
               SELECT 
                 id, tenant_id, campaign_id,
@@ -210,8 +199,7 @@ class CampaignStepModel {
           throw fallbackError;
         }
       } else if (errorMsg.includes('column "is_deleted"')) {
-        // If only is_deleted is missing, try without it but keep step_type/step_order
-        logger.warn('[CampaignStepModel] is_deleted column not found, trying without it:', error.message);
+        logger.warn('[CampaignStepRepository] is_deleted column not found, trying without it:', error.message);
         query = `
           SELECT 
             id, tenant_id, campaign_id,
@@ -227,9 +215,8 @@ class CampaignStepModel {
           return result.rows[0];
         } catch (fallbackError) {
           const fallbackErrorMsg = fallbackError.message?.toLowerCase() || '';
-          // If step_type/step_order also don't exist, try with type/order
           if (fallbackErrorMsg.includes('column "step_type"') || fallbackErrorMsg.includes('column "step_order"')) {
-            logger.warn('[CampaignStepModel] step_type/step_order also not found, trying type/order:', fallbackError.message);
+            logger.warn('[CampaignStepRepository] step_type/step_order also not found, trying type/order:', fallbackError.message);
             query = `
               SELECT 
                 id, tenant_id, campaign_id,
@@ -255,7 +242,6 @@ class CampaignStepModel {
    */
   static async update(stepId, tenantId, updates, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Map JavaScript field names to database column names
     const fieldMapping = {
       'type': 'step_type',
       'order': 'step_order',
@@ -283,7 +269,6 @@ class CampaignStepModel {
 
     setClause.push(`updated_at = CURRENT_TIMESTAMP`);
 
-    // Per TDD: Use lad_dev schema
     const query = `
       UPDATE ${schema}.campaign_steps
       SET ${setClause.join(', ')}
@@ -300,7 +285,6 @@ class CampaignStepModel {
    */
   static async delete(stepId, tenantId, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema
     const query = `
       DELETE FROM ${schema}.campaign_steps
       WHERE id = $1 AND tenant_id = $2
@@ -316,7 +300,6 @@ class CampaignStepModel {
    */
   static async deleteByCampaignId(campaignId, tenantId, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema
     const query = `
       DELETE FROM ${schema}.campaign_steps
       WHERE campaign_id = $1 AND tenant_id = $2
@@ -328,7 +311,7 @@ class CampaignStepModel {
   }
 
   /**
-   * Bulk create steps (for workflow builder)
+   * Bulk create steps
    */
   static async bulkCreate(campaignId, tenantId, steps, req = null) {
     const schema = getSchema(req);
@@ -359,8 +342,6 @@ class CampaignStepModel {
 
     paramIndex += steps.length * 7;
 
-    // Per TDD: Use lad_dev schema, step_type and step_order columns
-    // Try with step_type and step_order first, fallback to type and order if columns don't exist
     const query = `
       INSERT INTO ${schema}.campaign_steps (
         tenant_id, campaign_id, step_type, step_order, title, description, config
@@ -375,11 +356,9 @@ class CampaignStepModel {
     } catch (error) {
       const errorMsg = error.message?.toLowerCase() || '';
       
-      // If step_type or step_order columns don't exist, try with type and order
       if (errorMsg.includes('column "step_type"') || errorMsg.includes('column "step_order"')) {
-        logger.warn('[CampaignStepModel] step_type/step_order columns not found, trying type/order:', error.message);
+        logger.warn('[CampaignStepRepository] step_type/step_order columns not found, trying type/order:', error.message);
         
-        // Rebuild placeholders and values for type/order columns
         const fallbackValues = [];
         const fallbackPlaceholders = [];
         let fallbackParamIndex = 1;
@@ -413,9 +392,8 @@ class CampaignStepModel {
           const result = await pool.query(fallbackQuery, fallbackValues);
           return result.rows;
         } catch (fallbackError) {
-          // If config column also doesn't exist, try without it
           if (fallbackError.message && (fallbackError.message.includes('column "config"') || fallbackError.message.includes('jsonb'))) {
-            logger.warn('[CampaignStepModel] Config column also not found, trying without config:', fallbackError.message);
+            logger.warn('[CampaignStepRepository] Config column also not found, trying without config:', fallbackError.message);
             
             const simpleValues = [];
             const simplePlaceholders = [];
@@ -457,4 +435,5 @@ class CampaignStepModel {
   }
 }
 
-module.exports = CampaignStepModel;
+module.exports = CampaignStepRepository;
+

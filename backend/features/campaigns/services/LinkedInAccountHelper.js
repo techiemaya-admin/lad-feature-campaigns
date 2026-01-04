@@ -4,9 +4,9 @@
  */
 
 const { pool } = require('../../../shared/database/connection');
-const { getSchema } = require('../../../../core/utils/schemaHelper');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const unipileService = require('./unipileService');
-const logger = require('../../../../core/utils/logger');
+const logger = require('../../../core/utils/logger');
 
 /**
  * Get all available LinkedIn accounts for a tenant/user (for account fallback)

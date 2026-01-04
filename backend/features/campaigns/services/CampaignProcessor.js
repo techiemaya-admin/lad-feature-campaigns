@@ -5,7 +5,7 @@
  */
 
 const { pool } = require('../../../shared/database/connection');
-const { getSchema } = require('../../../../core/utils/schemaHelper');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const { validateStepConfig } = require('./StepValidators');
 const { createActivity, updateActivityStatus } = require('./CampaignActivityService');
 const { executeLeadGeneration } = require('./LeadGenerationService');
@@ -20,7 +20,7 @@ const {
 } = require('./StepExecutors');
 const { processLeadThroughWorkflow } = require('./WorkflowProcessor');
 const CampaignModel = require('../models/CampaignModel');
-const logger = require('../../../../core/utils/logger');
+const logger = require('../../../core/utils/logger');
 
 /**
  * Execute a campaign step for a specific lead

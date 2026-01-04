@@ -5,8 +5,8 @@
  */
 
 const linkedInService = require('../services/LinkedInIntegrationService');
-const { getSchema } = require('../../../../core/utils/schemaHelper');
-const logger = require('../../../../core/utils/logger');
+const { getSchema } = require('../../../core/utils/schemaHelper');
+const logger = require('../../../core/utils/logger');
 
 class LinkedInCheckpointController {
   /**

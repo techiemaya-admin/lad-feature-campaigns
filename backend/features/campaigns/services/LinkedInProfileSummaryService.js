@@ -4,7 +4,7 @@
  */
 
 const { pool } = require('../../../shared/database/connection');
-const logger = require('../../../../core/utils/logger');
+const logger = require('../../../core/utils/logger');
 
 /**
  * Generate and save profile summary for a LinkedIn visit
@@ -80,7 +80,7 @@ Generate a concise, professional summary highlighting their role, expertise, and
         
         // Update campaign_leads with summary
         await pool.query(
-          `UPDATE campaign_leads 
+          `UPDATE ${schema}.campaign_leads 
            SET lead_data = $1, updated_at = CURRENT_TIMESTAMP 
            WHERE id = $2`,
           [JSON.stringify(currentLeadData), campaignLeadId]

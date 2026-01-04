@@ -1,13 +1,13 @@
 /**
- * Campaign Lead Model
- * Handles database operations for campaign leads
+ * Campaign Lead Repository
+ * SQL queries only - no business logic
  */
 
-const { pool } = require('../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const { randomUUID } = require('crypto');
 
-class CampaignLeadModel {
+class CampaignLeadRepository {
   /**
    * Create a new campaign lead
    */
@@ -28,7 +28,6 @@ class CampaignLeadModel {
 
     const schema = getSchema(req);
     
-    // Per TDD: Use dynamic schema with snapshot JSONB (not individual columns)
     const snapshot = {
       first_name: firstName,
       last_name: lastName,
@@ -66,7 +65,6 @@ class CampaignLeadModel {
    */
   static async getById(leadId, tenantId, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema
     const query = `
       SELECT * FROM ${schema}.campaign_leads
       WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
@@ -83,7 +81,6 @@ class CampaignLeadModel {
     const schema = getSchema(req);
     const { status, limit = 100, offset = 0 } = filters;
 
-    // Per TDD: Use lad_dev schema
     let query = `
       SELECT * FROM ${schema}.campaign_leads
       WHERE campaign_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
@@ -109,7 +106,6 @@ class CampaignLeadModel {
    */
   static async existsByApolloId(campaignId, tenantId, apolloPersonId, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema
     const query = `
       SELECT id FROM ${schema}.campaign_leads
       WHERE campaign_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
@@ -125,7 +121,6 @@ class CampaignLeadModel {
    */
   static async update(leadId, tenantId, updates, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema, update snapshot JSONB or other direct columns
     const allowedFields = [
       'snapshot', 'lead_data', 'status',
       'current_step_order', 'started_at', 'completed_at', 'error_message'
@@ -138,7 +133,6 @@ class CampaignLeadModel {
     for (const [key, value] of Object.entries(updates)) {
       if (allowedFields.includes(key)) {
         setClause.push(`${key} = $${paramIndex++}`);
-        // JSONB fields need to be stringified
         values.push((key === 'snapshot' || key === 'lead_data') ? JSON.stringify(value) : value);
       }
     }
@@ -149,7 +143,6 @@ class CampaignLeadModel {
 
     setClause.push(`updated_at = CURRENT_TIMESTAMP`);
 
-    // Per TDD: Use lad_dev schema
     const query = `
       UPDATE ${schema}.campaign_leads
       SET ${setClause.join(', ')}
@@ -166,7 +159,6 @@ class CampaignLeadModel {
    */
   static async delete(leadId, tenantId, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema (soft delete)
     const query = `
       UPDATE ${schema}.campaign_leads
       SET is_deleted = TRUE, updated_at = CURRENT_TIMESTAMP
@@ -183,7 +175,6 @@ class CampaignLeadModel {
    */
   static async getActiveLeadsForCampaign(campaignId, tenantId, limit = 10, req = null) {
     const schema = getSchema(req);
-    // Per TDD: Use lad_dev schema
     const query = `
       SELECT * FROM ${schema}.campaign_leads
       WHERE campaign_id = $1 AND tenant_id = $2 AND status = 'active' AND is_deleted = FALSE
@@ -196,10 +187,9 @@ class CampaignLeadModel {
   }
 
   /**
-   * Get lead data (handles both lead_data and custom_fields columns)
+   * Get lead data
    */
   static async getLeadData(leadId, campaignId, tenantId, schema) {
-    // LAD Architecture: SQL in model layer, not controller
     const query = `
       SELECT lead_data FROM ${schema}.campaign_leads
       WHERE id = $1 AND campaign_id = $2 AND tenant_id = $3 AND is_deleted = FALSE
@@ -218,7 +208,6 @@ class CampaignLeadModel {
    * Get lead by ID with campaign ID
    */
   static async getLeadById(leadId, campaignId, tenantId, schema) {
-    // LAD Architecture: SQL in model layer, not controller
     const query = `
       SELECT cl.*, cl.lead_data as lead_data_full
       FROM ${schema}.campaign_leads cl
@@ -238,8 +227,6 @@ class CampaignLeadModel {
    * Update lead_data JSONB field
    */
   static async updateLeadData(leadId, campaignId, tenantId, schema, updates) {
-    // LAD Architecture: SQL in model layer, not controller
-    // Get current lead_data
     const selectResult = await pool.query(
       `SELECT lead_data FROM ${schema}.campaign_leads 
        WHERE id = $1 AND campaign_id = $2 AND tenant_id = $3 AND is_deleted = FALSE`,
@@ -257,10 +244,8 @@ class CampaignLeadModel {
         : selectResult.rows[0].lead_data;
     }
 
-    // Merge updates
     const updatedLeadData = { ...currentLeadData, ...updates };
 
-    // Update
     await pool.query(
       `UPDATE ${schema}.campaign_leads 
        SET lead_data = $1, updated_at = CURRENT_TIMESTAMP 
@@ -290,7 +275,6 @@ class CampaignLeadModel {
         `($${paramIndex + offset}, $${paramIndex + offset + 1}, $${paramIndex + offset + 2}, $${paramIndex + offset + 3}, $${paramIndex + offset + 4}, $${paramIndex + offset + 5})`
       );
 
-      // Per TDD: Build snapshot JSONB from individual fields
       const snapshot = {
         first_name: lead.firstName,
         last_name: lead.lastName,
@@ -313,7 +297,6 @@ class CampaignLeadModel {
 
     paramIndex += leads.length * 6;
 
-    // Per TDD: Use lad_dev schema with snapshot JSONB
     const query = `
       INSERT INTO ${schema}.campaign_leads (
         tenant_id, campaign_id, lead_id, snapshot, lead_data, status
@@ -327,4 +310,5 @@ class CampaignLeadModel {
   }
 }
 
-module.exports = CampaignLeadModel;
+module.exports = CampaignLeadRepository;
+

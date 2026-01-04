@@ -4,7 +4,7 @@
  */
 
 const { pool } = require('../../../shared/database/connection');
-const { getSchema } = require('../../../../core/utils/schemaHelper');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const { searchEmployees, searchEmployeesFromDatabase } = require('./LeadSearchService');
 const {
   updateCampaignConfig,
@@ -13,7 +13,7 @@ const {
 const { saveLeadsToCampaign } = require('./LeadSaveService');
 const { createLeadGenerationActivity } = require('./CampaignActivityService');
 const CampaignModel = require('../models/CampaignModel');
-const logger = require('../../../../core/utils/logger');
+const logger = require('../../../core/utils/logger');
 
 /**
  * Execute lead generation step with daily limit support

@@ -4,11 +4,11 @@
  */
 
 const { pool } = require('../../../shared/database/connection');
-const { getSchema } = require('../../../../core/utils/schemaHelper');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const UnipileBaseService = require('./UnipileBaseService');
 const axios = require('axios');
 const { getUserLinkedInAccounts, findAccountByUnipileId } = require('./LinkedInAccountQueryService');
-const logger = require('../../../../core/utils/logger');
+const logger = require('../../../core/utils/logger');
 
 class LinkedInAccountService {
   constructor() {

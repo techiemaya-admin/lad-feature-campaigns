@@ -10,7 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const glob = require('glob');
-const logger = require('../../../../core/utils/logger');
+const logger = require('../../core/utils/logger');
 
 // Files to process
 const serviceFiles = [
@@ -56,12 +56,12 @@ function addLoggerImport(filePath) {
     const insertIndex = lastRequireIndex + lastRequire.length;
     
     // Add logger import after last require
-    const loggerImport = "\nconst logger = require('../../../../core/utils/logger');";
+    const loggerImport = "\nconst logger = require('../../../core/utils/logger');";
     return content.slice(0, insertIndex) + loggerImport + content.slice(insertIndex);
   } else {
     // Add at the top after comments
     const commentEnd = content.indexOf('*/') + 2;
-    const loggerImport = "\nconst logger = require('../../../../core/utils/logger');\n";
+    const loggerImport = "\nconst logger = require('../../../core/utils/logger');\n";
     return content.slice(0, commentEnd) + loggerImport + content.slice(commentEnd);
   }
 }

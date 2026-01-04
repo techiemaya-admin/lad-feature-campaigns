@@ -1,14 +1,13 @@
 /**
- * Campaign Model
- * Handles database operations for campaigns
+ * Campaign Repository
+ * SQL queries only - no business logic
  */
 
-// Use helper to resolve database connection path for both local and production
-const { pool } = require('../../../shared/database/connection');
+const { pool } = require('../utils/dbConnection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const logger = require('../../../core/utils/logger');
 
-class CampaignModel {
+class CampaignRepository {
   /**
    * Create a new campaign
    */
@@ -43,9 +42,8 @@ class CampaignModel {
     } catch (error) {
       const errorMsg = error.message?.toLowerCase() || '';
       
-      // If created_by_user_id column doesn't exist, try created_by
       if (errorMsg.includes('created_by_user_id') && errorMsg.includes('does not exist')) {
-        logger.warn('[CampaignModel] created_by_user_id column not found, trying created_by:', error.message);
+        logger.warn('[CampaignRepository] created_by_user_id column not found, trying created_by:', error.message);
         try {
           const fallbackQuery = `
             INSERT INTO ${schema}.campaigns (
@@ -57,9 +55,8 @@ class CampaignModel {
           const result = await pool.query(fallbackQuery, values);
           return result.rows[0];
         } catch (fallbackError) {
-          // If config column also doesn't exist, try without config
           if (fallbackError.message && (fallbackError.message.includes('column "config"') || fallbackError.message.includes('jsonb'))) {
-            logger.warn('[CampaignModel] Config column also not found, trying without config:', fallbackError.message);
+            logger.warn('[CampaignRepository] Config column also not found, trying without config:', fallbackError.message);
             const simpleQuery = `
               INSERT INTO ${schema}.campaigns (
                 tenant_id, name, status, created_by, created_at, updated_at
@@ -75,9 +72,8 @@ class CampaignModel {
         }
       }
       
-      // If config column doesn't exist or there's a JSONB casting issue, try without config
       if (errorMsg.includes('column "config"') || errorMsg.includes('jsonb')) {
-        logger.warn('[CampaignModel] Config column issue, trying insert without config:', error.message);
+        logger.warn('[CampaignRepository] Config column issue, trying insert without config:', error.message);
         const fallbackQuery = `
           INSERT INTO ${schema}.campaigns (
             tenant_id, name, status, created_by_user_id, created_at, updated_at
@@ -90,7 +86,6 @@ class CampaignModel {
           const result = await pool.query(fallbackQuery, fallbackValues);
           return result.rows[0];
         } catch (fallbackError2) {
-          // Try with created_by instead
           if (fallbackError2.message && fallbackError2.message.includes('created_by_user_id')) {
             const simpleQuery = `
               INSERT INTO ${schema}.campaigns (
@@ -166,10 +161,9 @@ class CampaignModel {
       const result = await pool.query(query, params);
       return result.rows;
     } catch (error) {
-      // If activities table doesn't exist, fallback to simpler query
       const errorMsg = error.message?.toLowerCase() || '';
       if (errorMsg.includes('campaign_lead_activities') || errorMsg.includes('does not exist') || errorMsg.includes('relation') || errorMsg.includes('undefined table')) {
-        logger.warn('[CampaignModel] Activities table not available, using simplified query:', error.message);
+        logger.warn('[CampaignRepository] Activities table not available, using simplified query:', error.message);
         let fallbackQuery = `
           SELECT 
             c.*,
@@ -205,12 +199,9 @@ class CampaignModel {
           const result = await pool.query(fallbackQuery, fallbackParams);
           return result.rows;
         } catch (fallbackError) {
-          // If cl.is_deleted doesn't exist, try without it (already removed above)
-          // If there's still an error, it might be another column issue
           const fallbackErrorMsg = fallbackError.message?.toLowerCase() || '';
           if (fallbackErrorMsg.includes('is_deleted') || fallbackErrorMsg.includes('column') && fallbackErrorMsg.includes('does not exist')) {
-            logger.warn('[CampaignModel] Column issue in fallback query, trying without is_deleted:', fallbackError.message);
-            // The query already doesn't have cl.is_deleted, so if it still fails, return empty or try even simpler
+            logger.warn('[CampaignRepository] Column issue in fallback query, trying without is_deleted:', fallbackError.message);
             let simpleQuery = `
               SELECT 
                 c.*,
@@ -266,7 +257,6 @@ class CampaignModel {
           setClause.push(`${key} = $${paramIndex++}::jsonb`);
           values.push(JSON.stringify(value));
         } else if (key === 'last_lead_check_at' || key === 'next_run_at') {
-          // Handle timestamp fields
           if (value === null) {
             setClause.push(`${key} = NULL`);
           } else {
@@ -299,7 +289,6 @@ class CampaignModel {
 
   /**
    * Update campaign execution state (internal use, no tenant check)
-   * Used by scheduled processor to update execution state
    */
   static async updateExecutionState(campaignId, executionState, options = {}, req = null) {
     const schema = getSchema(req);
@@ -336,7 +325,6 @@ class CampaignModel {
 
     setClause.push(`updated_at = CURRENT_TIMESTAMP`);
 
-    // No tenant check - this is for internal processor use
     const query = `
       UPDATE ${schema}.campaigns
       SET ${setClause.join(', ')}
@@ -348,10 +336,9 @@ class CampaignModel {
       const result = await pool.query(query, values);
       return result.rows[0];
     } catch (error) {
-      // If columns don't exist, try without them (graceful degradation)
       const errorMsg = error.message?.toLowerCase() || '';
       if (errorMsg.includes('execution_state') || errorMsg.includes('does not exist')) {
-        logger.warn('[CampaignModel] Execution state columns not found, skipping update:', error.message);
+        logger.warn('[CampaignRepository] Execution state columns not found, skipping update:', error.message);
         return null;
       }
       throw error;
@@ -398,10 +385,9 @@ class CampaignModel {
       const result = await pool.query(query, [tenantId]);
       return result.rows[0];
     } catch (error) {
-      // If activities table doesn't exist, fallback to simpler query
       const errorMsg = error.message?.toLowerCase() || '';
       if (errorMsg.includes('campaign_lead_activities') || errorMsg.includes('does not exist') || errorMsg.includes('relation') || errorMsg.includes('undefined table')) {
-        logger.warn('[CampaignModel] Activities table not available for stats, using simplified query:', error.message);
+        logger.warn('[CampaignRepository] Activities table not available for stats, using simplified query:', error.message);
         const fallbackQuery = `
           SELECT
             COUNT(DISTINCT c.id) as total_campaigns,
@@ -438,4 +424,5 @@ class CampaignModel {
   }
 }
 
-module.exports = CampaignModel;
+module.exports = CampaignRepository;
+
