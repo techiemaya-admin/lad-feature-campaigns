@@ -8,6 +8,8 @@ on:
 jobs:
   sync-backend:
     runs-on: ubuntu-latest
+    # Only run on main branch
+    if: github.ref == 'refs/heads/main'
     steps:
       - name: Checkout feature repo
         uses: actions/checkout@v3
@@ -135,6 +137,8 @@ Workflow: ${{ github.workflow }}
 
   sync-frontend:
     runs-on: ubuntu-latest
+    # Only run on main branch
+    if: github.ref == 'refs/heads/main'
     steps:
       - name: Checkout feature repo
         uses: actions/checkout@v3
