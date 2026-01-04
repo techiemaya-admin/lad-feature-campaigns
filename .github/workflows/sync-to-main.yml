@@ -107,13 +107,11 @@ jobs:
           git diff --staged --stat
           
           # Commit
-          git commit -m "feat(campaigns): auto-sync from feature repo
-
-Synced from: ${{ github.repository }}@${{ github.sha }}
-Triggered by: ${{ github.actor }}
-Timestamp: $(date -u +%Y-%m-%d\ %H:%M:%S\ UTC)
-Workflow: ${{ github.workflow }}
-"
+          git commit -m "feat(campaigns): auto-sync from feature repo" \
+            -m "Synced from: ${{ github.repository }}@${{ github.sha }}" \
+            -m "Triggered by: ${{ github.actor }}" \
+            -m "Timestamp: $(date -u +%Y-%m-%d\ %H:%M:%S\ UTC)" \
+            -m "Workflow: ${{ github.workflow }}"
           
           # Push with retry logic
           echo "📤 Pushing to LAD-Backend..."
@@ -257,13 +255,11 @@ Workflow: ${{ github.workflow }}
           git diff --staged --stat
           
           # Commit
-          git commit -m "feat(campaigns): auto-sync SDK from feature repo
-
-Synced from: ${{ github.repository }}@${{ github.sha }}
-Triggered by: ${{ github.actor }}
-Timestamp: $(date -u +%Y-%m-%d\ %H:%M:%S\ UTC)
-Workflow: ${{ github.workflow }}
-"
+          git commit -m "feat(campaigns): auto-sync SDK from feature repo" \
+            -m "Synced from: ${{ github.repository }}@${{ github.sha }}" \
+            -m "Triggered by: ${{ github.actor }}" \
+            -m "Timestamp: $(date -u +%Y-%m-%d\ %H:%M:%S\ UTC)" \
+            -m "Workflow: ${{ github.workflow }}"
           
           # Push with retry
           echo "📤 Pushing to LAD-Frontend..."
