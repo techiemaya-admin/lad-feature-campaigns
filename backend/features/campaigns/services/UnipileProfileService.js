@@ -303,7 +303,6 @@ class UnipileProfileService {
             };
         }
     }
-}
 
 module.exports = UnipileProfileService;
 
