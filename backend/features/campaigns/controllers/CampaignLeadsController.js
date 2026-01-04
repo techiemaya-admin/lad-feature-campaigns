@@ -194,7 +194,7 @@ class CampaignLeadsController {
       });
     }
   }
-
+}
 
 module.exports = CampaignLeadsController;
 

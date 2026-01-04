@@ -35,7 +35,8 @@ class LinkedInAccountService {
       }
       
       const account = accountResult.account;
-      const schema = accountResult.schema;
+      // Use schema from accountResult if available, otherwise use the one we calculated
+      const finalSchema = accountResult.schema || schema;
       
       // Try to delete from Unipile using SDK (don't fail if it errors)
       if (this.baseService.isConfigured()) {
@@ -78,10 +79,9 @@ class LinkedInAccountService {
       }
 
       // Mark as inactive/disconnected in database
-      const resolvedSchema = accountResult.schema === 'tdd' ? schema : null;
       if (accountResult.schema === 'tdd') {
         await pool.query(
-          `UPDATE ${resolvedSchema}.linkedin_accounts
+          `UPDATE ${finalSchema}.linkedin_accounts
            SET is_active = FALSE,
                updated_at = CURRENT_TIMESTAMP
            WHERE id = $1`,
@@ -90,7 +90,7 @@ class LinkedInAccountService {
         logger.info('[LinkedIn Account] Account disconnected (TDD schema)', { accountId: unipileAccountId });
       } else {
         await pool.query(
-          `UPDATE ${schema}.user_integrations_voiceagent
+          `UPDATE ${finalSchema}.user_integrations_voiceagent
            SET is_connected = FALSE,
            updated_at = CURRENT_TIMESTAMP
            WHERE id = $1`,
