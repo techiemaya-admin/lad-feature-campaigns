@@ -24,38 +24,122 @@ jobs:
 
       - name: Copy backend files
         run: |
-          # Ensure parent directory exists
+          echo "📦 Starting backend file sync..."
+          
+          # Verify source exists
+          if [ ! -d "backend/features/campaigns" ]; then
+            echo "❌ Source directory not found: backend/features/campaigns"
+            exit 1
+          fi
+          
+          # Ensure destination exists
           mkdir -p lad-backend/features/campaigns
           
-          # Use rsync to sync files (preserves existing files and updates/adds new ones)
-          rsync -av --delete backend/features/campaigns/ lad-backend/features/campaigns/
+          # Sync files WITHOUT delete (safer - only adds/updates)
+          if ! rsync -av \
+            --exclude='.env*' \
+            --exclude='*.local.js' \
+            --exclude='node_modules/' \
+            --exclude='.DS_Store' \
+            backend/features/campaigns/ lad-backend/features/campaigns/; then
+            echo "❌ rsync failed!"
+            exit 1
+          fi
           
-          # Verify critical files exist
-          echo "✅ Verifying copied files..."
-          ls -la lad-backend/features/campaigns/
-          [ -f "lad-backend/features/campaigns/manifest.js" ] && echo "✅ manifest.js exists" || echo "❌ manifest.js missing"
-          [ -f "lad-backend/features/campaigns/routes.js" ] && echo "✅ routes.js exists" || echo "❌ routes.js missing"
-          [ -f "lad-backend/features/campaigns/routes/index.js" ] && echo "✅ routes/index.js exists" || echo "❌ routes/index.js missing"
+          echo "✅ Files synced successfully"
+
+      - name: Verify critical files
+        run: |
+          echo "🔍 Verifying critical files..."
+          MISSING=0
+          
+          # Check for essential files
+          CRITICAL_FILES=(
+            "lad-backend/features/campaigns/manifest.js"
+            "lad-backend/features/campaigns/index.js"
+            "lad-backend/features/campaigns/routes/index.js"
+            "lad-backend/features/campaigns/constants.js"
+          )
+          
+          for file in "${CRITICAL_FILES[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "❌ CRITICAL: $file is missing!"
+              MISSING=1
+            else
+              echo "✅ $file exists"
+            fi
+          done
+          
+          if [ $MISSING -eq 1 ]; then
+            echo "❌ Sync validation failed - critical files missing"
+            exit 1
+          fi
+          
+          echo "✅ All critical files verified"
 
       - name: Commit and push to LAD-Backend
         working-directory: lad-backend
         run: |
-          git config user.name "GitHub Actions"
+          git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
+          
+          # Pull latest changes to avoid conflicts
+          echo "📥 Pulling latest changes..."
+          git pull origin develop --rebase || {
+            echo "⚠️ Rebase conflict detected"
+            git rebase --abort
+            exit 1
+          }
+          
+          # Stage changes
           git add features/campaigns/
+          
+          # Check if there are changes
+          if git diff --staged --quiet; then
+            echo "ℹ️ No changes to commit"
+            exit 0
+          fi
+          
+          # Show what changed
+          echo "📝 Changes to be committed:"
+          git diff --staged --stat
+          
+          # Commit
           git commit -m "feat(campaigns): auto-sync from feature repo
 
-          Synced from: ${{ github.sha }}
-          Repository: lad-feature-campaigns
-          Timestamp: $(date -u)
-          " || echo "No changes to commit"
-          git push origin develop
+Synced from: ${{ github.repository }}@${{ github.sha }}
+Triggered by: ${{ github.actor }}
+Timestamp: $(date -u +%Y-%m-%d\ %H:%M:%S\ UTC)
+Workflow: ${{ github.workflow }}
+"
+          
+          # Push with retry logic
+          echo "📤 Pushing to LAD-Backend..."
+          for attempt in {1..3}; do
+            if git push origin develop; then
+              echo "✅ Push successful on attempt $attempt"
+              exit 0
+            fi
+            
+            echo "⚠️ Push failed, retrying ($attempt/3)..."
+            sleep 2
+            git pull origin develop --rebase || {
+              echo "❌ Rebase failed on retry"
+              git rebase --abort
+              exit 1
+            }
+          done
+          
+          echo "❌ Failed to push after 3 attempts"
+          exit 1
 
   sync-frontend:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout feature repo
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
       - name: Checkout LAD-Frontend
         uses: actions/checkout@v3
@@ -67,31 +151,154 @@ jobs:
 
       - name: Copy frontend SDK files
         run: |
+          echo "📦 Starting frontend SDK sync..."
+          
+          # Check if SDK directory exists
+          if [ ! -d "frontend/sdk/features/campaigns" ]; then
+            echo "⚠️ No frontend SDK directory found, skipping"
+            echo "HAS_SDK=false" >> $GITHUB_ENV
+            exit 0
+          fi
+          
+          echo "HAS_SDK=true" >> $GITHUB_ENV
+          
           # Ensure directory exists
           mkdir -p lad-frontend/sdk/features/campaigns
 
-          # Use rsync to sync SDK files from frontend/sdk/features/campaigns
-          [ -d "frontend/sdk/features/campaigns" ] && rsync -av --delete frontend/sdk/features/campaigns/ lad-frontend/sdk/features/campaigns/ || echo "No frontend SDK"
-
-          # Copy components if exist
-          if [ -d "frontend/components" ] && [ "$(ls -A frontend/components)" ]; then
-            mkdir -p lad-frontend/web/src/features/campaigns
-            rsync -av --delete frontend/components/ lad-frontend/web/src/features/campaigns/
+          # Sync SDK files WITHOUT delete
+          if ! rsync -av \
+            --exclude='node_modules/' \
+            --exclude='.DS_Store' \
+            --exclude='*.test.ts' \
+            --exclude='*.test.tsx' \
+            frontend/sdk/features/campaigns/ lad-frontend/sdk/features/campaigns/; then
+            echo "❌ SDK sync failed!"
+            exit 1
           fi
+
+          # Copy components if they exist
+          if [ -d "frontend/components" ] && [ "$(ls -A frontend/components 2>/dev/null)" ]; then
+            echo "📦 Syncing components..."
+            mkdir -p lad-frontend/web/src/features/campaigns
+            rsync -av \
+              --exclude='node_modules/' \
+              --exclude='.DS_Store' \
+              frontend/components/ lad-frontend/web/src/features/campaigns/
+            echo "HAS_COMPONENTS=true" >> $GITHUB_ENV
+          else
+            echo "ℹ️ No components to sync"
+            echo "HAS_COMPONENTS=false" >> $GITHUB_ENV
+          fi
+          
+          echo "✅ Frontend files synced successfully"
+
+      - name: Verify frontend files
+        if: env.HAS_SDK == 'true'
+        run: |
+          echo "🔍 Verifying frontend SDK files..."
+          
+          # Check for essential SDK files
+          CRITICAL_FILES=(
+            "lad-frontend/sdk/features/campaigns/index.ts"
+            "lad-frontend/sdk/features/campaigns/api.ts"
+            "lad-frontend/sdk/features/campaigns/types.ts"
+          )
+          
+          MISSING=0
+          for file in "${CRITICAL_FILES[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "❌ CRITICAL: $file is missing!"
+              MISSING=1
+            else
+              echo "✅ $file exists"
+            fi
+          done
+          
+          if [ $MISSING -eq 1 ]; then
+            echo "❌ Frontend sync validation failed"
+            exit 1
+          fi
+          
+          echo "✅ Frontend SDK verified"
 
       - name: Commit and push to LAD-Frontend
+        if: env.HAS_SDK == 'true'
         working-directory: lad-frontend
         run: |
-          git config user.name "GitHub Actions"
+          git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
+          
+          # Pull latest
+          echo "📥 Pulling latest changes..."
+          git pull origin develop --rebase || {
+            echo "⚠️ Rebase conflict detected"
+            git rebase --abort
+            exit 1
+          }
+          
+          # Stage all changes
           git add sdk/features/campaigns/
-          if [ -d "web/src/features/campaigns" ]; then
+          if [ "${{ env.HAS_COMPONENTS }}" = "true" ]; then
             git add web/src/features/campaigns/
           fi
+          
+          # Check for changes
+          if git diff --staged --quiet; then
+            echo "ℹ️ No changes to commit"
+            exit 0
+          fi
+          
+          # Show changes
+          echo "📝 Changes to be committed:"
+          git diff --staged --stat
+          
+          # Commit
           git commit -m "feat(campaigns): auto-sync SDK from feature repo
 
-          Synced from: ${{ github.sha }}
-          Repository: lad-feature-campaigns
-          Timestamp: $(date -u)
-          " || echo "No changes to commit"
-          git push origin develop
+Synced from: ${{ github.repository }}@${{ github.sha }}
+Triggered by: ${{ github.actor }}
+Timestamp: $(date -u +%Y-%m-%d\ %H:%M:%S\ UTC)
+Workflow: ${{ github.workflow }}
+"
+          
+          # Push with retry
+          echo "📤 Pushing to LAD-Frontend..."
+          for attempt in {1..3}; do
+            if git push origin develop; then
+              echo "✅ Push successful on attempt $attempt"
+              exit 0
+            fi
+            
+            echo "⚠️ Push failed, retrying ($attempt/3)..."
+            sleep 2
+            git pull origin develop --rebase || {
+              echo "❌ Rebase failed on retry"
+              git rebase --abort
+              exit 1
+            }
+          done
+          
+          echo "❌ Failed to push after 3 attempts"
+          exit 1
+
+  notify-success:
+    needs: [sync-backend, sync-frontend]
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Success notification
+        run: |
+          echo "✅ Successfully synced campaigns feature to LAD repositories"
+          echo "Backend: ✅"
+          echo "Frontend: ✅"
+
+  notify-failure:
+    needs: [sync-backend, sync-frontend]
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+      - name: Failure notification
+        run: |
+          echo "❌ Sync to LAD repositories failed"
+          echo "Check workflow logs for details"
+          exit 1
