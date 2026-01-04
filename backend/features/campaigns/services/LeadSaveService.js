@@ -3,7 +3,7 @@
  * Handles saving leads to database (leads and campaign_leads tables)
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../../../shared/database/connection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const {
   checkLeadExists,

@@ -3,7 +3,6 @@
  * Handles campaign lifecycle actions (start, pause, stop)
  */
 
-const CampaignRepository = require('../repositories/CampaignRepository');
 const CampaignModel = require('../models/CampaignModel');
 const CampaignExecutionService = require('../services/CampaignExecutionService');
 const logger = require('../../../core/utils/logger');
@@ -24,11 +23,10 @@ class CampaignActionsController {
 
       // Update campaign status to running and reset execution_state to active
       // This ensures immediate lead generation when campaign is started
-      const dbCampaign = await CampaignRepository.update(id, tenantId, { 
+      const campaign = await CampaignModel.update(id, tenantId, { 
         status: 'running',
         execution_state: 'active' // Reset to active when manually started
-      }, req);
-      const campaign = CampaignModel.mapCampaignFromDB(dbCampaign);
+      });
 
       if (!campaign) {
         return res.status(404).json({
@@ -39,10 +37,10 @@ class CampaignActionsController {
 
       // Also clear next_run_at and last_execution_reason when manually starting
       try {
-        await CampaignRepository.updateExecutionState(id, 'active', {
+        await CampaignModel.updateExecutionState(id, 'active', {
           nextRunAt: null,
           lastExecutionReason: 'Campaign manually started by user'
-        }, req);
+        });
       } catch (stateError) {
         // If execution_state columns don't exist, continue anyway
         logger.warn('[Campaign Actions] Could not update execution state', { error: stateError.message });
@@ -105,8 +103,7 @@ class CampaignActionsController {
       const tenantId = req.user.tenantId;
       const { id } = req.params;
 
-      const dbCampaign = await CampaignRepository.update(id, tenantId, { status: 'paused' }, req);
-      const campaign = CampaignModel.mapCampaignFromDB(dbCampaign);
+      const campaign = await CampaignModel.update(id, tenantId, { status: 'paused' });
 
       if (!campaign) {
         return res.status(404).json({
@@ -139,8 +136,7 @@ class CampaignActionsController {
       const tenantId = req.user.tenantId;
       const { id } = req.params;
 
-      const dbCampaign = await CampaignRepository.update(id, tenantId, { status: 'stopped' }, req);
-      const campaign = CampaignModel.mapCampaignFromDB(dbCampaign);
+      const campaign = await CampaignModel.update(id, tenantId, { status: 'stopped' });
 
       if (!campaign) {
         return res.status(404).json({

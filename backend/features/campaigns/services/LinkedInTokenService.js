@@ -3,7 +3,7 @@
  * Handles token refresh and management
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../../../shared/database/connection');
 const UnipileBaseService = require('./UnipileBaseService');
 const axios = require('axios');
 const logger = require('../../../core/utils/logger');
@@ -62,7 +62,7 @@ class LinkedInTokenService {
       // Update credentials in database
       const integrationQuery = await pool.query(
         `SELECT id, credentials
-         FROM voice_agent.user_integrations_voiceagent
+         FROM ${schema}.user_integrations_voiceagent
          WHERE (credentials->>'unipile_account_id' = $1 OR credentials->>'account_id' = $1)
          AND provider = 'linkedin'
          LIMIT 1`,
@@ -79,7 +79,7 @@ class LinkedInTokenService {
         creds.expires_at = newExpiresAt;
         
         await pool.query(
-          `UPDATE voice_agent.user_integrations_voiceagent
+          `UPDATE ${schema}.user_integrations_voiceagent
            SET credentials = $1::jsonb, updated_at = CURRENT_TIMESTAMP
            WHERE id = $2`,
           [JSON.stringify(creds), integrationQuery.rows[0].id]

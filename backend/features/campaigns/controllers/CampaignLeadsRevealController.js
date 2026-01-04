@@ -5,7 +5,6 @@
  */
 
 const axios = require('axios');
-const CampaignLeadRepository = require('../repositories/CampaignLeadRepository');
 const CampaignLeadModel = require('../models/CampaignLeadModel');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const logger = require('../../../core/utils/logger');
@@ -41,36 +40,26 @@ function getAuthHeaders(req) {
 async function updateLeadWithRevealedContact(leadId, campaignId, tenantId, req, contactType, contactValue, metadata) {
   const schema = getSchema(req);
   try {
-    const dbLead = await CampaignLeadRepository.getLeadById(leadId, campaignId, tenantId, schema);
-    if (!dbLead) {
+    const lead = await CampaignLeadModel.getLeadById(leadId, campaignId, tenantId, schema);
+    if (!lead) {
       logger.warn('[Campaign Leads Reveal] Lead not found for update', { leadId, campaignId });
       return;
     }
 
-    // Map database result using model
-    const lead = CampaignLeadModel.mapLeadFromDB(dbLead);
-
     // Parse existing snapshot and lead_data
-    let snapshot = lead.snapshot || {};
-    let leadData = lead.leadData || {};
+    let snapshot = {};
+    let leadData = {};
     
-    // Ensure snapshot and leadData are objects
-    if (typeof snapshot === 'string') {
-      try {
-        snapshot = JSON.parse(snapshot);
-      } catch (e) {
-        logger.warn('[Campaign Leads Reveal] Error parsing snapshot', { error: e.message });
-        snapshot = {};
-      }
+    try {
+      snapshot = typeof lead.snapshot === 'string' ? JSON.parse(lead.snapshot || '{}') : (lead.snapshot || {});
+    } catch (e) {
+      logger.warn('[Campaign Leads Reveal] Error parsing snapshot', { error: e.message });
     }
     
-    if (typeof leadData === 'string') {
-      try {
-        leadData = JSON.parse(leadData);
-      } catch (e) {
-        logger.warn('[Campaign Leads Reveal] Error parsing lead_data', { error: e.message });
-        leadData = {};
-      }
+    try {
+      leadData = typeof lead.lead_data === 'string' ? JSON.parse(lead.lead_data || '{}') : (lead.lead_data || {});
+    } catch (e) {
+      logger.warn('[Campaign Leads Reveal] Error parsing lead_data', { error: e.message });
     }
 
     // Update with revealed contact info
@@ -90,8 +79,8 @@ async function updateLeadWithRevealedContact(leadId, campaignId, tenantId, req, 
       leadData.phone_reveal_credits_used = metadata.credits_used;
     }
 
-    // Save updated data using repository
-    await CampaignLeadRepository.update(leadId, tenantId, {
+    // Save updated data
+    await CampaignLeadModel.update(leadId, tenantId, {
       snapshot: snapshot,
       lead_data: leadData
     }, req);

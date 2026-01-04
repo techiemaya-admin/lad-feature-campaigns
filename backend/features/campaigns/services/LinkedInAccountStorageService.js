@@ -4,7 +4,7 @@
  * Uses TDD schema: ${schema}.linkedin_accounts with tenant_id (UUID)
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../../../shared/database/connection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const logger = require('../../../core/utils/logger');
 
@@ -61,7 +61,7 @@ class LinkedInAccountStorageService {
       // Try old schema with user_id as text (in case it's actually text, not integer)
       try {
         await pool.query(
-          `INSERT INTO voice_agent.user_integrations_voiceagent
+          `INSERT INTO ${schema}.user_integrations_voiceagent
            (user_id, provider, credentials, is_connected, connected_at, created_at, updated_at)
            VALUES ($1::text, 'linkedin', $2::jsonb, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
            ON CONFLICT (user_id, provider) DO UPDATE

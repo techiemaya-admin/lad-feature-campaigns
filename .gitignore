@@ -48,8 +48,6 @@ coverage/
 backend/.env
 backend/generate-token.js
 backend/middleware/auth.js
-backend/package.json
-backend/package-lock.json
 backend/node_modules/
 
 # Test files and tokens
@@ -67,7 +65,6 @@ core/middleware/auth.js
 
 # Local development files (not for production)
 package.json
-package-lock.json
 
 # Documentation files
 *.md

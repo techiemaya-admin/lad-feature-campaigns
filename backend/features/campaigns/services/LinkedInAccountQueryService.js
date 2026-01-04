@@ -3,7 +3,7 @@
  * Handles database queries for LinkedIn accounts
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../../../shared/database/connection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const logger = require('../../../core/utils/logger');
 
@@ -44,7 +44,7 @@ async function getUserLinkedInAccounts(userId) {
       useTddSchema = false;
       query = `
         SELECT id, credentials, is_connected, connected_at
-        FROM voice_agent.user_integrations_voiceagent
+        FROM ${schema}.user_integrations_voiceagent
         WHERE (user_id::text = $1 OR user_id = $1::integer)
         AND provider = 'linkedin'
         AND is_connected = TRUE
@@ -129,7 +129,7 @@ async function findAccountByUnipileId(tenantId, unipileAccountId) {
     // Fallback to old schema
     const result = await pool.query(
       `SELECT id, credentials
-       FROM voice_agent.user_integrations_voiceagent
+       FROM ${schema}.user_integrations_voiceagent
        WHERE user_id::text = $1 
        AND provider = 'linkedin'
        AND (credentials->>'unipile_account_id' = $2 OR credentials->>'account_id' = $2)

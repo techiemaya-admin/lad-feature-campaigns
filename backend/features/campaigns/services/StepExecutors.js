@@ -3,7 +3,7 @@
  * Handles execution of various campaign step types
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../../../shared/database/connection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const axios = require('axios');
 const logger = require('../../../core/utils/logger');
@@ -18,12 +18,18 @@ if (!BACKEND_URL) {
  * Tries lead_data first, falls back to custom_fields if lead_data doesn't exist
  */
 // Per TDD: Use dynamic schema
-async function getLeadData(campaignLeadId, req = null) {
+async function getLeadData(campaignLeadId, req = null, tenantId = null) {
   try {
     const schema = getSchema(req);
+    // Get tenant_id from req or parameter
+    const actualTenantId = tenantId || req?.user?.tenant_id || req?.user?.tenantId;
+    if (!actualTenantId) {
+      throw new Error('Tenant context required for lead data access');
+    }
+    
     const leadDataResult = await pool.query(
-      `SELECT lead_data, snapshot FROM ${schema}.campaign_leads WHERE id = $1 AND is_deleted = FALSE`,
-      [campaignLeadId]
+      `SELECT lead_data, snapshot FROM ${schema}.campaign_leads WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE`,
+      [campaignLeadId, actualTenantId]
     );
     
     if (leadDataResult.rows.length === 0) {

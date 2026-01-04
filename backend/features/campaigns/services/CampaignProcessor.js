@@ -4,7 +4,7 @@
  * Note: processLeadThroughWorkflow has been moved to WorkflowProcessor.js
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../../../shared/database/connection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const { validateStepConfig } = require('./StepValidators');
 const { createActivity, updateActivityStatus } = require('./CampaignActivityService');
@@ -19,7 +19,7 @@ const {
   executeConditionStep 
 } = require('./StepExecutors');
 const { processLeadThroughWorkflow } = require('./WorkflowProcessor');
-const CampaignRepository = require('../repositories/CampaignRepository');
+const CampaignModel = require('../models/CampaignModel');
 const logger = require('../../../core/utils/logger');
 
 /**
@@ -140,8 +140,8 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
     // Per TDD: Use dynamic schema resolution based on tenantId
     // Create a mock req object for schema resolution if tenantId is available
     const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
-    let query = `SELECT * FROM ${schema}.campaigns WHERE id = $1 AND status = 'running'`;
-    let params = [campaignId];
+    let query = `SELECT * FROM ${schema}.campaigns WHERE id = $1 AND status = 'running' AND tenant_id = $2`;
+    let params = [campaignId, tenantId];
 
     // Try with is_deleted first, fallback without it
     try {
@@ -159,7 +159,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       // If is_deleted column doesn't exist, try without it
       if (error.message && error.message.includes('is_deleted')) {
         logger.warn('[Campaign Execution] is_deleted column not found, trying without it');
-        query = `SELECT * FROM ${schema}.campaigns WHERE id = $1 AND status = 'running'`;
+        query = `SELECT * FROM ${schema}.campaigns WHERE id = $1 AND status = 'running' AND tenant_id = $2`;
         campaignResult = await pool.query(query, params);
       } else {
         throw error;
@@ -199,9 +199,9 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
           logger.info('[Campaign Execution] Skipping campaign', { reason });
           
           // Update last_execution_reason for visibility
-          await CampaignRepository.updateExecutionState(campaignId, 'waiting_for_leads', {
+          await CampaignModel.updateExecutionState(campaignId, 'waiting_for_leads', {
             lastExecutionReason: reason
-          }, null);
+          });
           
           return; // Skip execution
         }
@@ -215,9 +215,9 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
           const reason = `Campaign skipped: waiting for leads (scheduled retry in ${minutesUntilNextRun} minutes)`;
           logger.info('[Campaign Execution] Skipping campaign', { reason });
           
-          await CampaignRepository.updateExecutionState(campaignId, 'waiting_for_leads', {
+          await CampaignModel.updateExecutionState(campaignId, 'waiting_for_leads', {
             lastExecutionReason: reason
-          }, null);
+          });
           
           return; // Skip execution
         }
@@ -225,9 +225,9 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       
       // Retry time reached - reset to active and continue
       logger.info('[Campaign Execution] Retry time reached, resuming campaign execution', { campaignId });
-      await CampaignRepository.updateExecutionState(campaignId, 'active', {
+      await CampaignModel.updateExecutionState(campaignId, 'active', {
         lastExecutionReason: 'Retry time reached, checking for leads again'
-      }, null);
+      });
     }
     
     if (executionState === 'sleeping_until_next_day') {
@@ -238,9 +238,9 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
           const reason = `Campaign sleeping until next day (resumes in ${hoursUntilNextDay}h)`;
           logger.info('[Campaign Execution] Skipping campaign', { reason });
           
-          await CampaignRepository.updateExecutionState(campaignId, 'sleeping_until_next_day', {
+          await CampaignModel.updateExecutionState(campaignId, 'sleeping_until_next_day', {
             lastExecutionReason: reason
-          }, null);
+          });
           
           return; // Skip execution
         }
@@ -248,10 +248,10 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       
       // Next day reached - reset to active and continue
       logger.info('[Campaign Execution] Next day reached, resuming campaign execution', { campaignId });
-      await CampaignRepository.updateExecutionState(campaignId, 'active', {
+      await CampaignModel.updateExecutionState(campaignId, 'active', {
         nextRunAt: null,
         lastExecutionReason: 'Next day reached, resuming execution'
-      }, null);
+      });
     }
     
     if (executionState === 'error') {
@@ -469,10 +469,10 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       tomorrow.setDate(tomorrow.getDate() + 1);
       tomorrow.setHours(0, 0, 0, 0); // Start of next day
       
-      await CampaignRepository.updateExecutionState(campaignId, 'sleeping_until_next_day', {
+      await CampaignModel.updateExecutionState(campaignId, 'sleeping_until_next_day', {
         nextRunAt: tomorrow.toISOString(),
         lastExecutionReason: `Daily limit reached. All leads processed. Resuming tomorrow.`
-      }, null);
+      });
       
       logger.info('[Campaign Execution] Campaign set to sleeping_until_next_day after processing all leads', { campaignId, resumesAt: tomorrow.toISOString() });
     } else if (!leadGenResult || !leadGenResult.success) {
@@ -480,9 +480,9 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       // This handles the case where campaigns have leads but no lead generation step
       if (leads.length > 0) {
         logger.info('[Campaign Execution] Campaign has leads to process, keeping active', { campaignId, leadCount: leads.length });
-        await CampaignRepository.updateExecutionState(campaignId, 'active', {
+        await CampaignModel.updateExecutionState(campaignId, 'active', {
           lastExecutionReason: `Processing ${leads.length} existing leads through workflow.`
-        }, null);
+        });
       }
     }
   } catch (error) {

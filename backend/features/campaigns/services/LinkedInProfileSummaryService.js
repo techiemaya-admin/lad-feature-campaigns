@@ -3,7 +3,7 @@
  * Handles profile summary generation and saving
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../../../shared/database/connection');
 const logger = require('../../../core/utils/logger');
 
 /**
@@ -49,10 +49,22 @@ Generate a concise, professional summary highlighting their role, expertise, and
     // Save summary to campaign_leads table (in lead_data JSONB or metadata)
     if (summary) {
       try {
-        // Get current lead_data
-        const leadDataQuery = await pool.query(
-          `SELECT lead_data FROM campaign_leads WHERE id = $1`,
+        // Get tenant_id first for security
+        const tenantCheck = await pool.query(
+          `SELECT tenant_id FROM ${schema}.campaign_leads WHERE id = $1`,
           [campaignLeadId]
+        );
+        
+        if (tenantCheck.rows.length === 0) {
+          throw new Error('Campaign lead not found');
+        }
+        
+        const leadTenantId = tenantCheck.rows[0].tenant_id;
+        
+        // Get current lead_data with tenant enforcement
+        const leadDataQuery = await pool.query(
+          `SELECT lead_data FROM ${schema}.campaign_leads WHERE id = $1 AND tenant_id = $2`,
+          [campaignLeadId, leadTenantId]
         );
         
         let currentLeadData = {};
@@ -68,7 +80,7 @@ Generate a concise, professional summary highlighting their role, expertise, and
         
         // Update campaign_leads with summary
         await pool.query(
-          `UPDATE campaign_leads 
+          `UPDATE ${schema}.campaign_leads 
            SET lead_data = $1, updated_at = CURRENT_TIMESTAMP 
            WHERE id = $2`,
           [JSON.stringify(currentLeadData), campaignLeadId]

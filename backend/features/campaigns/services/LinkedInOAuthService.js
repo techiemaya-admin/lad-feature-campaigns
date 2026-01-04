@@ -3,7 +3,7 @@
  * Handles OAuth flow and account connection
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../../../shared/database/connection');
 const UnipileBaseService = require('./UnipileBaseService');
 const axios = require('axios');
 const { extractLinkedInProfileUrl } = require('./LinkedInProfileHelper');
@@ -128,7 +128,7 @@ class LinkedInOAuthService {
       // Check if integration already exists
       const existingQuery = await pool.query(
         `SELECT id, credentials, is_connected
-         FROM voice_agent.user_integrations_voiceagent
+         FROM ${schema}.user_integrations_voiceagent
          WHERE user_id = $1 
          AND provider = 'linkedin'
          AND (credentials->>'unipile_account_id' = $2 OR credentials->>'account_id' = $2)
@@ -139,7 +139,7 @@ class LinkedInOAuthService {
       if (existingQuery.rows.length > 0) {
         // Update existing integration
         await pool.query(
-          `UPDATE voice_agent.user_integrations_voiceagent
+          `UPDATE ${schema}.user_integrations_voiceagent
            SET credentials = $1::jsonb,
                is_connected = TRUE,
                connected_at = CURRENT_TIMESTAMP,
@@ -151,7 +151,7 @@ class LinkedInOAuthService {
       } else {
         // Create new integration
         await pool.query(
-          `INSERT INTO voice_agent.user_integrations_voiceagent
+          `INSERT INTO ${schema}.user_integrations_voiceagent
            (user_id, provider, credentials, is_connected, connected_at, created_at, updated_at)
            VALUES ($1, 'linkedin', $2::jsonb, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
           [userId, JSON.stringify(credentials)]

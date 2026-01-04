@@ -1,136 +1,330 @@
 /**
  * Campaign Lead Model
- * Data shapes, validation schemas, mapping helpers, and constants only
- * NO database calls - use CampaignLeadRepository for SQL queries
+ * Handles database operations for campaign leads
  */
 
-/**
- * Lead Status Enum
- */
-const LEAD_STATUS = {
-  ACTIVE: 'active',
-  COMPLETED: 'completed',
-  FAILED: 'failed',
-  PAUSED: 'paused'
-};
+const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
+const { randomUUID } = require('crypto');
 
-/**
- * Campaign Lead Data Shape
- * @typedef {Object} CampaignLeadData
- * @property {string} campaignId - Campaign ID
- * @property {string} [leadId] - External lead ID (UUID)
- * @property {string} firstName - First name
- * @property {string} lastName - Last name
- * @property {string} [email] - Email address
- * @property {string} [linkedinUrl] - LinkedIn profile URL
- * @property {string} [companyName] - Company name
- * @property {string} [title] - Job title
- * @property {string} [phone] - Phone number
- * @property {Object} [leadData] - Custom lead data (JSONB)
- * @property {string} [status] - Lead status (active|completed|failed|paused)
- */
+class CampaignLeadModel {
+  /**
+   * Create a new campaign lead
+   */
+  static async create(leadData, tenantId, req = null) {
+    const {
+      campaignId,
+      leadId = randomUUID(),
+      firstName,
+      lastName,
+      email,
+      linkedinUrl,
+      companyName,
+      title,
+      phone,
+      leadData: customData = {},
+      status = 'active'
+    } = leadData;
 
-/**
- * Snapshot Shape (stored in JSONB)
- * @typedef {Object} LeadSnapshot
- * @property {string} first_name
- * @property {string} last_name
- * @property {string} email
- * @property {string} linkedin_url
- * @property {string} company_name
- * @property {string} title
- * @property {string} phone
- */
+    const schema = getSchema(req);
+    
+    // Per TDD: Use dynamic schema with snapshot JSONB (not individual columns)
+    const snapshot = {
+      first_name: firstName,
+      last_name: lastName,
+      email: email,
+      linkedin_url: linkedinUrl,
+      company_name: companyName,
+      title: title,
+      phone: phone
+    };
+    
+    const query = `
+      INSERT INTO ${schema}.campaign_leads (
+        tenant_id, campaign_id, lead_id, snapshot, lead_data, status,
+        created_at, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      RETURNING *
+    `;
 
-/**
- * Map lead data to snapshot format
- * @param {Object} leadData - Lead data from API
- * @returns {Object} Snapshot object for database
- */
-function mapLeadToSnapshot(leadData) {
-  return {
-    first_name: leadData.firstName,
-    last_name: leadData.lastName,
-    email: leadData.email,
-    linkedin_url: leadData.linkedinUrl,
-    company_name: leadData.companyName,
-    title: leadData.title,
-    phone: leadData.phone
-  };
+    const values = [
+      tenantId,
+      campaignId,
+      leadId,
+      JSON.stringify(snapshot),
+      JSON.stringify(customData),
+      status
+    ];
+
+    const result = await pool.query(query, values);
+    return result.rows[0];
+  }
+
+  /**
+   * Get lead by ID
+   */
+  static async getById(leadId, tenantId, req = null) {
+    const schema = getSchema(req);
+    // Per TDD: Use lad_dev schema
+    const query = `
+      SELECT * FROM ${schema}.campaign_leads
+      WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
+    `;
+
+    const result = await pool.query(query, [leadId, tenantId]);
+    return result.rows[0];
+  }
+
+  /**
+   * Get leads by campaign ID
+   */
+  static async getByCampaignId(campaignId, tenantId, filters = {}, req = null) {
+    const schema = getSchema(req);
+    const { status, limit = 100, offset = 0 } = filters;
+
+    // Per TDD: Use lad_dev schema
+    let query = `
+      SELECT * FROM ${schema}.campaign_leads
+      WHERE campaign_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
+    `;
+
+    const params = [campaignId, tenantId];
+    let paramIndex = 3;
+
+    if (status && status !== 'all') {
+      query += ` AND status = $${paramIndex++}`;
+      params.push(status);
+    }
+
+    query += ` ORDER BY created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+    params.push(limit, offset);
+
+    const result = await pool.query(query, params);
+    return result.rows;
+  }
+
+  /**
+   * Check if lead exists by Apollo ID
+   */
+  static async existsByApolloId(campaignId, tenantId, apolloPersonId, req = null) {
+    const schema = getSchema(req);
+    // Per TDD: Use lad_dev schema
+    const query = `
+      SELECT id FROM ${schema}.campaign_leads
+      WHERE campaign_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
+      AND lead_data->>'apollo_person_id' = $3
+    `;
+
+    const result = await pool.query(query, [campaignId, tenantId, String(apolloPersonId)]);
+    return result.rows.length > 0 ? result.rows[0] : null;
+  }
+
+  /**
+   * Update campaign lead
+   */
+  static async update(leadId, tenantId, updates, req = null) {
+    const schema = getSchema(req);
+    // Per TDD: Use lad_dev schema, update snapshot JSONB or other direct columns
+    const allowedFields = [
+      'snapshot', 'lead_data', 'status',
+      'current_step_order', 'started_at', 'completed_at', 'error_message'
+    ];
+
+    const setClause = [];
+    const values = [leadId, tenantId];
+    let paramIndex = 3;
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (allowedFields.includes(key)) {
+        setClause.push(`${key} = $${paramIndex++}`);
+        // JSONB fields need to be stringified
+        values.push((key === 'snapshot' || key === 'lead_data') ? JSON.stringify(value) : value);
+      }
+    }
+
+    if (setClause.length === 0) {
+      throw new Error('No valid fields to update');
+    }
+
+    setClause.push(`updated_at = CURRENT_TIMESTAMP`);
+
+    // Per TDD: Use lad_dev schema
+    const query = `
+      UPDATE ${schema}.campaign_leads
+      SET ${setClause.join(', ')}
+      WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
+      RETURNING *
+    `;
+
+    const result = await pool.query(query, values);
+    return result.rows[0];
+  }
+
+  /**
+   * Delete campaign lead
+   */
+  static async delete(leadId, tenantId, req = null) {
+    const schema = getSchema(req);
+    // Per TDD: Use lad_dev schema (soft delete)
+    const query = `
+      UPDATE ${schema}.campaign_leads
+      SET is_deleted = TRUE, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1 AND tenant_id = $2
+      RETURNING id
+    `;
+
+    const result = await pool.query(query, [leadId, tenantId]);
+    return result.rows[0];
+  }
+
+  /**
+   * Get active leads for processing
+   */
+  static async getActiveLeadsForCampaign(campaignId, tenantId, limit = 10, req = null) {
+    const schema = getSchema(req);
+    // Per TDD: Use lad_dev schema
+    const query = `
+      SELECT * FROM ${schema}.campaign_leads
+      WHERE campaign_id = $1 AND tenant_id = $2 AND status = 'active' AND is_deleted = FALSE
+      ORDER BY created_at ASC
+      LIMIT $3
+    `;
+
+    const result = await pool.query(query, [campaignId, tenantId, limit]);
+    return result.rows;
+  }
+
+  /**
+   * Get lead data (handles both lead_data and custom_fields columns)
+   */
+  static async getLeadData(leadId, campaignId, tenantId, schema) {
+    // LAD Architecture: SQL in model layer, not controller
+    const query = `
+      SELECT lead_data FROM ${schema}.campaign_leads
+      WHERE id = $1 AND campaign_id = $2 AND tenant_id = $3 AND is_deleted = FALSE
+    `;
+
+    const result = await pool.query(query, [leadId, campaignId, tenantId]);
+    
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    return result.rows[0];
+  }
+
+  /**
+   * Get lead by ID with campaign ID
+   */
+  static async getLeadById(leadId, campaignId, tenantId, schema) {
+    // LAD Architecture: SQL in model layer, not controller
+    const query = `
+      SELECT cl.*, cl.lead_data as lead_data_full
+      FROM ${schema}.campaign_leads cl
+      WHERE cl.id = $1 AND cl.campaign_id = $2 AND cl.tenant_id = $3 AND cl.is_deleted = FALSE
+    `;
+
+    const result = await pool.query(query, [leadId, campaignId, tenantId]);
+    
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    return result.rows[0];
+  }
+
+  /**
+   * Update lead_data JSONB field
+   */
+  static async updateLeadData(leadId, campaignId, tenantId, schema, updates) {
+    // LAD Architecture: SQL in model layer, not controller
+    // Get current lead_data
+    const selectResult = await pool.query(
+      `SELECT lead_data FROM ${schema}.campaign_leads 
+       WHERE id = $1 AND campaign_id = $2 AND tenant_id = $3 AND is_deleted = FALSE`,
+      [leadId, campaignId, tenantId]
+    );
+
+    if (selectResult.rows.length === 0) {
+      throw new Error('Lead not found');
+    }
+
+    let currentLeadData = {};
+    if (selectResult.rows[0].lead_data) {
+      currentLeadData = typeof selectResult.rows[0].lead_data === 'string' 
+        ? JSON.parse(selectResult.rows[0].lead_data)
+        : selectResult.rows[0].lead_data;
+    }
+
+    // Merge updates
+    const updatedLeadData = { ...currentLeadData, ...updates };
+
+    // Update
+    await pool.query(
+      `UPDATE ${schema}.campaign_leads 
+       SET lead_data = $1, updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $2 AND campaign_id = $3 AND tenant_id = $4 AND is_deleted = FALSE`,
+      [JSON.stringify(updatedLeadData), leadId, campaignId, tenantId]
+    );
+
+    return updatedLeadData;
+  }
+
+  /**
+   * Bulk create leads
+   */
+  static async bulkCreate(campaignId, tenantId, leads, req = null) {
+    const schema = getSchema(req);
+    if (!leads || leads.length === 0) {
+      return [];
+    }
+
+    const values = [];
+    const placeholders = [];
+    let paramIndex = 1;
+
+    leads.forEach((lead, index) => {
+      const offset = index * 6;
+      placeholders.push(
+        `($${paramIndex + offset}, $${paramIndex + offset + 1}, $${paramIndex + offset + 2}, $${paramIndex + offset + 3}, $${paramIndex + offset + 4}, $${paramIndex + offset + 5})`
+      );
+
+      // Per TDD: Build snapshot JSONB from individual fields
+      const snapshot = {
+        first_name: lead.firstName,
+        last_name: lead.lastName,
+        email: lead.email,
+        linkedin_url: lead.linkedinUrl,
+        company_name: lead.companyName,
+        title: lead.title,
+        phone: lead.phone
+      };
+
+      values.push(
+        tenantId,
+        campaignId,
+        lead.leadId || randomUUID(),
+        JSON.stringify(snapshot),
+        JSON.stringify(lead.leadData || {}),
+        lead.status || 'active'
+      );
+    });
+
+    paramIndex += leads.length * 6;
+
+    // Per TDD: Use lad_dev schema with snapshot JSONB
+    const query = `
+      INSERT INTO ${schema}.campaign_leads (
+        tenant_id, campaign_id, lead_id, snapshot, lead_data, status
+      )
+      VALUES ${placeholders.join(', ')}
+      RETURNING *
+    `;
+
+    const result = await pool.query(query, values);
+    return result.rows;
+  }
 }
 
-/**
- * Map snapshot from database to lead data
- * @param {Object} snapshot - Snapshot from database
- * @returns {Object} Lead data for API
- */
-function mapSnapshotToLead(snapshot) {
-  if (!snapshot) return null;
-  
-  const parsed = typeof snapshot === 'string' ? JSON.parse(snapshot) : snapshot;
-  return {
-    firstName: parsed.first_name,
-    lastName: parsed.last_name,
-    email: parsed.email,
-    linkedinUrl: parsed.linkedin_url,
-    companyName: parsed.company_name,
-    title: parsed.title,
-    phone: parsed.phone
-  };
-}
-
-/**
- * Map database row to API format
- * @param {Object} dbRow - Database row
- * @returns {Object} Lead data for API
- */
-function mapLeadFromDB(dbRow) {
-  if (!dbRow) return null;
-  
-  const snapshot = mapSnapshotToLead(dbRow.snapshot);
-  const leadData = typeof dbRow.lead_data === 'string' ? JSON.parse(dbRow.lead_data) : (dbRow.lead_data || {});
-  
-  return {
-    id: dbRow.id,
-    tenant_id: dbRow.tenant_id,
-    campaign_id: dbRow.campaign_id,
-    lead_id: dbRow.lead_id,
-    ...snapshot,
-    leadData: leadData,
-    snapshot: dbRow.snapshot,
-    status: dbRow.status,
-    current_step_order: dbRow.current_step_order,
-    started_at: dbRow.started_at,
-    completed_at: dbRow.completed_at,
-    error_message: dbRow.error_message,
-    is_deleted: dbRow.is_deleted,
-    created_at: dbRow.created_at,
-    updated_at: dbRow.updated_at
-  };
-}
-
-/**
- * Validate lead status
- * @param {string} status - Status to validate
- * @returns {boolean} True if valid
- */
-function isValidLeadStatus(status) {
-  return Object.values(LEAD_STATUS).includes(status);
-}
-
-/**
- * Get allowed update fields
- * @returns {string[]} Array of allowed field names
- */
-function getAllowedUpdateFields() {
-  return ['snapshot', 'lead_data', 'status', 'current_step_order', 'started_at', 'completed_at', 'error_message'];
-}
-
-module.exports = {
-  LEAD_STATUS,
-  mapLeadToSnapshot,
-  mapSnapshotToLead,
-  mapLeadFromDB,
-  isValidLeadStatus,
-  getAllowedUpdateFields
-};
+module.exports = CampaignLeadModel;
