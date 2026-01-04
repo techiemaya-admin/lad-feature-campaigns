@@ -4,11 +4,11 @@
  */
 
 const express = require('express');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const router = express.Router();
-const { authenticateToken: jwtAuth } = require('../../../core/middleware/auth');
+const { authenticateToken: jwtAuth } = require('../../../../core/middleware/auth');
 const linkedInIntegrationService = require('../services/LinkedInIntegrationService');
-const logger = require('../../../core/utils/logger');
+const logger = require('../../../../core/utils/logger');
 
 // GET /api/campaigns/linkedin/status - Check LinkedIn connection status
 router.get('/status', jwtAuth, async (req, res) => {
@@ -205,7 +205,7 @@ router.post('/disconnect', jwtAuth, async (req, res) => {
       logger.debug('[LinkedIn Routes] connection_id provided, looking up unipile_account_id', { connectionId });
       
       try {
-        const { pool } = require('../utils/dbConnection');
+        const { pool } = require('../../../shared/database/connection');
         
         const schema = getSchema(req);
         // Check if connection_id is a UUID (from ${schema}.linkedin_accounts) or integer
@@ -236,7 +236,7 @@ router.post('/disconnect', jwtAuth, async (req, res) => {
           logger.debug('[LinkedIn Routes] connection_id is integer, querying old schema');
           const lookupQuery = `
             SELECT credentials->>'unipile_account_id' as unipile_account_id
-            FROM voice_agent.user_integrations_voiceagent
+            FROM ${schema}.user_integrations_voiceagent
             WHERE id = $1
               AND provider = 'linkedin'
               AND credentials->>'unipile_account_id' IS NOT NULL

@@ -3,9 +3,9 @@
  * Handles database operations for campaign steps (workflow builder)
  */
 
-const { getSchema } = require('../../../core/utils/schemaHelper');
-const { pool } = require('../utils/dbConnection');
-const logger = require('../../../core/utils/logger');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
+const { pool } = require('../../../shared/database/connection');
+const logger = require('../../../../core/utils/logger');
 
 class CampaignStepModel {
   /**

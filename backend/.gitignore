@@ -21,3 +21,6 @@ Thumbs.db
 # Testing
 coverage/
 .nyc_output/
+
+# Local utilities (should use shared infrastructure instead)
+features/campaigns/utils/dbConnection.js

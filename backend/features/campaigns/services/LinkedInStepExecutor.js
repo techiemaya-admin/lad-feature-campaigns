@@ -3,7 +3,7 @@
  * Handles all LinkedIn-related step executions
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../../../shared/database/connection');
 const unipileService = require('./unipileService');
 const { getLeadData } = require('./StepExecutors');
 const {
@@ -12,7 +12,7 @@ const {
   sendConnectionRequestWithFallback
 } = require('./LinkedInAccountHelper');
 const { generateAndSaveProfileSummary } = require('./LinkedInProfileSummaryService');
-const logger = require('../../../core/utils/logger');
+const logger = require('../../../../core/utils/logger');
 
 /**
  * Execute LinkedIn step

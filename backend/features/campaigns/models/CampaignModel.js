@@ -4,9 +4,9 @@
  */
 
 // Use helper to resolve database connection path for both local and production
-const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
-const logger = require('../../../core/utils/logger');
+const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
+const logger = require('../../../../core/utils/logger');
 
 class CampaignModel {
   /**

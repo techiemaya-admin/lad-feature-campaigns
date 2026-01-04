@@ -2,7 +2,7 @@
  * LinkedIn Profile Helper
  * Handles profile URL extraction and checkpoint detection
  */
-const logger = require('../../../core/utils/logger');
+const logger = require('../../../../core/utils/logger');
 
 /**
  * Extract LinkedIn profile URL from Unipile response

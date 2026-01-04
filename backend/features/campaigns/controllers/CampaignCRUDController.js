@@ -6,7 +6,7 @@
 const CampaignModel = require('../models/CampaignModel');
 const CampaignStepModel = require('../models/CampaignStepModel');
 const CampaignExecutionService = require('../services/CampaignExecutionService');
-const logger = require('../../../core/utils/logger');
+const logger = require('../../../../core/utils/logger');
 
 class CampaignCRUDController {
   /**

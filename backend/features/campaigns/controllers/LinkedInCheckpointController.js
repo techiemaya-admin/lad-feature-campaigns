@@ -5,8 +5,8 @@
  */
 
 const linkedInService = require('../services/LinkedInIntegrationService');
-const { getSchema } = require('../../../core/utils/schemaHelper');
-const logger = require('../../../core/utils/logger');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
+const logger = require('../../../../core/utils/logger');
 
 class LinkedInCheckpointController {
   /**
@@ -44,7 +44,7 @@ class LinkedInCheckpointController {
       // Get checkpoint type from database (default: IN_APP_VALIDATION)
       let checkpointType = 'IN_APP_VALIDATION';
       try {
-        const { pool } = require('../utils/dbConnection');
+        const { pool } = require('../../../shared/database/connection');
         const tenantId = req.user.tenantId || userId;
         const schema = getSchema(req);
         

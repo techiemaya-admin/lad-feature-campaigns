@@ -5,8 +5,8 @@
  */
 
 const axios = require('axios');
-const { getSchema } = require('../../../core/utils/schemaHelper');
-const logger = require('../../../core/utils/logger');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
+const logger = require('../../../../core/utils/logger');
 
 class UnipileProfileService {
     constructor(baseService) {
@@ -156,7 +156,7 @@ class UnipileProfileService {
                         
                         // Mark account as inactive in database
                         try {
-                            const { pool } = require('../utils/dbConnection');
+                            const { pool } = require('../../../shared/database/connection');
                             const schema = getSchema(null); // No req available in this context
                             await pool.query(
                                 `UPDATE ${schema}.linkedin_accounts 
@@ -256,7 +256,7 @@ class UnipileProfileService {
                     
                     // Mark account as inactive in database
                     try {
-                        const { pool } = require('../utils/dbConnection');
+                        const { pool } = require('../../../shared/database/connection');
                         const schema = getSchema(null); // No req available in this context
                         await pool.query(
                             `UPDATE ${schema}.linkedin_accounts 
@@ -269,7 +269,7 @@ class UnipileProfileService {
                         // Also try to update old schema if it exists
                         try {
                             await pool.query(
-                                `UPDATE voice_agent.user_integrations_voiceagent 
+                                `UPDATE ${schema}.user_integrations_voiceagent 
                                  SET is_connected = FALSE, updated_at = CURRENT_TIMESTAMP 
                                  WHERE (credentials->>'unipile_account_id' = $1 OR credentials->>'account_id' = $1)
                                  AND provider = 'linkedin'`,

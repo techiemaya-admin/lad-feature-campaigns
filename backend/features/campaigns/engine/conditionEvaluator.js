@@ -1,7 +1,7 @@
 /**
  * Condition Evaluator - evaluates workflow conditions
  */
-const logger = require('../../../core/utils/logger');
+const logger = require('../../../../core/utils/logger');
 
 class ConditionEvaluator {
   /**

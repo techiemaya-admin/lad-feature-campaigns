@@ -3,8 +3,8 @@
  * Handles lead generation with daily limits and offset tracking
  */
 
-const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const { searchEmployees, searchEmployeesFromDatabase } = require('./LeadSearchService');
 const {
   updateCampaignConfig,
@@ -13,7 +13,7 @@ const {
 const { saveLeadsToCampaign } = require('./LeadSaveService');
 const { createLeadGenerationActivity } = require('./CampaignActivityService');
 const CampaignModel = require('../models/CampaignModel');
-const logger = require('../../../core/utils/logger');
+const logger = require('../../../../core/utils/logger');
 
 /**
  * Execute lead generation step with daily limit support
@@ -41,8 +41,8 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       // LAD Architecture: Use dynamic schema resolution
       const schema = getSchema(null); // No req available, will use default
       const campaignResult = await pool.query(
-        `SELECT config FROM ${schema}.campaigns WHERE id = $1`,
-        [campaignId]
+        `SELECT config FROM ${schema}.campaigns WHERE id = $1 AND tenant_id = $2`,
+        [campaignId, tenantId]
       );
       
       if (campaignResult.rows[0]?.config) {
@@ -339,7 +339,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     
     // Try to update config column (may not exist in all schemas)
     try {
-      await updateCampaignConfig(campaignId, updatedConfig);
+      await updateCampaignConfig(campaignId, updatedConfig, null, tenantId);
     } catch (updateError) {
       // If config column doesn't exist, store offset in step config as fallback
       logger.debug('[Campaign Execution] Config column not available, storing offset in step config');
@@ -352,7 +352,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
           leads_per_day: leadsPerDay
         };
         
-        await updateStepConfig(step.id, updatedStepConfig);
+        await updateStepConfig(step.id, updatedStepConfig, null, tenantId);
         logger.info('[Campaign Execution] Stored offset in step config', { offset: newOffset, date: today });
       } catch (stepUpdateErr) {
         logger.error('[Campaign Execution] Error storing offset in step config', { error: stepUpdateErr.message, stack: stepUpdateErr.stack });
@@ -362,8 +362,8 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       try {
         // Per TDD: Use lad_dev schema
         await pool.query(
-          `UPDATE ${schema}.campaigns SET updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-          [campaignId]
+          `UPDATE ${schema}.campaigns SET updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND tenant_id = $2`,
+          [campaignId, tenantId]
         );
       } catch (err) {
         // Ignore - not critical

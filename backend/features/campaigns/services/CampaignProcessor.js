@@ -4,8 +4,8 @@
  * Note: processLeadThroughWorkflow has been moved to WorkflowProcessor.js
  */
 
-const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const { validateStepConfig } = require('./StepValidators');
 const { createActivity, updateActivityStatus } = require('./CampaignActivityService');
 const { executeLeadGeneration } = require('./LeadGenerationService');
@@ -20,7 +20,7 @@ const {
 } = require('./StepExecutors');
 const { processLeadThroughWorkflow } = require('./WorkflowProcessor');
 const CampaignModel = require('../models/CampaignModel');
-const logger = require('../../../core/utils/logger');
+const logger = require('../../../../core/utils/logger');
 
 /**
  * Execute a campaign step for a specific lead
@@ -140,8 +140,8 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
     // Per TDD: Use dynamic schema resolution based on tenantId
     // Create a mock req object for schema resolution if tenantId is available
     const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
-    let query = `SELECT * FROM ${schema}.campaigns WHERE id = $1 AND status = 'running'`;
-    let params = [campaignId];
+    let query = `SELECT * FROM ${schema}.campaigns WHERE id = $1 AND status = 'running' AND tenant_id = $2`;
+    let params = [campaignId, tenantId];
 
     // Try with is_deleted first, fallback without it
     try {
@@ -159,7 +159,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       // If is_deleted column doesn't exist, try without it
       if (error.message && error.message.includes('is_deleted')) {
         logger.warn('[Campaign Execution] is_deleted column not found, trying without it');
-        query = `SELECT * FROM ${schema}.campaigns WHERE id = $1 AND status = 'running'`;
+        query = `SELECT * FROM ${schema}.campaigns WHERE id = $1 AND status = 'running' AND tenant_id = $2`;
         campaignResult = await pool.query(query, params);
       } else {
         throw error;

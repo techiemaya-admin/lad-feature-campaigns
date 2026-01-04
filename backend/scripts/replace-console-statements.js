@@ -10,6 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const glob = require('glob');
+const logger = require('../../../../core/utils/logger');
 
 // Files to process
 const serviceFiles = [
@@ -55,12 +56,12 @@ function addLoggerImport(filePath) {
     const insertIndex = lastRequireIndex + lastRequire.length;
     
     // Add logger import after last require
-    const loggerImport = "\nconst logger = require('../../../core/utils/logger');";
+    const loggerImport = "\nconst logger = require('../../../../core/utils/logger');";
     return content.slice(0, insertIndex) + loggerImport + content.slice(insertIndex);
   } else {
     // Add at the top after comments
     const commentEnd = content.indexOf('*/') + 2;
-    const loggerImport = "\nconst logger = require('../../../core/utils/logger');\n";
+    const loggerImport = "\nconst logger = require('../../../../core/utils/logger');\n";
     return content.slice(0, commentEnd) + loggerImport + content.slice(commentEnd);
   }
 }
@@ -108,14 +109,14 @@ function replaceConsoleStatements(content) {
   return content;
 }
 
-console.log('⚠️  This script will modify files. Review changes before committing!');
-console.log('Processing files...\n');
+logger.warn('⚠️  This script will modify files. Review changes before committing!');
+logger.info('Processing files...\n');
 
 serviceFiles.forEach(relativePath => {
   const filePath = path.join(__dirname, '..', relativePath);
   
   if (!fs.existsSync(filePath)) {
-    console.log(`⚠️  File not found: ${filePath}`);
+    logger.warn(`⚠️  File not found: ${filePath}`);
     return;
   }
   
@@ -130,18 +131,18 @@ serviceFiles.forEach(relativePath => {
       
       if (content !== originalContent) {
         fs.writeFileSync(filePath, content, 'utf8');
-        console.log(`✅ Updated: ${relativePath}`);
+        logger.info(`✅ Updated: ${relativePath}`);
       } else {
-        console.log(`⏭️  No changes: ${relativePath}`);
+        logger.info(`⏭️  No changes: ${relativePath}`);
       }
     } else {
-      console.log(`⏭️  No console statements: ${relativePath}`);
+      logger.info(`⏭️  No console statements: ${relativePath}`);
     }
   } catch (error) {
-    console.error(`❌ Error processing ${relativePath}:`, error.message);
+    logger.error(`❌ Error processing ${relativePath}:`, { error: error.message });
   }
 });
 
-console.log('\n✅ Batch replacement complete!');
-console.log('⚠️  Please review all changes before committing.');
+logger.info('\n✅ Batch replacement complete!');
+logger.warn('⚠️  Please review all changes before committing.');
 

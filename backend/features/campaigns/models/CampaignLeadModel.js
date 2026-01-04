@@ -3,8 +3,8 @@
  * Handles database operations for campaign leads
  */
 
-const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const { randomUUID } = require('crypto');
 
 class CampaignLeadModel {

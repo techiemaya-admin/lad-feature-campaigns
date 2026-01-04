@@ -5,7 +5,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const logger = require('../../../core/utils/logger');
+const logger = require('../../../../core/utils/logger');
 
 function getDatabaseConnection() {
   // Priority 1: Try main LAD backend (for feature repos in development)

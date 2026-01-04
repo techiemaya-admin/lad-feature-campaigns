@@ -3,10 +3,10 @@
  * Handles LinkedIn account lookup and connection request fallback logic
  */
 
-const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const unipileService = require('./unipileService');
-const logger = require('../../../core/utils/logger');
+const logger = require('../../../../core/utils/logger');
 
 /**
  * Get all available LinkedIn accounts for a tenant/user (for account fallback)
@@ -53,7 +53,7 @@ async function getAllLinkedInAccountsForTenant(tenantId, userId) {
                     NULLIF(credentials->>'account_id', ''),
                     NULLIF(credentials->>'unipileAccountId', '')
                   ) as unipile_account_id 
-           FROM voice_agent.user_integrations_voiceagent 
+           FROM ${schema}.user_integrations_voiceagent 
            WHERE provider = 'linkedin'
            AND (user_id::text = $1 OR user_id = $1::integer)
            AND is_connected = TRUE
@@ -199,7 +199,7 @@ async function getLinkedInAccountForExecution(tenantId, userId) {
                   NULLIF(credentials->>'account_id', ''),
                   NULLIF(credentials->>'unipileAccountId', '')
                 ) as unipile_account_id 
-         FROM voice_agent.user_integrations_voiceagent 
+         FROM ${schema}.user_integrations_voiceagent 
          WHERE provider = 'linkedin'
          AND (user_id::text = $1 OR user_id = $1::integer)
          AND is_connected = TRUE
@@ -232,8 +232,8 @@ async function getLinkedInAccountForExecution(tenantId, userId) {
                     NULLIF(uiv.credentials->>'account_id', ''),
                     NULLIF(uiv.credentials->>'unipileAccountId', '')
                   ) as unipile_account_id 
-           FROM voice_agent.user_integrations_voiceagent uiv
-           JOIN voice_agent.users_voiceagent uva ON uiv.user_id = uva.user_id
+           FROM ${schema}.user_integrations_voiceagent uiv
+           JOIN ${schema}.users_voiceagent uva ON uiv.user_id = uva.user_id
            WHERE uiv.provider = 'linkedin'
            AND uva.tenant_id = $1::uuid
            AND uiv.is_connected = TRUE
@@ -257,8 +257,8 @@ async function getLinkedInAccountForExecution(tenantId, userId) {
                       NULLIF(uiv.credentials->>'account_id', ''),
                       NULLIF(uiv.credentials->>'unipileAccountId', '')
                     ) as unipile_account_id 
-             FROM voice_agent.user_integrations_voiceagent uiv
-             JOIN voice_agent.users_voiceagent uva ON uiv.user_id = uva.user_id
+             FROM ${schema}.user_integrations_voiceagent uiv
+             JOIN ${schema}.users_voiceagent uva ON uiv.user_id = uva.user_id
              WHERE uiv.provider = 'linkedin'
              AND uva.tenant_id = $1::integer
              AND uiv.is_connected = TRUE
@@ -297,7 +297,7 @@ async function getLinkedInAccountForExecution(tenantId, userId) {
       // Fallback to old schema if TDD table doesn't exist
       try {
         accountResult = await pool.query(
-          `SELECT id, unipile_account_id FROM linkedin_accounts 
+          `SELECT id, unipile_account_id FROM ${schema}.linkedin_accounts 
            WHERE is_active = TRUE
            AND unipile_account_id IS NOT NULL
            ORDER BY created_at DESC LIMIT 1`
@@ -320,7 +320,7 @@ async function getLinkedInAccountForExecution(tenantId, userId) {
                   NULLIF(credentials->>'account_id', ''),
                   NULLIF(credentials->>'unipileAccountId', '')
                 ) as unipile_account_id 
-         FROM voice_agent.user_integrations_voiceagent 
+         FROM ${schema}.user_integrations_voiceagent 
          WHERE provider = 'linkedin'
          AND is_connected = TRUE
          AND (

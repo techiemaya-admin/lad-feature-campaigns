@@ -4,10 +4,10 @@
  * LAD Architecture Compliant - Uses logger instead of console
  */
 
-const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const { validateStepConfig } = require('./StepValidators');
-const logger = require('../../../core/utils/logger');
+const logger = require('../../../../core/utils/logger');
 // Lazy load executeStepForLead to avoid circular dependency with CampaignProcessor
 // CampaignProcessor imports processLeadThroughWorkflow from this file,
 // so we can't import executeStepForLead at the top level
@@ -47,10 +47,10 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     
     if (nextStepIndex >= steps.length) {
       // All steps completed, mark lead as completed
-      // Per TDD: Use lad_dev schema
+      // Per TDD: Use dynamic schema with tenant enforcement
       await pool.query(
-        `UPDATE ${schema}.campaign_leads SET status = 'completed' WHERE id = $1`,
-        [campaignLead.id]
+        `UPDATE ${schema}.campaign_leads SET status = 'completed' WHERE id = $1 AND tenant_id = $2`,
+        [campaignLead.id, tenantId]
       );
       return;
     }
@@ -117,10 +117,10 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
       }
       
       // Mark lead as stopped because step configuration is incomplete
-      // Per TDD: Use lad_dev schema
+      // Per TDD: Use dynamic schema with tenant enforcement
       await pool.query(
-        `UPDATE ${schema}.campaign_leads SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-        [campaignLead.id]
+        `UPDATE ${schema}.campaign_leads SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND tenant_id = $2`,
+        [campaignLead.id, tenantId]
       );
       
       logger.warn('[Campaign Execution] Lead stopped due to incomplete step configuration', { leadId: campaignLead.id });
@@ -155,10 +155,10 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
       
       if (!conditionResult.conditionMet) {
         // Condition not met, mark lead as stopped
-        // Per TDD: Use lad_dev schema
+        // Per TDD: Use dynamic schema with tenant enforcement
         await pool.query(
-          `UPDATE ${schema}.campaign_leads SET status = 'stopped' WHERE id = $1`,
-          [campaignLead.id]
+          `UPDATE ${schema}.campaign_leads SET status = 'stopped' WHERE id = $1 AND tenant_id = $2`,
+          [campaignLead.id, tenantId]
         );
         return;
       }
@@ -200,8 +200,8 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
         
         // Mark lead as completed if all steps are done
         await pool.query(
-          `UPDATE ${schema}.campaign_leads SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-          [campaignLead.id]
+          `UPDATE ${schema}.campaign_leads SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND tenant_id = $2`,
+          [campaignLead.id, tenantId]
         );
       }
     } else {

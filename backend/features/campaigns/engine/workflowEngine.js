@@ -1,8 +1,8 @@
-const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 const stepExecutor = require('./stepExecutor');
 const conditionEvaluator = require('./conditionEvaluator');
-const logger = require('../../../core/utils/logger');
+const logger = require('../../../../core/utils/logger');
 
 /**
  * Main workflow execution engine
@@ -19,8 +19,8 @@ class WorkflowEngine {
       // Per TDD: Use dynamic schema
       const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
       const campaignResult = await pool.query(
-        `SELECT * FROM ${schema}.campaigns WHERE id = $1 AND is_deleted = FALSE`,
-        [campaignId]
+        `SELECT * FROM ${schema}.campaigns WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE`,
+        [campaignId, tenantId]
       );
 
       if (campaignResult.rows.length === 0) {
@@ -41,8 +41,8 @@ class WorkflowEngine {
 
       // Per TDD: Use dynamic schema
       const leadsResult = await pool.query(
-        `SELECT * FROM ${schema}.campaign_leads WHERE campaign_id = $1 AND is_deleted = FALSE`,
-        [campaignId]
+        `SELECT * FROM ${schema}.campaign_leads WHERE campaign_id = $1 AND tenant_id = $2 AND is_deleted = FALSE`,
+        [campaignId, tenantId]
       );
 
       logger.info('[WorkflowEngine] Found leads', { campaignId, leadCount: leadsResult.rows.length });
@@ -122,8 +122,8 @@ class WorkflowEngine {
         // Per TDD: Use dynamic schema
         const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
         await pool.query(
-          `UPDATE ${schema}.campaign_leads SET current_step_order = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND is_deleted = FALSE`,
-          [currentStepId, lead.id]
+          `UPDATE ${schema}.campaign_leads SET current_step_order = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND tenant_id = $3 AND is_deleted = FALSE`,
+          [currentStepId, lead.id, tenantId]
         );
 
         // If we've reached an end step, break

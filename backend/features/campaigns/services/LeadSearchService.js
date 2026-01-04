@@ -4,7 +4,7 @@
  */
 
 const axios = require('axios');
-const logger = require('../../../core/utils/logger');
+const logger = require('../../../../core/utils/logger');
 
 // Use the actual backend URL - prioritize internal URL, then public URL
 // No hardcoded fallback - must be set via environment variables

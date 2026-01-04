@@ -3,8 +3,8 @@
  * Helper functions for lead generation service
  */
 
-const { pool } = require('../utils/dbConnection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
 
 /**
  * Check if lead already exists in campaign
@@ -74,13 +74,18 @@ async function saveLeadToCampaign(campaignId, tenantId, leadId, snapshot, leadDa
 /**
  * Update campaign config with offset and date
  */
-async function updateCampaignConfig(campaignId, config, req = null) {
+async function updateCampaignConfig(campaignId, config, req = null, tenantId = null) {
   try {
     // Per TDD: Use dynamic schema
     const schema = getSchema(req);
+    const actualTenantId = tenantId || req?.user?.tenant_id || req?.user?.tenantId;
+    if (!actualTenantId) {
+      throw new Error('Tenant context required for campaign config update');
+    }
+    
     await pool.query(
-      `UPDATE ${schema}.campaigns SET config = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-      [JSON.stringify(config), campaignId]
+      `UPDATE ${schema}.campaigns SET config = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND tenant_id = $3`,
+      [JSON.stringify(config), campaignId, actualTenantId]
     );
   } catch (updateError) {
     // If config column doesn't exist or update fails, log but don't throw
@@ -92,13 +97,18 @@ async function updateCampaignConfig(campaignId, config, req = null) {
 /**
  * Update step config with offset and date
  */
-async function updateStepConfig(stepId, stepConfig, req = null) {
+async function updateStepConfig(stepId, stepConfig, req = null, tenantId = null) {
   try {
     // Per TDD: Use dynamic schema
     const schema = getSchema(req);
+    const actualTenantId = tenantId || req?.user?.tenant_id || req?.user?.tenantId;
+    if (!actualTenantId) {
+      throw new Error('Tenant context required for step config update');
+    }
+    
     await pool.query(
-      `UPDATE ${schema}.campaign_steps SET config = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-      [JSON.stringify(stepConfig), stepId]
+      `UPDATE ${schema}.campaign_steps SET config = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND tenant_id = $3`,
+      [JSON.stringify(stepConfig), stepId, actualTenantId]
     );
   } catch (stepUpdateErr) {
     logger.error('[Lead Generation] Error storing offset in step config', { error: stepUpdateErr.message, stack: stepUpdateErr.stack, stepId });
