@@ -55,7 +55,7 @@ async function executeEmailStep(stepType, stepConfig, campaignLead, userId, tena
     logger.info('[Campaign Execution] Executing email step', { stepType });
     
     // Get lead data
-    const leadData = await getLeadData(campaignLead.id);
+    const leadData = await getLeadData(campaignLead.id, null, tenantId);
     if (!leadData) {
       return { success: false, error: 'Lead not found' };
     }
@@ -86,7 +86,7 @@ async function executeWhatsAppStep(stepType, stepConfig, campaignLead, userId, t
     logger.info('[Campaign Execution] Executing WhatsApp step', { stepType });
     
     // Get lead data
-    const leadData = await getLeadData(campaignLead.id);
+    const leadData = await getLeadData(campaignLead.id, null, tenantId);
     if (!leadData) {
       return { success: false, error: 'Lead not found' };
     }
@@ -116,7 +116,7 @@ async function executeInstagramStep(stepType, stepConfig, campaignLead, userId, 
     logger.info('[Campaign Execution] Executing Instagram step', { stepType });
     
     // Get lead data
-    const leadData = await getLeadData(campaignLead.id);
+    const leadData = await getLeadData(campaignLead.id, null, tenantId);
     if (!leadData) {
       return { success: false, error: 'Lead not found' };
     }
@@ -139,7 +139,7 @@ async function executeVoiceAgentStep(stepConfig, campaignLead, userId, tenantId)
     logger.info('[Campaign Execution] Executing voice agent step');
     
     // Get lead data
-    const leadData = await getLeadData(campaignLead.id);
+    const leadData = await getLeadData(campaignLead.id, null, tenantId);
     if (!leadData) {
       return { success: false, error: 'Lead not found' };
     }

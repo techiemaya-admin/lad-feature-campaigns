@@ -18,7 +18,8 @@ function getBackendUrl() {
   throw new Error('BACKEND_URL, BACKEND_INTERNAL_URL, or NEXT_PUBLIC_BACKEND_URL must be set');
 }
 
-const BACKEND_URL = getBackendUrl();
+// Don't call getBackendUrl() at module load time - call it when needed
+// const BACKEND_URL = getBackendUrl();
 
 /**
  * Get authentication headers for API calls
@@ -53,7 +54,7 @@ async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dai
     logger.debug('[Lead Search] Checking database (employees_cache)', { page });
     
     const dbResponse = await axios.post(
-      `${BACKEND_URL}/api/apollo-leads/search-employees-from-db`,
+      `${getBackendUrl()}/api/apollo-leads/search-employees-from-db`,
       {
         ...searchParams,
         page: page,
@@ -104,7 +105,7 @@ async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dai
     
     logger.error('[Lead Search] Error fetching from database', { error: dbError.message, status: dbError.response?.status, responseData: dbError.response?.data, code: dbError.code });
     if (dbError.code === 'ECONNREFUSED' || dbError.code === 'ENOTFOUND') {
-      logger.error('[Lead Search] Cannot reach backend server', { backendUrl: BACKEND_URL, message: 'This will cause lead generation to fail silently!' });
+      logger.error('[Lead Search] Cannot reach backend server', { backendUrl: getBackendUrl(), message: 'This will cause lead generation to fail silently!' });
     }
     // Return empty array but log the error so it's visible
     return { employees: [], fromSource: 'database', error: dbError.message };
@@ -131,12 +132,12 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
     };
     
     // Try calling Apollo API directly - if endpoint doesn't exist, fallback to database endpoint
-    logger.debug('[Lead Search] Calling Apollo API', { url: `${BACKEND_URL}/api/apollo-leads/search-employees`, searchParams: apolloParams });
+    logger.debug('[Lead Search] Calling Apollo API', { url: `${getBackendUrl()}/api/apollo-leads/search-employees`, searchParams: apolloParams });
     
     let apolloResponse;
     try {
       apolloResponse = await axios.post(
-        `${BACKEND_URL}/api/apollo-leads/search-employees`,
+        `${getBackendUrl()}/api/apollo-leads/search-employees`,
         apolloParams,
         {
           headers: getAuthHeaders(authToken),
@@ -149,7 +150,7 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
       logger.warn('[Lead Search] Apollo endpoint failed, trying database endpoint', { error: apolloEndpointError.message, status: apolloEndpointError.response?.status, responseData: apolloEndpointError.response?.data });
       try {
         apolloResponse = await axios.post(
-          `${BACKEND_URL}/api/apollo-leads/search-employees-from-db`,
+          `${getBackendUrl()}/api/apollo-leads/search-employees-from-db`,
           apolloParams,
           {
             headers: getAuthHeaders(authToken),
@@ -181,9 +182,9 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
       return [];
     }
     
-    logger.error('[Lead Search] Error fetching from Apollo', { error: apolloError.message, status: apolloError.response?.status, responseData: apolloError.response?.data, code: apolloError.code, url: `${BACKEND_URL}/api/apollo-leads/search-employees` });
+    logger.error('[Lead Search] Error fetching from Apollo', { error: apolloError.message, status: apolloError.response?.status, responseData: apolloError.response?.data, code: apolloError.code, url: `${getBackendUrl()}/api/apollo-leads/search-employees` });
     if (apolloError.code === 'ECONNREFUSED' || apolloError.code === 'ENOTFOUND') {
-      logger.error('[Lead Search] Cannot reach backend server', { backendUrl: BACKEND_URL, message: 'This will cause lead generation to fail silently!' });
+      logger.error('[Lead Search] Cannot reach backend server', { backendUrl: getBackendUrl(), message: 'This will cause lead generation to fail silently!' });
     }
     // Return empty array but log the error so it's visible
     return [];
@@ -200,7 +201,7 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
  * @returns {Object} { employees, fromSource }
  */
 async function searchEmployees(searchParams, page, offsetInPage, dailyLimit, authToken = null) {
-  logger.info('[Lead Search] Starting employee search', { searchParams, page, offsetInPage, dailyLimit, backendUrl: BACKEND_URL });
+  logger.info('[Lead Search] Starting employee search', { searchParams, page, offsetInPage, dailyLimit, backendUrl: getBackendUrl() });
   
   // STEP 1: Try to get leads from database first
   logger.debug('[Lead Search] STEP 1: Searching database');

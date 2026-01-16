@@ -33,13 +33,14 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       stepConfig = JSON.parse(stepConfig);
     }
     
+    // LAD Architecture: Use dynamic schema resolution
+    const schema = getSchema(null); // No req available, will use default
+    
     // Get campaign to access config (leads_per_day, lead_gen_offset)
     // First try to get config from campaigns table (if config column exists)
     let campaignConfig = {};
     let configColumnExists = false;
     try {
-      // LAD Architecture: Use dynamic schema resolution
-      const schema = getSchema(null); // No req available, will use default
       const campaignResult = await pool.query(
         `SELECT config FROM ${schema}.campaigns WHERE id = $1 AND tenant_id = $2`,
         [campaignId, tenantId]
@@ -115,6 +116,39 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
           : stepConfig.leadGenerationFilters)
       : {};
     
+    logger.debug('[Campaign Execution] Parsed lead generation filters', { 
+      hasLeadGenerationFilters: !!stepConfig.leadGenerationFilters,
+      filtersType: typeof stepConfig.leadGenerationFilters,
+      parsedFilters: filters,
+      stepConfig: JSON.stringify(stepConfig).substring(0, 500) // Log first 500 chars for debugging
+    });
+    
+    // GUARD: Check if at least one search criterion is provided
+    const hasRoles = filters.person_titles && filters.person_titles.length > 0;
+    const hasLocation = filters.organization_locations && filters.organization_locations.length > 0;
+    const hasIndustries = filters.organization_industries && filters.organization_industries.length > 0;
+    
+    logger.debug('[Campaign Execution] Filter criteria check', { 
+      hasRoles, 
+      hasLocation, 
+      hasIndustries,
+      rolesValue: filters.person_titles,
+      locationsValue: filters.organization_locations,
+      industriesValue: filters.organization_industries
+    });
+    
+    if (!hasRoles && !hasLocation && !hasIndustries) {
+      logger.warn('[Campaign Execution] No lead generation filters configured', { campaignId, stepConfig, filters });
+      return {
+        success: false,
+        error: 'Lead generation filter not configured. Please set at least one of: roles, location, or industries',
+        leadsFound: 0,
+        leadsSaved: 0,
+        source: 'skipped',
+        campaignId
+      };
+    }
+    
     // We always fetch 100 results from database/Apollo for efficiency
     // But only process the USER-SELECTED number (leadsPerDay) per day
     const fetchLimit = 100; // Always fetch 100 results (we cache the rest for next days)
@@ -137,16 +171,19 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       disable_leads_sync: true
     };
     
-    if (filters.roles && filters.roles.length > 0) {
-      searchParams.person_titles = Array.isArray(filters.roles) ? filters.roles : [filters.roles];
+    // Add configured filters to search params (validated above - at least one exists)
+    // Note: The API expects person_titles, organization_locations, organization_industries
+    // which matches the parsed filters structure
+    if (hasRoles) {
+      searchParams.person_titles = Array.isArray(filters.person_titles) ? filters.person_titles : [filters.person_titles];
     }
     
-    if (filters.location) {
-      searchParams.organization_locations = Array.isArray(filters.location) ? filters.location : [filters.location];
+    if (hasLocation) {
+      searchParams.organization_locations = Array.isArray(filters.organization_locations) ? filters.organization_locations : [filters.organization_locations];
     }
     
-    if (filters.industries && filters.industries.length > 0) {
-      searchParams.organization_industries = Array.isArray(filters.industries) ? filters.industries : [filters.industries];
+    if (hasIndustries) {
+      searchParams.organization_industries = Array.isArray(filters.organization_industries) ? filters.organization_industries : [filters.organization_industries];
     }
     
     if (tenantId) {
@@ -157,7 +194,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       searchParams.user_id = userId;
     }
     
-    logger.info('[Campaign Execution] Lead generation parameters', { dailyLimit, currentOffset, page, offsetInPage });
+    logger.info('[Campaign Execution] Lead generation parameters', { dailyLimit, currentOffset, page, offsetInPage, hasRoles, hasLocation, hasIndustries });
     
     // Log search parameters for debugging
     logger.debug('[Campaign Execution] Calling LeadSearchService with filters', {
@@ -310,15 +347,19 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     
     const employeesList = employees || [];
     
-    // Get tenant_id from campaign
+    // Verify tenant_id from campaign matches the provided tenantId
     const campaignQuery = await pool.query(
       `SELECT tenant_id FROM ${schema}.campaigns WHERE id = $1 AND is_deleted = FALSE`,
       [campaignId]
     );
-    const tenantId = campaignQuery.rows[0]?.tenant_id;
+    const campaignTenantId = campaignQuery.rows[0]?.tenant_id;
     
-    if (!tenantId) {
+    if (!campaignTenantId) {
       throw new Error(`Campaign ${campaignId} not found or missing tenant_id`);
+    }
+    
+    if (campaignTenantId !== tenantId) {
+      throw new Error(`Tenant ID mismatch for campaign ${campaignId}`);
     }
       
     // Save leads to campaign_leads table (only the daily limit)

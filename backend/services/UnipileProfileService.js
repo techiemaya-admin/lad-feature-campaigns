@@ -159,9 +159,9 @@ class UnipileProfileService {
                             const { pool } = require('../../../shared/database/connection');
                             const schema = getSchema(null); // No req available in this context
                             await pool.query(
-                                `UPDATE ${schema}.linkedin_accounts 
-                                 SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP 
-                                 WHERE unipile_account_id = $1`,
+                                `UPDATE ${schema}.social_linkedin_accounts 
+                                 SET status = 'expired', updated_at = CURRENT_TIMESTAMP 
+                                 WHERE provider_account_id = $1`,
                                 [accountId]
                             );
                             logger.info('[Unipile] Marked account as inactive due to expired credentials', { accountId });
@@ -259,9 +259,9 @@ class UnipileProfileService {
                         const { pool } = require('../../../shared/database/connection');
                         const schema = getSchema(null); // No req available in this context
                         await pool.query(
-                            `UPDATE ${schema}.linkedin_accounts 
-                             SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP 
-                             WHERE unipile_account_id = $1`,
+                            `UPDATE ${schema}.social_linkedin_accounts 
+                             SET status = 'expired', updated_at = CURRENT_TIMESTAMP 
+                             WHERE provider_account_id = $1`,
                             [accountId]
                         );
                         logger.info('[Unipile] Marked account as inactive due to expired credentials', { accountId });

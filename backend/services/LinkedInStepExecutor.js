@@ -22,7 +22,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
     logger.info('[Campaign Execution] Executing LinkedIn step', { stepType, leadId: campaignLead?.id, userId, tenantId });
     
     // Get lead data
-    const leadData = await getLeadData(campaignLead.id);
+    const leadData = await getLeadData(campaignLead.id, null, tenantId);
     if (!leadData) {
       logger.error('[Campaign Execution] Lead data not found', { leadId: campaignLead.id });
       return { success: false, error: 'Lead not found' };
