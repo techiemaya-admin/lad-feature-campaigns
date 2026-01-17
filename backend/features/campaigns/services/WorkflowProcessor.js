@@ -57,6 +57,9 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     
     const nextStep = steps[nextStepIndex];
     
+    // CRITICAL: Normalize step type - database uses step_type, but code expects type
+    const nextStepType = nextStep.step_type || nextStep.type;
+    
     // CRITICAL: Check if this step has already been successfully executed for this lead
     // This prevents duplicate execution of steps like "Visit LinkedIn Profile" or "Send Connection Request"
     // Per TDD: Use lad_dev schema
@@ -71,7 +74,7 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     
     if (existingActivityResult.rows.length > 0) {
       const existingActivity = existingActivityResult.rows[0];
-      logger.info('[Campaign Execution] Step already completed, skipping', { stepId: nextStep.id, stepType: nextStep.type, leadId: campaignLead.id, status: existingActivity.status });
+      logger.info('[Campaign Execution] Step already completed, skipping', { stepId: nextStep.id, stepType: nextStepType, leadId: campaignLead.id, status: existingActivity.status });
       
       // Step already completed successfully, advance to next step
       const currentStepIndex = steps.findIndex(s => s.id === nextStep.id);
@@ -85,11 +88,11 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     
     // Validate step before execution - check if all required fields are filled by user
     const stepConfig = typeof nextStep.config === 'string' ? JSON.parse(nextStep.config) : nextStep.config;
-    const validation = validateStepConfig(nextStep.type, stepConfig);
+    const validation = validateStepConfig(nextStepType, stepConfig);
     
     if (!validation.valid) {
       // Step validation failed - required fields not filled by user
-      logger.error('[Campaign Execution] Step validation failed', { stepId: nextStep.id, stepType: nextStep.type, leadId: campaignLead.id, error: validation.error, missingFields: validation.missingFields });
+      logger.error('[Campaign Execution] Step validation failed', { stepId: nextStep.id, stepType: nextStepType, leadId: campaignLead.id, error: validation.error, missingFields: validation.missingFields });
       
       // Record validation error in activity
       // Per TDD: Use lad_dev schema and include tenant_id and campaign_id
@@ -109,8 +112,8 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
             campaign_id,
             campaignLead.id,
             nextStep.id,
-            nextStep.type,
-            nextStep.type,
+            nextStepType,
+            nextStepType,
             `Validation failed: ${validation.error}. Missing required fields: ${validation.missingFields.join(', ')}. Please configure all required fields in step settings.`
           ]
         );
@@ -127,11 +130,11 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
       return;
     }
     
-    logger.debug('[Campaign Execution] Step validation passed', { stepId: nextStep.id, stepType: nextStep.type });
+    logger.debug('[Campaign Execution] Step validation passed', { stepId: nextStep.id, stepType: nextStepType });
     
     // Check if this is a delay step - if so, check if delay has passed
     // (stepConfig already parsed above during validation)
-    if (nextStep.type === 'delay') {
+    if (nextStepType === 'delay') {
       const delayDays = stepConfig.delay_days || stepConfig.delayDays || 0;
       const delayHours = stepConfig.delay_hours || stepConfig.delayHours || 0;
       
@@ -150,7 +153,7 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     
     // Check if this is a condition step
     // (stepConfig already parsed above during validation)
-    if (nextStep.type === 'condition') {
+    if (nextStepType === 'condition') {
       const conditionResult = await executeConditionStep(stepConfig, campaignLead);
       
       if (!conditionResult.conditionMet) {
@@ -178,7 +181,7 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     if (stepResult && stepResult.success) {
       logger.info('[Campaign Execution] Step executed successfully, continuing to next step', { 
         stepId: nextStep.id, 
-        stepType: nextStep.type, 
+        stepType: nextStepType, 
         leadId: campaignLead.id 
       });
       
@@ -190,7 +193,7 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
         const remainingSteps = steps.slice(currentStepIndex + 1);
         logger.debug('[Campaign Execution] Processing remaining steps', { 
           remainingCount: remainingSteps.length, 
-          nextStepType: remainingSteps[0]?.type 
+          nextStepType: remainingSteps[0]?.step_type || remainingSteps[0]?.type 
         });
         
         // Recursively process remaining steps
@@ -208,7 +211,7 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
       // Step failed - log error but don't stop workflow (some steps might fail but workflow should continue)
       logger.warn('[Campaign Execution] Step execution failed, but continuing workflow', { 
         stepId: nextStep.id, 
-        stepType: nextStep.type, 
+        stepType: nextStepType, 
         error: stepResult?.error,
         leadId: campaignLead.id 
       });
