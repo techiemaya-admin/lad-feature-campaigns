@@ -67,8 +67,23 @@ async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dai
     );
     
     if (dbResponse.data && dbResponse.data.success !== false) {
-      const dbEmployees = dbResponse.data.employees || dbResponse.data || [];
+      let dbEmployees = dbResponse.data.employees || dbResponse.data || [];
       logger.info('[Lead Search] Found leads in database', { count: dbEmployees.length, page });
+      
+      // Filter out excluded IDs (leads already used by this tenant)
+      if (searchParams.exclude_ids && searchParams.exclude_ids.length > 0) {
+        const excludeSet = new Set(searchParams.exclude_ids);
+        const beforeFilter = dbEmployees.length;
+        dbEmployees = dbEmployees.filter(emp => {
+          const empId = emp.id || emp.apollo_person_id;
+          return empId && !excludeSet.has(empId);
+        });
+        logger.info('[Lead Search] Filtered out existing leads from database results', { 
+          before: beforeFilter, 
+          after: dbEmployees.length, 
+          filtered: beforeFilter - dbEmployees.length 
+        });
+      }
       
       // Apply offset within this page and take daily limit
       const availableFromDb = dbEmployees.slice(offsetInPage, offsetInPage + dailyLimit);
@@ -165,8 +180,23 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
     }
     
     if (apolloResponse.data && apolloResponse.data.success !== false) {
-      const apolloEmployees = apolloResponse.data.employees || apolloResponse.data || [];
+      let apolloEmployees = apolloResponse.data.employees || apolloResponse.data || [];
       logger.info('[Lead Search] Found leads from Apollo', { count: apolloEmployees.length, page });
+      
+      // Filter out excluded IDs (leads already used by this tenant)
+      if (searchParams.exclude_ids && searchParams.exclude_ids.length > 0) {
+        const excludeSet = new Set(searchParams.exclude_ids);
+        const beforeFilter = apolloEmployees.length;
+        apolloEmployees = apolloEmployees.filter(emp => {
+          const empId = emp.id || emp.apollo_person_id;
+          return empId && !excludeSet.has(empId);
+        });
+        logger.info('[Lead Search] Filtered out existing leads from Apollo results', { 
+          before: beforeFilter, 
+          after: apolloEmployees.length, 
+          filtered: beforeFilter - apolloEmployees.length 
+        });
+      }
       
       // Apply offset within Apollo page and take what we need
       return apolloEmployees.slice(offsetInPage, offsetInPage + neededCount);

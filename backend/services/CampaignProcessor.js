@@ -264,23 +264,23 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
     // Per TDD: Use lad_dev schema and step_order column (fallback to order if step_order doesn't exist)
     let stepsResult;
     try {
-      // First try with step_order
+      // First try with step_order and step_type, aliasing for compatibility
       stepsResult = await pool.query(
-        `SELECT * FROM ${schema}.campaign_steps 
-         WHERE campaign_id = $1 
+        `SELECT *, step_type as type FROM ${schema}.campaign_steps 
+         WHERE campaign_id = $1 AND tenant_id = $2
          ORDER BY step_order ASC`,
-        [campaignId]
+        [campaignId, tenantId]
       );
     } catch (error) {
-      // If step_order column doesn't exist, try with order
-      if (error.message && error.message.includes('step_order')) {
-        logger.warn('[Campaign Execution] step_order column not found, trying order', { error: error.message });
+      // If step_order or step_type columns don't exist, try with order and type
+      if (error.message && (error.message.includes('step_order') || error.message.includes('step_type'))) {
+        logger.warn('[Campaign Execution] step_order/step_type columns not found, trying order/type', { error: error.message });
         try {
           stepsResult = await pool.query(
             `SELECT * FROM ${schema}.campaign_steps 
-             WHERE campaign_id = $1 
+             WHERE campaign_id = $1 AND tenant_id = $2
              ORDER BY "order" ASC`,
-            [campaignId]
+            [campaignId, tenantId]
           );
         } catch (orderError) {
           // If order also fails, try without ordering
@@ -288,8 +288,8 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
             logger.warn('[Campaign Execution] order column also not found, trying without ORDER BY', { error: orderError.message });
             stepsResult = await pool.query(
               `SELECT * FROM ${schema}.campaign_steps 
-               WHERE campaign_id = $1`,
-              [campaignId]
+               WHERE campaign_id = $1 AND tenant_id = $2`,
+              [campaignId, tenantId]
             );
           } else {
             throw orderError;

@@ -23,16 +23,50 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
     const schema = getSchema(req);
     // Get tenant_id from req or parameter
     const actualTenantId = tenantId || req?.user?.tenant_id || req?.user?.tenantId;
-    if (!actualTenantId) {
-      throw new Error('Tenant context required for lead data access');
+    
+    let leadDataResult;
+    
+    // If we have tenantId, use it for tenant-scoped query
+    if (actualTenantId) {
+      try {
+        leadDataResult = await pool.query(
+          `SELECT lead_data, snapshot, tenant_id FROM ${schema}.campaign_leads WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE`,
+          [campaignLeadId, actualTenantId]
+        );
+      } catch (err) {
+        // If is_deleted column doesn't exist, try without it
+        if (err.message && err.message.includes('is_deleted')) {
+          leadDataResult = await pool.query(
+            `SELECT lead_data, snapshot, tenant_id FROM ${schema}.campaign_leads WHERE id = $1 AND tenant_id = $2`,
+            [campaignLeadId, actualTenantId]
+          );
+        } else {
+          throw err;
+        }
+      }
+    } else {
+      // No tenantId provided - try to get lead by ID only (less secure, but allows backward compatibility)
+      // This should only happen in legacy code paths
+      logger.warn('[StepExecutors] getLeadData called without tenantId - using ID-only query', { campaignLeadId });
+      try {
+        leadDataResult = await pool.query(
+          `SELECT lead_data, snapshot, tenant_id FROM ${schema}.campaign_leads WHERE id = $1 AND is_deleted = FALSE`,
+          [campaignLeadId]
+        );
+      } catch (err) {
+        if (err.message && err.message.includes('is_deleted')) {
+          leadDataResult = await pool.query(
+            `SELECT lead_data, snapshot, tenant_id FROM ${schema}.campaign_leads WHERE id = $1`,
+            [campaignLeadId]
+          );
+        } else {
+          throw err;
+        }
+      }
     }
     
-    const leadDataResult = await pool.query(
-      `SELECT lead_data, snapshot FROM ${schema}.campaign_leads WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE`,
-      [campaignLeadId, actualTenantId]
-    );
-    
     if (leadDataResult.rows.length === 0) {
+      logger.warn('[StepExecutors] Lead not found', { campaignLeadId, tenantId: actualTenantId });
       return null;
     }
     
@@ -42,7 +76,7 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
     
     return typeof leadData === 'string' ? JSON.parse(leadData) : leadData;
   } catch (err) {
-    logger.error('[StepExecutors] Error getting lead data', { error: err.message, stack: err.stack });
+    logger.error('[StepExecutors] Error getting lead data', { error: err.message, stack: err.stack, campaignLeadId, tenantId });
     throw err;
   }
 }

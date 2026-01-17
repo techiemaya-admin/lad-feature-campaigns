@@ -21,10 +21,14 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
   try {
     logger.info('[Campaign Execution] Executing LinkedIn step', { stepType, leadId: campaignLead?.id, userId, tenantId });
     
+<<<<<<< HEAD:backend/services/LinkedInStepExecutor.js
     // Get lead data
+=======
+    // Get lead data - CRITICAL: Pass tenantId for proper tenant scoping
+>>>>>>> d336ed71376579570c0e72910f969dd407921622:backend/features/campaigns/services/LinkedInStepExecutor.js
     const leadData = await getLeadData(campaignLead.id, null, tenantId);
     if (!leadData) {
-      logger.error('[Campaign Execution] Lead data not found', { leadId: campaignLead.id });
+      logger.error('[Campaign Execution] Lead data not found', { leadId: campaignLead.id, tenantId });
       return { success: false, error: 'Lead not found' };
     }
     

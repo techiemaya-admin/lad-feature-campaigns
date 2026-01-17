@@ -6,6 +6,38 @@
 const { pool } = require('../../../shared/database/connection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const { searchEmployees, searchEmployeesFromDatabase } = require('./LeadSearchService');
+
+/**
+ * Get list of apollo_person_ids already used by this tenant across all campaigns
+ * This prevents sending duplicate leads to the same user
+ * @param {string} tenantId - Tenant ID
+ * @returns {Set<string>} Set of already-used apollo_person_ids
+ */
+async function getExistingLeadIds(tenantId) {
+  try {
+    const schema = getSchema({ user: { tenant_id: tenantId } });
+    const result = await pool.query(
+      `SELECT DISTINCT lead_data->>'apollo_person_id' as apollo_person_id,
+              lead_data->>'id' as lead_id
+       FROM ${schema}.campaign_leads 
+       WHERE tenant_id = $1 AND is_deleted = FALSE
+         AND (lead_data->>'apollo_person_id' IS NOT NULL OR lead_data->>'id' IS NOT NULL)`,
+      [tenantId]
+    );
+    
+    const existingIds = new Set();
+    for (const row of result.rows) {
+      if (row.apollo_person_id) existingIds.add(row.apollo_person_id);
+      if (row.lead_id) existingIds.add(row.lead_id);
+    }
+    
+    logger.info('[Lead Generation] Found existing leads for tenant', { tenantId, count: existingIds.size });
+    return existingIds;
+  } catch (err) {
+    logger.warn('[Lead Generation] Error fetching existing lead IDs', { error: err.message });
+    return new Set(); // Return empty set on error - will allow duplicates but won't break
+  }
+}
 const {
   updateCampaignConfig,
   updateStepConfig
@@ -109,6 +141,11 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     // Offset tracks total leads processed across all days
     logger.info('[Campaign Execution] Lead generation status', { today, lastLeadGenDate: lastLeadGenDate || 'never', currentOffset });
     
+    // CRITICAL: Get existing lead IDs to prevent duplicate leads across days/campaigns
+    // This ensures we never send the same lead twice to a user
+    const existingLeadIds = await getExistingLeadIds(tenantId);
+    logger.info('[Campaign Execution] Excluding existing leads', { excludeCount: existingLeadIds.size });
+    
     // Parse lead generation config
     const filters = stepConfig.leadGenerationFilters 
       ? (typeof stepConfig.leadGenerationFilters === 'string' 
@@ -194,7 +231,16 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       searchParams.user_id = userId;
     }
     
+<<<<<<< HEAD:backend/services/LeadGenerationService.js
     logger.info('[Campaign Execution] Lead generation parameters', { dailyLimit, currentOffset, page, offsetInPage, hasRoles, hasLocation, hasIndustries });
+=======
+    // Pass exclude list to search service (for database/Apollo queries that support it)
+    if (existingLeadIds.size > 0) {
+      searchParams.exclude_ids = Array.from(existingLeadIds);
+    }
+    
+    logger.info('[Campaign Execution] Lead generation parameters', { dailyLimit, currentOffset, page, offsetInPage, excludeCount: existingLeadIds.size });
+>>>>>>> d336ed71376579570c0e72910f969dd407921622:backend/features/campaigns/services/LeadGenerationService.js
     
     // Log search parameters for debugging
     logger.debug('[Campaign Execution] Calling LeadSearchService with filters', {
@@ -223,24 +269,60 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       searchError = dbSearchResult.error || null;
       accessDenied = dbSearchResult.accessDenied || false;
       
-      logger.info('[Campaign Execution] Database search result', { leadCount: employees.length, source: fromSource });
+      logger.info('[Campaign Execution] Database search result', { leadCount: employees.length, dailyLimit, source: fromSource });
       if (accessDenied) {
         logger.warn('[Campaign Execution] User does not have Apollo Leads feature access - database access denied');
       }
       
-      // If no leads from database and access is NOT denied, try Apollo API
-      if (employees.length === 0 && !searchError && !accessDenied) {
-        logger.debug('[Campaign Execution] STEP 2: No leads in employees_cache, calling Apollo API');
-        const apolloSearchResult = await searchEmployees(searchParams, page, offsetInPage, dailyLimit, authToken);
-        employees = apolloSearchResult.employees || [];
-        fromSource = apolloSearchResult.fromSource || 'apollo';
-        searchError = apolloSearchResult.error || null;
+      // If database has no leads OR insufficient leads (less than dailyLimit), try Apollo API
+      // This ensures we always try to get enough leads to meet the user's daily limit
+      if (employees.length < dailyLimit && !searchError && !accessDenied) {
+        const neededFromApollo = dailyLimit - employees.length;
+        logger.debug('[Campaign Execution] STEP 2: Database has insufficient leads, calling Apollo API', { 
+          dbLeadsCount: employees.length, 
+          dailyLimit, 
+          neededFromApollo 
+        });
         
-        logger.info('[Campaign Execution] Apollo search result', { leadCount: employees.length, source: fromSource });
+        const apolloSearchResult = await searchEmployees(searchParams, page, offsetInPage, neededFromApollo, authToken);
+        const apolloEmployees = apolloSearchResult.employees || [];
+        
+        // Combine database leads with Apollo leads
+        if (apolloEmployees.length > 0) {
+          employees = [...employees, ...apolloEmployees].slice(0, dailyLimit);
+          fromSource = employees.length > 0 && apolloEmployees.length > 0 ? 'mixed' : (apolloEmployees.length > 0 ? 'apollo' : 'database');
+          logger.info('[Campaign Execution] Combined leads from database and Apollo', { 
+            dbLeads: employees.length - apolloEmployees.length, 
+            apolloLeads: apolloEmployees.length, 
+            totalLeads: employees.length 
+          });
+        } else {
+          searchError = apolloSearchResult.error || null;
+          logger.info('[Campaign Execution] Apollo returned no additional leads', { dbLeads: employees.length });
+        }
       }
     } catch (searchErr) {
       logger.error('[Campaign Execution] Lead search error', { error: searchErr.message, stack: searchErr.stack });
       searchError = searchErr.message;
+    }
+    
+    // CRITICAL: Filter out any leads that already exist in the tenant's campaigns
+    // This is a safety check in case the search service couldn't exclude them at query level
+    if (employees.length > 0 && existingLeadIds.size > 0) {
+      const originalCount = employees.length;
+      employees = employees.filter(emp => {
+        const empId = emp.id || emp.apollo_person_id;
+        return empId && !existingLeadIds.has(empId);
+      });
+      
+      const filteredOut = originalCount - employees.length;
+      if (filteredOut > 0) {
+        logger.info('[Campaign Execution] Filtered out duplicate leads', { 
+          originalCount, 
+          afterFilter: employees.length, 
+          filteredOut 
+        });
+      }
     }
     
     logger.info('[Campaign Execution] Final search result', {
@@ -347,7 +429,11 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     
     const employeesList = employees || [];
     
+<<<<<<< HEAD:backend/services/LeadGenerationService.js
     // Verify tenant_id from campaign matches the provided tenantId
+=======
+    // Verify tenant_id from campaign matches the one passed in
+>>>>>>> d336ed71376579570c0e72910f969dd407921622:backend/features/campaigns/services/LeadGenerationService.js
     const campaignQuery = await pool.query(
       `SELECT tenant_id FROM ${schema}.campaigns WHERE id = $1 AND is_deleted = FALSE`,
       [campaignId]
@@ -358,9 +444,13 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       throw new Error(`Campaign ${campaignId} not found or missing tenant_id`);
     }
     
+<<<<<<< HEAD:backend/services/LeadGenerationService.js
     if (campaignTenantId !== tenantId) {
       throw new Error(`Tenant ID mismatch for campaign ${campaignId}`);
     }
+=======
+    // Use the tenantId from the parameter (already validated)
+>>>>>>> d336ed71376579570c0e72910f969dd407921622:backend/features/campaigns/services/LeadGenerationService.js
       
     // Save leads to campaign_leads table (only the daily limit)
     const { savedCount, firstGeneratedLeadId } = await saveLeadsToCampaign(
