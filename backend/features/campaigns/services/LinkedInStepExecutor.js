@@ -28,7 +28,14 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
       return { success: false, error: 'Lead not found' };
     }
     
-    const linkedinUrl = leadData.linkedin_url || leadData.employee_linkedin_url;
+    const linkedinUrl = leadData.linkedin_url 
+      || leadData.employee_linkedin_url
+      || (leadData.employee_data && typeof leadData.employee_data === 'string' 
+          ? JSON.parse(leadData.employee_data).linkedin_url 
+          : leadData.employee_data?.linkedin_url)
+      || (leadData.employee_data && leadData.employee_data.linkedin)
+      || (leadData.employee_data && leadData.employee_data.profile_url);
+    
     if (!linkedinUrl) {
       logger.error('[Campaign Execution] LinkedIn URL not found for lead', { leadId: campaignLead.id, leadDataKeys: Object.keys(leadData) });
       return { success: false, error: 'LinkedIn URL not found for lead' };
@@ -128,9 +135,9 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
         const duration = Date.now() - startTime;
         logger.info('[Campaign Execution] Unipile API call completed', { employeeName: employee.fullname, duration });
         
-        // Check if account credentials expired
-        if (profileResult && profileResult.accountExpired) {
-          logger.warn('[Campaign Execution] Account credentials expired, trying to find another account', { accountId: linkedinAccountId });
+        // Check if account credentials expired or requires user intervention
+        if (profileResult && (profileResult.accountExpired || profileResult.statusCode === 401)) {
+          logger.warn('[Campaign Execution] Account credentials expired or requires intervention, trying to find another account', { accountId: linkedinAccountId, errorType: profileResult.errorType });
           
           // Try to get another active account
           const allAccounts = await getAllLinkedInAccountsForTenant(tenantId, userId);
@@ -151,7 +158,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
               const profileData = retryResult.profile || retryResult;
               await generateAndSaveProfileSummary(campaignLead.id, leadData, profileData, employee);
             } else {
-              logger.error('[Campaign Execution] All LinkedIn accounts have expired credentials');
+              logger.error('[Campaign Execution] All LinkedIn accounts have expired credentials or failed');
               result = {
                 success: false,
                 error: 'LinkedIn account credentials expired. Please reconnect your LinkedIn account in Settings → LinkedIn Integration.',
@@ -166,6 +173,15 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
               accountExpired: true
             };
           }
+        } else if (profileResult && profileResult.transientError) {
+          // Handle transient errors - these are temporary and should be retried
+          logger.warn('[Campaign Execution] Transient error during profile visit, will allow retry', { accountId: linkedinAccountId, error: profileResult.error });
+          result = {
+            success: false,
+            error: profileResult.error || 'Temporary connection issue. Campaign will retry.',
+            transientError: true,
+            userAction: 'Campaign will automatically retry this step'
+          };
         } else if (profileResult && profileResult.success !== false) {
           logger.info('[Campaign Execution] Successfully visited profile via Unipile', { employeeName: employee.fullname });
           result = {

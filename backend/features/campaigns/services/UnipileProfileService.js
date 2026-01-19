@@ -7,10 +7,12 @@
 const axios = require('axios');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const logger = require('../../../core/utils/logger');
+const UnipileAccountReconnectionService = require('./UnipileAccountReconnectionService');
 
 class UnipileProfileService {
     constructor(baseService) {
         this.base = baseService;
+        this.reconnectionService = new UnipileAccountReconnectionService(baseService);
     }
 
     /**
@@ -62,7 +64,32 @@ class UnipileProfileService {
                     params: { account_id: accountId },
                     timeout: Number(process.env.UNIPILE_LOOKUP_TIMEOUT_MS) || 15000
                 }
-            );
+            ).catch(async (error) => {
+                // Handle 401 errors with automatic reconnection
+                if (error.response && error.response.status === 401) {
+                    logger.warn('[Unipile] 401 Error on lookup - attempting automatic reconnection', { accountId, publicId });
+                    
+                    const reconnectResult = await this.reconnectionService.handle401Error(
+                        accountId,
+                        error,
+                        async () => {
+                            return await axios.get(
+                                `${baseUrl}/users/${publicId}`,
+                                {
+                                    headers,
+                                    params: { account_id: accountId },
+                                    timeout: Number(process.env.UNIPILE_LOOKUP_TIMEOUT_MS) || 15000
+                                }
+                            );
+                        }
+                    );
+
+                    if (reconnectResult.success && reconnectResult.retried && reconnectResult.result) {
+                        return reconnectResult.result;
+                    }
+                }
+                throw error;
+            });
 
             const lookupData = lookupResponse.data?.data || lookupResponse.data || {};
             const providerId = lookupData.provider_id;
@@ -85,7 +112,32 @@ class UnipileProfileService {
                     headers,
                     timeout: Number(process.env.UNIPILE_PROFILE_TIMEOUT_MS) || 30000
                 }
-            );
+            ).catch(async (error) => {
+                // Handle 401 errors with automatic reconnection
+                if (error.response && error.response.status === 401) {
+                    logger.warn('[Unipile] 401 Error on follow - attempting automatic reconnection', { accountId });
+                    
+                    const reconnectResult = await this.reconnectionService.handle401Error(
+                        accountId,
+                        error,
+                        async () => {
+                            return await axios.post(
+                                `${baseUrl}/users/relations`,
+                                followPayload,
+                                {
+                                    headers,
+                                    timeout: Number(process.env.UNIPILE_PROFILE_TIMEOUT_MS) || 30000
+                                }
+                            );
+                        }
+                    );
+
+                    if (reconnectResult.success && reconnectResult.retried && reconnectResult.result) {
+                        return reconnectResult.result;
+                    }
+                }
+                throw error;
+            });
 
             return {
                 success: true,
@@ -139,39 +191,71 @@ class UnipileProfileService {
 
             logger.debug('[Unipile] Fetching LinkedIn profile with contact info', { publicIdentifier, endpoint, accountId, baseUrl, hasToken: !!headers.Authorization, tokenLength: headers.Authorization?.length || 0 });
 
-            const response = await axios.get(endpoint, {
-                headers: headers,
-                params: params,
-                timeout: Number(process.env.UNIPILE_LOOKUP_TIMEOUT_MS) || 15000
-            }).catch(async (error) => {
-                // Handle 401 errors - account credentials may have expired
+            // Attempt to fetch with automatic reconnection on 401
+            let response;
+            try {
+                response = await axios.get(endpoint, {
+                    headers: headers,
+                    params: params,
+                    timeout: Number(process.env.UNIPILE_LOOKUP_TIMEOUT_MS) || 15000
+                });
+            } catch (error) {
+                // Handle 401 errors with automatic reconnection
                 if (error.response && error.response.status === 401) {
-                    const errorData = error.response.data || {};
-                    const errorType = errorData.type || '';
-                    const errorTitle = errorData.title || '';
+                    logger.warn('[Unipile] 401 Error received - attempting automatic reconnection', { accountId });
                     
-                    // Check if it's a missing credentials error
-                    if (errorType.includes('missing_credentials') || errorTitle.includes('Missing credentials')) {
-                        logger.warn('[Unipile] Account credentials expired or invalid, marking as inactive', { accountId });
-                        
-                        // Mark account as inactive in database
-                        try {
-                            const { pool } = require('../../../shared/database/connection');
-                            const schema = getSchema(null); // No req available in this context
-                            await pool.query(
-                                `UPDATE ${schema}.linkedin_accounts 
-                                 SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP 
-                                 WHERE unipile_account_id = $1`,
-                                [accountId]
-                            );
-                            logger.info('[Unipile] Marked account as inactive due to expired credentials', { accountId });
-                        } catch (dbError) {
-                            logger.error('[Unipile] Error updating account status', { accountId, error: dbError.message });
+                    // Try automatic reconnection with retry
+                    const reconnectResult = await this.reconnectionService.handle401Error(
+                        accountId, 
+                        error,
+                        async () => {
+                            // Retry function: retry the original request
+                            return await axios.get(endpoint, {
+                                headers: headers,
+                                params: params,
+                                timeout: Number(process.env.UNIPILE_LOOKUP_TIMEOUT_MS) || 15000
+                            });
                         }
+                    );
+
+                    if (reconnectResult.success && reconnectResult.retried && reconnectResult.result) {
+                        logger.info('[Unipile] Successfully retried request after reconnection', { accountId });
+                        response = reconnectResult.result;
+                    } else if (reconnectResult.requiresUserIntervention) {
+                        logger.warn('[Unipile] Account requires user intervention', { accountId });
+                        return {
+                            success: false,
+                            phone: null,
+                            email: null,
+                            error: reconnectResult.userMessage || 'Account requires re-authentication',
+                            accountExpired: true,
+                            accountId: accountId,
+                            errorType: 'requires_user_intervention',
+                            statusCode: 401
+                        };
+                    } else {
+                        // Transient error - don't mark as expired, allow client to retry
+                        logger.warn('[Unipile] Transient connection error - not marking as expired', { accountId });
+                        return {
+                            success: false,
+                            phone: null,
+                            email: null,
+                            error: reconnectResult.userMessage || 'Temporary connection issue. Please retry.',
+                            transientError: true,
+                            accountId: accountId,
+                            errorType: 'transient_error',
+                            statusCode: 401
+                        };
                     }
+                } else {
+                    // Non-401 errors should be re-thrown
+                    throw error;
                 }
-                throw error;
-            });
+            }
+
+            if (!response) {
+                throw new Error('Failed to get response from Unipile API');
+            }
 
             const profileData = response.data;
             
@@ -242,59 +326,13 @@ class UnipileProfileService {
             };
 
         } catch (error) {
-            logger.error('[Unipile] Error fetching LinkedIn contact details', { error: error.message, status: error.response?.status, responseData: error.response?.data });
+            logger.error('[Unipile] Error fetching LinkedIn contact details', { 
+                error: error.message, 
+                status: error.response?.status, 
+                responseData: error.response?.data 
+            });
             
-            // Handle 401 errors - account credentials may have expired
-            if (error.response && error.response.status === 401) {
-                const errorData = error.response.data || {};
-                const errorType = errorData.type || '';
-                const errorTitle = errorData.title || '';
-                
-                // Check if it's a missing credentials error
-                if (errorType.includes('missing_credentials') || errorTitle.includes('Missing credentials')) {
-                    logger.warn('[Unipile] Account credentials expired or invalid, marking as inactive', { accountId });
-                    
-                    // Mark account as inactive in database
-                    try {
-                        const { pool } = require('../../../shared/database/connection');
-                        const schema = getSchema(null); // No req available in this context
-                        await pool.query(
-                            `UPDATE ${schema}.linkedin_accounts 
-                             SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP 
-                             WHERE unipile_account_id = $1`,
-                            [accountId]
-                        );
-                        logger.info('[Unipile] Marked account as inactive due to expired credentials', { accountId });
-                        
-                        // Also try to update old schema if it exists
-                        try {
-                            await pool.query(
-                                `UPDATE ${schema}.user_integrations_voiceagent 
-                                 SET is_connected = FALSE, updated_at = CURRENT_TIMESTAMP 
-                                 WHERE (credentials->>'unipile_account_id' = $1 OR credentials->>'account_id' = $1)
-                                 AND provider = 'linkedin'`,
-                                [accountId]
-                            );
-                        } catch (oldSchemaError) {
-                            // Old schema might not exist, that's okay
-                        }
-                    } catch (dbError) {
-                        logger.error('[Unipile] Error updating account status', { accountId, error: dbError.message });
-                    }
-                        
-                        return {
-                            success: false,
-                            phone: null,
-                            email: null,
-                            error: 'LinkedIn account credentials expired. Please reconnect your LinkedIn account in Settings.',
-                            accountExpired: true,
-                            accountId: accountId
-                        };
-                    }
-                }
-            }
-            
-            // Don't throw - return failure so caller can fallback to Apollo
+            // Return failure so caller can fallback to other methods (e.g., Apollo)
             return {
                 success: false,
                 phone: null,
@@ -303,6 +341,7 @@ class UnipileProfileService {
             };
         }
     }
+}
 
 module.exports = UnipileProfileService;
 

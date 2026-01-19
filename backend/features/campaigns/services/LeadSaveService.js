@@ -25,30 +25,84 @@ async function saveLeadsToCampaign(campaignId, tenantId, employees) {
   let firstGeneratedLeadId = null;
   
   for (const employee of employees) {
-    const apolloPersonId = employee.id || employee.apollo_person_id || 'unknown';
+    // DETECT SOURCE: Check if this lead came from Unipile or Apollo
+    const source = employee._source || 'apollo_io'; // Default to apollo_io for backward compatibility
+    
+    // Extract the appropriate ID based on source
+    let sourceId = null;
+    if (source === 'unipile') {
+      // Unipile leads have 'id' field (or use profile_id as fallback)
+      sourceId = employee.id || employee.profile_id || 'unknown';
+    } else {
+      // Apollo leads have 'apollo_person_id' or 'id'
+      sourceId = employee.apollo_person_id || employee.id || 'unknown';
+    }
+    
+    // Validate that sourceId is NOT a UUID (which would indicate database ID corruption)
+    const isUUIDFormat = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(sourceId));
     
     try {
-      if (!apolloPersonId || apolloPersonId === 'unknown') {
-        logger.warn('[Lead Save] Employee missing apollo_person_id, skipping', { employeeName: employee.name || employee.employee_name });
+      if (!sourceId || sourceId === 'unknown') {
+        logger.warn('[Lead Save] Employee missing source ID, skipping', { 
+          employeeName: employee.name || employee.employee_name,
+          source 
+        });
+        continue;
+      }
+      
+      if (isUUIDFormat) {
+        logger.warn('[Lead Save] Employee ID is UUID format (likely database ID, not source person ID), skipping', {
+          name: employee.name || employee.employee_name,
+          id: sourceId,
+          source
+        });
         continue;
       }
       
       // Check if lead already exists
-      const existingLead = await checkLeadExists(campaignId, apolloPersonId);
+      const existingLead = await checkLeadExists(campaignId, sourceId);
       
       if (!existingLead) {
-        // Ensure apollo_person_id is stored for future lookups
+        // Create clean leadData object with only necessary fields
+        // Support both Unipile and Apollo field names
+        // For Apollo leads, linkedin_url might be nested in employee_data
+        let linkedinUrlValue = employee.linkedin_url || employee.linkedin || employee.profile_url || employee.public_profile_url;
+        
+        // If not found at top level, check in employee_data (Apollo structure)
+        if (!linkedinUrlValue && employee.employee_data) {
+          const employeeDataObj = typeof employee.employee_data === 'string' 
+            ? JSON.parse(employee.employee_data) 
+            : employee.employee_data;
+          linkedinUrlValue = employeeDataObj.linkedin_url || employeeDataObj.linkedin || employeeDataObj.profile_url;
+        }
+        
         const leadData = {
-          ...employee,
-          apollo_person_id: apolloPersonId
+          id: sourceId,  // Explicitly set id to the source person ID
+          name: employee.name || employee.employee_name,
+          first_name: employee.first_name,
+          last_name: employee.last_name,
+          title: employee.title || employee.job_title || employee.headline,
+          email: employee.email || employee.work_email,
+          phone: employee.phone || employee.phone_number,
+          linkedin_url: linkedinUrlValue,
+          company_id: employee.company_id,
+          company_name: employee.company_name,
+          company_domain: employee.company_domain,
+          photo_url: employee.photo_url || employee.profile_picture_url,
+          headline: employee.headline,
+          city: employee.city,
+          state: employee.state,
+          country: employee.country,
+          source: source, // Track which source this lead came from
+          _full_data: employee
         };
         
         // Extract fields and create snapshot
         const fields = extractLeadFields(employee);
         const snapshot = createSnapshot(fields);
         
-        // Find or create lead in leads table using apollo_person_id as source_id
-        const leadId = await findOrCreateLead(tenantId, apolloPersonId, fields, leadData);
+        // Find or create lead with proper source detection
+        const leadId = await findOrCreateLead(tenantId, sourceId, fields, leadData, source);
         
         // Save lead to campaign
         try {
@@ -58,10 +112,16 @@ async function saveLeadsToCampaign(campaignId, tenantId, employees) {
           if (!firstGeneratedLeadId) {
             firstGeneratedLeadId = insertedLeadId;
           }
-          logger.info('[Lead Save] Successfully saved lead to campaign', { apolloPersonId, campaignLeadId: insertedLeadId, leadId });
+          logger.info('[Lead Save] Successfully saved lead to campaign', { 
+            sourceId, 
+            source,
+            campaignLeadId: insertedLeadId, 
+            leadId 
+          });
         } catch (err) {
           logger.error('[Lead Save] Error saving lead', {
-            apolloPersonId,
+            sourceId,
+            source,
             message: err.message,
             code: err.code,
             detail: err.detail,
@@ -70,11 +130,16 @@ async function saveLeadsToCampaign(campaignId, tenantId, employees) {
           // Continue to next lead instead of throwing
         }
       } else {
-        logger.info('[Lead Save] Skipping lead - already exists in campaign', { apolloPersonId, existingLeadId: existingLead.id });
+        logger.info('[Lead Save] Skipping lead - already exists in campaign', { 
+          sourceId, 
+          source,
+          existingLeadId: existingLead.id 
+        });
       }
     } catch (err) {
       logger.error('[Lead Save] Error processing lead', {
-        apolloPersonId,
+        sourceId,
+        source,
         message: err.message,
         code: err.code,
         detail: err.detail
@@ -88,25 +153,30 @@ async function saveLeadsToCampaign(campaignId, tenantId, employees) {
 
 /**
  * Find or create lead in leads table
+ * @param {string} tenantId - Tenant ID
+ * @param {string} sourceId - The ID from the source (Apollo person ID or Unipile ID)
+ * @param {Object} fields - Lead fields
+ * @param {Object} leadData - Full lead data
+ * @param {string} source - Source identifier ('apollo_io' or 'unipile')
  */
-async function findOrCreateLead(tenantId, apolloPersonId, fields, leadData) {
+async function findOrCreateLead(tenantId, sourceId, fields, leadData, source = 'apollo_io') {
   let leadId = null;
   
   try {
-    // Find existing lead by source_id (Apollo person ID)
+    // Find existing lead by source_id and source
     const schema = getSchema({ user: { tenant_id: tenantId } });
     const findLeadResult = await pool.query(
       `SELECT id FROM ${schema}.leads 
-       WHERE tenant_id = $1 AND source_id = $2 AND source = 'apollo_io'
+       WHERE tenant_id = $1 AND source_id = $2 AND source = $3
        LIMIT 1`,
-      [tenantId, apolloPersonId]
+      [tenantId, sourceId, source]
     );
     
     if (findLeadResult.rows.length > 0) {
       leadId = findLeadResult.rows[0].id;
-      logger.info('[Lead Save] Found existing lead in leads table', { apolloPersonId, leadId });
+      logger.info('[Lead Save] Found existing lead in leads table', { sourceId, source, leadId });
     } else {
-      // Create new lead with UUID id, store apollo_person_id in source_id
+      // Create new lead with UUID id, store source_id properly
       const { randomUUID } = require('crypto');
       leadId = randomUUID();
       
@@ -117,7 +187,7 @@ async function findOrCreateLead(tenantId, apolloPersonId, fields, leadData) {
           company_name, title, linkedin_url, 
           custom_fields, raw_data, created_at, updated_at
         )
-        VALUES ($1, $2, 'apollo_io', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT (id, tenant_id) DO UPDATE SET
           source_id = EXCLUDED.source_id,
           custom_fields = EXCLUDED.custom_fields,
@@ -126,7 +196,8 @@ async function findOrCreateLead(tenantId, apolloPersonId, fields, leadData) {
         [
           leadId,
           tenantId,
-          apolloPersonId, // source_id - the real Apollo person ID
+          source, // Use the detected source
+          sourceId, // The actual source ID (Apollo person ID or Unipile ID)
           fields.first_name || null,
           fields.last_name || null,
           fields.email || null,
@@ -134,21 +205,26 @@ async function findOrCreateLead(tenantId, apolloPersonId, fields, leadData) {
           fields.company_name || null,
           fields.title || null,
           fields.linkedin_url || null,
-          JSON.stringify({ apollo_person_id: apolloPersonId }), // custom_fields
-          JSON.stringify(leadData) // raw_data - full employee data
+          JSON.stringify({ source_id: sourceId, source }), // custom_fields
+          JSON.stringify(leadData) // raw_data - full lead data
         ]
       );
-      logger.info('[Lead Save] Created new lead in leads table', { apolloPersonId, leadId, sourceId: apolloPersonId });
+      logger.info('[Lead Save] Created new lead in leads table', { 
+        sourceId, 
+        source,
+        leadId, 
+        sourceIdentifier: source === 'unipile' ? 'unipile_id' : 'apollo_person_id'
+      });
     }
   } catch (leadErr) {
     // If leads table doesn't exist or has different schema, generate UUID and continue
     if (leadErr.code === '42P01') {
-      logger.warn('[Lead Save] leads table doesn\'t exist, generating UUID for lead_id', { apolloPersonId });
+      logger.warn('[Lead Save] leads table doesn\'t exist, generating UUID for lead_id', { sourceId, source });
       const { randomUUID } = require('crypto');
       leadId = randomUUID();
     } else if (leadErr.code === '42703') {
-      // Column doesn't exist, try without source_id
-      logger.warn('[Lead Save] source_id column doesn\'t exist, creating lead without it', { apolloPersonId });
+      // Column doesn't exist, try without source column
+      logger.warn('[Lead Save] source or source_id column doesn\'t exist, creating lead without them', { sourceId, source });
       try {
         const { randomUUID } = require('crypto');
         leadId = randomUUID();
@@ -166,12 +242,12 @@ async function findOrCreateLead(tenantId, apolloPersonId, fields, leadData) {
           ]
         );
       } catch (retryErr) {
-        logger.warn('[Lead Save] Could not create lead in leads table', { apolloPersonId, error: retryErr.message });
+        logger.warn('[Lead Save] Could not create lead in leads table', { sourceId, source, error: retryErr.message });
         const { randomUUID } = require('crypto');
         leadId = randomUUID();
       }
     } else {
-      logger.warn('[Lead Save] Could not find/create lead in leads table', { apolloPersonId, error: leadErr.message });
+      logger.warn('[Lead Save] Could not find/create lead in leads table', { sourceId, source, error: leadErr.message });
       // Generate UUID anyway to continue
       const { randomUUID } = require('crypto');
       leadId = randomUUID();

@@ -16,7 +16,7 @@ function getRequiredFieldsForStepType(stepType) {
     voice_agent_call: ['voiceAgentId', 'voiceContext'], // voiceContext maps to added_context (required by API)
     instagram_dm: ['instagramUsername', 'instagramDmMessage'],
     delay: ['delayDays', 'delayHours'], // At least one time unit must be > 0
-    condition: ['conditionType'],
+    condition: [], // Handled specially - accepts 'condition' or 'conditionType'
     linkedin_scrape_profile: ['linkedinScrapeFields'],
     linkedin_company_search: ['linkedinCompanyName'],
     linkedin_employee_list: ['linkedinCompanyUrl'],
@@ -66,6 +66,20 @@ function validateStepConfig(stepType, stepConfig) {
   let requiredFields = getRequiredFieldsForStepType(stepType);
   const missingFields = [];
   const invalidFields = [];
+  
+  // Special handling for condition - accepts either 'condition' or 'conditionType'
+  if (stepType === 'condition') {
+    const hasCondition = isFieldValid(stepConfig.condition) || isFieldValid(stepConfig.conditionType);
+    if (!hasCondition) {
+      return {
+        valid: false,
+        error: 'Condition step requires a condition to be specified (condition or conditionType field)',
+        missingFields: ['condition']
+      };
+    }
+    // Condition validation passed
+    return { valid: true };
+  }
   
   // Special validation for delay step
   if (stepType === 'delay') {

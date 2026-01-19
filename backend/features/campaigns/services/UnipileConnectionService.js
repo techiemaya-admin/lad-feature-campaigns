@@ -64,12 +64,12 @@ class UnipileConnectionService {
             const headers = this.base.getAuthHeaders();
             
             // Debug: Log auth headers (mask token for security)
-            const authHeader = headers['X-API-KEY'] || headers['x-api-key'];
+            const authHeader = headers['Authorization'] || headers['X-API-KEY'] || headers['x-api-key'];
             if (authHeader) {
                 const tokenPreview = authHeader.substring(0, 10) + '...';
                 logger.debug('[Unipile] Auth header present', { tokenPreview });
             } else {
-                logger.warn('[Unipile] WARNING: No X-API-KEY header found');
+                logger.warn('[Unipile] WARNING: No Authorization header found');
             }
 
             // Lookup the TARGET profile to get the encoded provider_id
@@ -96,6 +96,7 @@ class UnipileConnectionService {
                             error: `Account not found in Unipile: ${accountId}`,
                             errorType: 'account_not_found',
                             statusCode: 404,
+                            accountExpired: true,  // Mark as expired since it's no longer available
                             isAccountInvalid: true,
                             employee: { fullname: employee.fullname }
                         };

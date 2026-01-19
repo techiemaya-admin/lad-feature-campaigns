@@ -18,19 +18,30 @@ function getBackendUrl() {
   throw new Error('BACKEND_URL, BACKEND_INTERNAL_URL, or NEXT_PUBLIC_BACKEND_URL must be set');
 }
 
-const BACKEND_URL = getBackendUrl();
+// Don't call getBackendUrl() at module load time - call it when needed
+// const BACKEND_URL = getBackendUrl();
 
 /**
  * Get authentication headers for API calls
- * If authToken is provided, use it. Otherwise try to get from environment.
+ * For user requests: Use authToken
+ * For service-to-service calls: Use x-tenant-id header (no auth required)
  */
-function getAuthHeaders(authToken) {
+function getAuthHeaders(authToken, tenantId = null) {
   const headers = {
     'Content-Type': 'application/json'
   };
   
   if (authToken) {
+    // User-authenticated request
     headers['Authorization'] = `Bearer ${authToken}`;
+    // Also include tenant header as fallback if JWT doesn't have tenantId in payload
+    if (tenantId) {
+      headers['x-tenant-id'] = tenantId;
+    }
+  } else if (tenantId) {
+    // Service-to-service call - use tenant header instead of auth
+    // The Apollo leads controller supports x-tenant-id for internal calls
+    headers['x-tenant-id'] = tenantId;
   } else if (process.env.JWT_TOKEN) {
     headers['Authorization'] = `Bearer ${process.env.JWT_TOKEN}`;
   }
@@ -44,23 +55,24 @@ function getAuthHeaders(authToken) {
  * @param {number} page - Page number
  * @param {number} offsetInPage - Offset within page
  * @param {number} dailyLimit - Daily limit of leads needed
- * @param {string} authToken - Optional JWT token for authentication
+ * @param {string} authToken - Optional JWT token for user authentication
+ * @param {string} tenantId - Tenant ID for service-to-service calls (when no authToken)
  * @returns {Object} { employees, fromSource }
  */
-async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dailyLimit, authToken = null) {
+async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dailyLimit, authToken = null, tenantId = null) {
   logger.debug('[Lead Search] Searching database for leads', { searchParams, page, offsetInPage, dailyLimit });
   try {
     logger.debug('[Lead Search] Checking database (employees_cache)', { page });
     
     const dbResponse = await axios.post(
-      `${BACKEND_URL}/api/apollo-leads/search-employees-from-db`,
+      `${getBackendUrl()}/api/apollo-leads/search-employees-from-db`,
       {
         ...searchParams,
         page: page,
         per_page: 100
       },
       {
-        headers: getAuthHeaders(authToken),
+        headers: getAuthHeaders(authToken, tenantId),
         timeout: 60000
       }
     );
@@ -119,7 +131,7 @@ async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dai
     
     logger.error('[Lead Search] Error fetching from database', { error: dbError.message, status: dbError.response?.status, responseData: dbError.response?.data, code: dbError.code });
     if (dbError.code === 'ECONNREFUSED' || dbError.code === 'ENOTFOUND') {
-      logger.error('[Lead Search] Cannot reach backend server', { backendUrl: BACKEND_URL, message: 'This will cause lead generation to fail silently!' });
+      logger.error('[Lead Search] Cannot reach backend server', { backendUrl: getBackendUrl(), message: 'This will cause lead generation to fail silently!' });
     }
     // Return empty array but log the error so it's visible
     return { employees: [], fromSource: 'database', error: dbError.message };
@@ -135,7 +147,7 @@ async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dai
  * @param {string} authToken - Optional JWT token for authentication
  * @returns {Array} Array of employees
  */
-async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neededCount, authToken = null) {
+async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neededCount, authToken = null, tenantId = null) {
   try {
     logger.debug('[Lead Search] Fetching from Apollo API', { page });
     
@@ -146,15 +158,15 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
     };
     
     // Try calling Apollo API directly - if endpoint doesn't exist, fallback to database endpoint
-    logger.debug('[Lead Search] Calling Apollo API', { url: `${BACKEND_URL}/api/apollo-leads/search-employees`, searchParams: apolloParams });
+    logger.debug('[Lead Search] Calling Apollo API', { url: `${getBackendUrl()}/api/apollo-leads/search-employees`, searchParams: apolloParams });
     
     let apolloResponse;
     try {
       apolloResponse = await axios.post(
-        `${BACKEND_URL}/api/apollo-leads/search-employees`,
+        `${getBackendUrl()}/api/apollo-leads/search-employees`,
         apolloParams,
         {
-          headers: getAuthHeaders(authToken),
+          headers: getAuthHeaders(authToken, tenantId),
           timeout: 60000
         }
       );
@@ -164,10 +176,10 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
       logger.warn('[Lead Search] Apollo endpoint failed, trying database endpoint', { error: apolloEndpointError.message, status: apolloEndpointError.response?.status, responseData: apolloEndpointError.response?.data });
       try {
         apolloResponse = await axios.post(
-          `${BACKEND_URL}/api/apollo-leads/search-employees-from-db`,
+          `${getBackendUrl()}/api/apollo-leads/search-employees-from-db`,
           apolloParams,
           {
-            headers: getAuthHeaders(authToken),
+            headers: getAuthHeaders(authToken, tenantId),
             timeout: 60000
           }
         );
@@ -211,9 +223,9 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
       return [];
     }
     
-    logger.error('[Lead Search] Error fetching from Apollo', { error: apolloError.message, status: apolloError.response?.status, responseData: apolloError.response?.data, code: apolloError.code, url: `${BACKEND_URL}/api/apollo-leads/search-employees` });
+    logger.error('[Lead Search] Error fetching from Apollo', { error: apolloError.message, status: apolloError.response?.status, responseData: apolloError.response?.data, code: apolloError.code, url: `${getBackendUrl()}/api/apollo-leads/search-employees` });
     if (apolloError.code === 'ECONNREFUSED' || apolloError.code === 'ENOTFOUND') {
-      logger.error('[Lead Search] Cannot reach backend server', { backendUrl: BACKEND_URL, message: 'This will cause lead generation to fail silently!' });
+      logger.error('[Lead Search] Cannot reach backend server', { backendUrl: getBackendUrl(), message: 'This will cause lead generation to fail silently!' });
     }
     // Return empty array but log the error so it's visible
     return [];
@@ -229,12 +241,12 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
  * @param {string} authToken - Optional JWT token for authentication
  * @returns {Object} { employees, fromSource }
  */
-async function searchEmployees(searchParams, page, offsetInPage, dailyLimit, authToken = null) {
-  logger.info('[Lead Search] Starting employee search', { searchParams, page, offsetInPage, dailyLimit, backendUrl: BACKEND_URL });
+async function searchEmployees(searchParams, page, offsetInPage, dailyLimit, authToken = null, tenantId = null) {
+  logger.info('[Lead Search] Starting employee search', { searchParams, page, offsetInPage, dailyLimit, backendUrl: getBackendUrl() });
   
   // STEP 1: Try to get leads from database first
   logger.debug('[Lead Search] STEP 1: Searching database');
-  const dbResult = await searchEmployeesFromDatabase(searchParams, page, offsetInPage, dailyLimit, authToken);
+  const dbResult = await searchEmployeesFromDatabase(searchParams, page, offsetInPage, dailyLimit, authToken, tenantId);
   let employees = dbResult.employees;
   let fromSource = dbResult.fromSource;
   const accessDenied = dbResult.accessDenied || false;
@@ -250,7 +262,7 @@ async function searchEmployees(searchParams, page, offsetInPage, dailyLimit, aut
   if (employees.length < dailyLimit) {
     const neededFromApollo = dailyLimit - employees.length;
     logger.debug('[Lead Search] STEP 2: Need more leads, fetching from Apollo', { neededFromApollo });
-    const apolloEmployees = await searchEmployeesFromApollo(searchParams, page, offsetInPage, neededFromApollo, authToken);
+    const apolloEmployees = await searchEmployeesFromApollo(searchParams, page, offsetInPage, neededFromApollo, authToken, tenantId);
     
     // Combine database leads with Apollo leads
     employees = [...employees, ...apolloEmployees].slice(0, dailyLimit);

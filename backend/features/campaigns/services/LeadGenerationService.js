@@ -6,6 +6,7 @@
 const { pool } = require('../../../shared/database/connection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const { searchEmployees, searchEmployeesFromDatabase } = require('./LeadSearchService');
+const UnipileApolloAdapterService = require('../../apollo-leads/services/UnipileApolloAdapterService');
 
 /**
  * Get list of apollo_person_ids already used by this tenant across all campaigns
@@ -65,13 +66,14 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       stepConfig = JSON.parse(stepConfig);
     }
     
+    // LAD Architecture: Use dynamic schema resolution
+    const schema = getSchema(null); // No req available, will use default
+    
     // Get campaign to access config (leads_per_day, lead_gen_offset)
     // First try to get config from campaigns table (if config column exists)
     let campaignConfig = {};
     let configColumnExists = false;
     try {
-      // LAD Architecture: Use dynamic schema resolution
-      const schema = getSchema(null); // No req available, will use default
       const campaignResult = await pool.query(
         `SELECT config FROM ${schema}.campaigns WHERE id = $1 AND tenant_id = $2`,
         [campaignId, tenantId]
@@ -152,6 +154,39 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
           : stepConfig.leadGenerationFilters)
       : {};
     
+    logger.debug('[Campaign Execution] Parsed lead generation filters', { 
+      hasLeadGenerationFilters: !!stepConfig.leadGenerationFilters,
+      filtersType: typeof stepConfig.leadGenerationFilters,
+      parsedFilters: filters,
+      stepConfig: JSON.stringify(stepConfig).substring(0, 500) // Log first 500 chars for debugging
+    });
+    
+    // GUARD: Check if at least one search criterion is provided
+    const hasRoles = filters.person_titles && filters.person_titles.length > 0;
+    const hasLocation = filters.organization_locations && filters.organization_locations.length > 0;
+    const hasIndustries = filters.organization_industries && filters.organization_industries.length > 0;
+    
+    logger.debug('[Campaign Execution] Filter criteria check', { 
+      hasRoles, 
+      hasLocation, 
+      hasIndustries,
+      rolesValue: filters.person_titles,
+      locationsValue: filters.organization_locations,
+      industriesValue: filters.organization_industries
+    });
+    
+    if (!hasRoles && !hasLocation && !hasIndustries) {
+      logger.warn('[Campaign Execution] No lead generation filters configured', { campaignId, stepConfig, filters });
+      return {
+        success: false,
+        error: 'Lead generation filter not configured. Please set at least one of: roles, location, or industries',
+        leadsFound: 0,
+        leadsSaved: 0,
+        source: 'skipped',
+        campaignId
+      };
+    }
+    
     // We always fetch 100 results from database/Apollo for efficiency
     // But only process the USER-SELECTED number (leadsPerDay) per day
     const fetchLimit = 100; // Always fetch 100 results (we cache the rest for next days)
@@ -174,16 +209,19 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       disable_leads_sync: true
     };
     
-    if (filters.roles && filters.roles.length > 0) {
-      searchParams.person_titles = Array.isArray(filters.roles) ? filters.roles : [filters.roles];
+    // Add configured filters to search params (validated above - at least one exists)
+    // Note: The API expects person_titles, organization_locations, organization_industries
+    // which matches the parsed filters structure
+    if (hasRoles) {
+      searchParams.person_titles = Array.isArray(filters.person_titles) ? filters.person_titles : [filters.person_titles];
     }
     
-    if (filters.location) {
-      searchParams.organization_locations = Array.isArray(filters.location) ? filters.location : [filters.location];
+    if (hasLocation) {
+      searchParams.organization_locations = Array.isArray(filters.organization_locations) ? filters.organization_locations : [filters.organization_locations];
     }
     
-    if (filters.industries && filters.industries.length > 0) {
-      searchParams.organization_industries = Array.isArray(filters.industries) ? filters.industries : [filters.industries];
+    if (hasIndustries) {
+      searchParams.organization_industries = Array.isArray(filters.organization_industries) ? filters.organization_industries : [filters.organization_industries];
     }
     
     if (tenantId) {
@@ -199,7 +237,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       searchParams.exclude_ids = Array.from(existingLeadIds);
     }
     
-    logger.info('[Campaign Execution] Lead generation parameters', { dailyLimit, currentOffset, page, offsetInPage, excludeCount: existingLeadIds.size });
+    logger.info('[Campaign Execution] Lead generation parameters', { dailyLimit, currentOffset, page, offsetInPage, hasRoles, hasLocation, hasIndustries, excludeCount: existingLeadIds.size });
     
     // Log search parameters for debugging
     logger.debug('[Campaign Execution] Calling LeadSearchService with filters', {
@@ -211,53 +249,134 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       dailyLimit
     });
     
-    // PRODUCTION-GRADE: Check employees_cache first, then Apollo
-    // This matches how real SaaS platforms work (cache-first strategy)
-    logger.debug('[Campaign Execution] STEP 1: Checking employees_cache table first');
+    // PRODUCTION-GRADE: Check search source preference (Unipile, Apollo, or Auto)
+    // Get campaign configuration for source preference
+    const campaignQuery = await pool.query(
+      `SELECT config, search_source FROM ${getSchema({ user: { tenant_id: tenantId } })}.campaigns 
+       WHERE id = $1 AND is_deleted = FALSE`,
+      [campaignId]
+    );
+    
+    const campaign = campaignQuery.rows[0];
+    const searchSource = campaign?.search_source || process.env.SEARCH_SOURCE_DEFAULT || 'apollo_io';
+    const unipileAccountId = campaign?.config?.unipile_account_id || process.env.UNIPILE_ACCOUNT_ID;
+    
+    logger.info('[Campaign Execution] Search configuration', { 
+      campaignId, 
+      searchSource,
+      hasUnipileAccountId: !!unipileAccountId
+    });
+    
     let employees = [];
     let fromSource = 'unknown';
     let searchError = null;
-    
     let accessDenied = false;
     
     try {
-      // First, try to get leads from database (employees_cache)
-      const dbSearchResult = await searchEmployeesFromDatabase(searchParams, page, offsetInPage, dailyLimit, authToken);
-      employees = dbSearchResult.employees || [];
-      fromSource = dbSearchResult.fromSource || 'database';
-      searchError = dbSearchResult.error || null;
-      accessDenied = dbSearchResult.accessDenied || false;
-      
-      logger.info('[Campaign Execution] Database search result', { leadCount: employees.length, dailyLimit, source: fromSource });
-      if (accessDenied) {
-        logger.warn('[Campaign Execution] User does not have Apollo Leads feature access - database access denied');
+      // OPTION 1: Try Unipile first (if configured and requested)
+      if ((searchSource === 'unipile' || searchSource === 'auto') && unipileAccountId) {
+        logger.debug('[Campaign Execution] STEP 1: Trying Unipile API');
+        
+        try {
+          const unipileResult = await UnipileApolloAdapterService.searchLeadsWithFallback(
+            {
+              keywords: searchParams.keywords,
+              industry: searchParams.organization_industries?.[0],
+              location: searchParams.organization_locations?.[0],
+              designation: searchParams.person_titles?.[0],
+              company: searchParams.company,
+              skills: searchParams.skills,
+              limit: dailyLimit,
+              offset: offsetInPage,
+              accountId: unipileAccountId
+            },
+            tenantId,
+            authToken
+          );
+          
+          if (unipileResult.success && unipileResult.people && unipileResult.people.length > 0) {
+            employees = unipileResult.people.slice(0, dailyLimit);
+            fromSource = unipileResult.source; // 'unipile' or 'apollo' (if fallback used)
+            
+            logger.info('[Campaign Execution] Unipile search successful', {
+              count: employees.length,
+              source: fromSource,
+              sources_tried: unipileResult.sources_tried
+            });
+          } else if (searchSource === 'auto') {
+            // Auto mode: fallback to Apollo if Unipile failed or returned no results
+            logger.debug('[Campaign Execution] Unipile returned no results, falling back to Apollo', {
+              error: unipileResult.error
+            });
+            searchError = null; // Clear error to continue to Apollo
+          } else {
+            // Unipile was required but failed
+            searchError = unipileResult.error || 'Unipile search returned no results';
+            logger.warn('[Campaign Execution] Unipile search failed and is required source', { error: searchError });
+          }
+        } catch (unipileErr) {
+          logger.error('[Campaign Execution] Unipile API error', { error: unipileErr.message, stack: unipileErr.stack });
+          
+          if (searchSource === 'auto') {
+            logger.debug('[Campaign Execution] Unipile error, falling back to Apollo');
+            searchError = null;
+          } else {
+            searchError = unipileErr.message;
+          }
+        }
       }
       
-      // If database has no leads OR insufficient leads (less than dailyLimit), try Apollo API
-      // This ensures we always try to get enough leads to meet the user's daily limit
-      if (employees.length < dailyLimit && !searchError && !accessDenied) {
-        const neededFromApollo = dailyLimit - employees.length;
-        logger.debug('[Campaign Execution] STEP 2: Database has insufficient leads, calling Apollo API', { 
-          dbLeadsCount: employees.length, 
-          dailyLimit, 
-          neededFromApollo 
-        });
+      // OPTION 2: Use Apollo/Database (if no Unipile, or as fallback)
+      if (employees.length < dailyLimit && (searchSource === 'apollo_io' || searchSource === 'auto')) {
+        logger.debug('[Campaign Execution] STEP 2: Checking employees_cache table');
         
-        const apolloSearchResult = await searchEmployees(searchParams, page, offsetInPage, neededFromApollo, authToken);
-        const apolloEmployees = apolloSearchResult.employees || [];
+        // First, try to get leads from database (employees_cache)
+        const dbSearchResult = await searchEmployeesFromDatabase(searchParams, page, offsetInPage, dailyLimit - employees.length, authToken, tenantId);
+        const dbEmployees = dbSearchResult.employees || [];
         
-        // Combine database leads with Apollo leads
-        if (apolloEmployees.length > 0) {
-          employees = [...employees, ...apolloEmployees].slice(0, dailyLimit);
-          fromSource = employees.length > 0 && apolloEmployees.length > 0 ? 'mixed' : (apolloEmployees.length > 0 ? 'apollo' : 'database');
-          logger.info('[Campaign Execution] Combined leads from database and Apollo', { 
-            dbLeads: employees.length - apolloEmployees.length, 
-            apolloLeads: apolloEmployees.length, 
-            totalLeads: employees.length 
+        if (dbEmployees.length > 0) {
+          employees = [...employees, ...dbEmployees].slice(0, dailyLimit);
+          fromSource = employees.length > 0 && fromSource === 'unknown' ? 'database' : (fromSource !== 'unknown' ? 'mixed' : 'database');
+          logger.info('[Campaign Execution] Database search result', { 
+            dbCount: dbEmployees.length, 
+            totalCount: employees.length, 
+            dailyLimit, 
+            source: fromSource
           });
-        } else {
-          searchError = apolloSearchResult.error || null;
-          logger.info('[Campaign Execution] Apollo returned no additional leads', { dbLeads: employees.length });
+        }
+        
+        searchError = dbSearchResult.error || null;
+        accessDenied = dbSearchResult.accessDenied || false;
+        
+        if (accessDenied) {
+          logger.warn('[Campaign Execution] User does not have Apollo Leads feature access - database access denied');
+        }
+        
+        // If still have insufficient leads, try Apollo API
+        if (employees.length < dailyLimit && !searchError && !accessDenied) {
+          const neededFromApollo = dailyLimit - employees.length;
+          logger.debug('[Campaign Execution] STEP 3: Database has insufficient leads, calling Apollo API', { 
+            dbLeadsCount: employees.length, 
+            dailyLimit, 
+            neededFromApollo 
+          });
+          
+          const apolloSearchResult = await searchEmployees(searchParams, page, offsetInPage, neededFromApollo, authToken, tenantId);
+          const apolloEmployees = apolloSearchResult.employees || [];
+          
+          // Combine database leads with Apollo leads
+          if (apolloEmployees.length > 0) {
+            employees = [...employees, ...apolloEmployees].slice(0, dailyLimit);
+            fromSource = employees.length > 0 && apolloEmployees.length > 0 ? 'mixed' : (apolloEmployees.length > 0 ? 'apollo' : 'database');
+            logger.info('[Campaign Execution] Combined leads from database and Apollo', { 
+              dbLeads: employees.length - apolloEmployees.length, 
+              apolloLeads: apolloEmployees.length, 
+              totalLeads: employees.length 
+            });
+          } else {
+            searchError = apolloSearchResult.error || null;
+            logger.info('[Campaign Execution] Apollo returned no additional leads', { dbLeads: employees.length });
+          }
         }
       }
     } catch (searchErr) {
@@ -388,18 +507,21 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     
     const employeesList = employees || [];
     
-    // Verify tenant_id from campaign matches the one passed in
-    const campaignQuery = await pool.query(
-      `SELECT tenant_id FROM ${schema}.campaigns WHERE id = $1 AND is_deleted = FALSE`,
-      [campaignId]
-    );
-    const campaignTenantId = campaignQuery.rows[0]?.tenant_id;
-    
-    if (!campaignTenantId) {
-      throw new Error(`Campaign ${campaignId} not found or missing tenant_id`);
+    // Verify tenant_id from campaign matches the provided tenantId
+    // Campaign data already fetched at line 254, so we have the campaign object
+    if (!campaign) {
+      throw new Error(`Campaign ${campaignId} not found`);
     }
     
-    // Use the tenantId from the parameter (already validated)
+    // Double-check campaign exists in this tenant
+    const campaignCheckQuery = await pool.query(
+      `SELECT id FROM ${schema}.campaigns WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE`,
+      [campaignId, tenantId]
+    );
+    
+    if (campaignCheckQuery.rows.length === 0) {
+      throw new Error(`Campaign ${campaignId} not found for tenant ${tenantId}`);
+    }
       
     // Save leads to campaign_leads table (only the daily limit)
     const { savedCount, firstGeneratedLeadId } = await saveLeadsToCampaign(
