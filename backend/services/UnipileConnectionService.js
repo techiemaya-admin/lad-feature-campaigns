@@ -96,6 +96,7 @@ class UnipileConnectionService {
                             error: `Account not found in Unipile: ${accountId}`,
                             errorType: 'account_not_found',
                             statusCode: 404,
+                            accountExpired: true,  // Mark as expired since it's no longer available
                             isAccountInvalid: true,
                             employee: { fullname: employee.fullname }
                         };

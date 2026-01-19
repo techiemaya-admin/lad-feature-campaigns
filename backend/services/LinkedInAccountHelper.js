@@ -19,15 +19,15 @@ async function getAllLinkedInAccountsForTenant(tenantId, userId) {
     const resolvedTenantId = tenantId || userId;
     const schema = resolvedTenantId ? getSchema({ user: { tenant_id: resolvedTenantId } }) : getSchema(null);
     
-    // Try TDD schema first (${schema}.linkedin_accounts)
+    // Try social_linkedin_accounts table first
     try {
       
       const query = `
-        SELECT id, tenant_id, account_name, unipile_account_id, is_active
-        FROM ${schema}.linkedin_accounts
+        SELECT id, tenant_id, account_name, provider_account_id, status
+        FROM ${schema}.social_linkedin_accounts
         WHERE tenant_id = $1 
-        AND is_active = TRUE
-        AND unipile_account_id IS NOT NULL
+        AND status = 'active'
+        AND provider_account_id IS NOT NULL
         ORDER BY created_at DESC
       `;
       
@@ -35,66 +35,29 @@ async function getAllLinkedInAccountsForTenant(tenantId, userId) {
       if (result.rows.length > 0) {
         accounts.push(...result.rows.map(row => ({
           id: row.id,
-          unipile_account_id: row.unipile_account_id,
+          unipile_account_id: row.provider_account_id,
           account_name: row.account_name
         })));
       }
     } catch (tddError) {
-      // TDD schema not available, continue to fallback
+      // TDD schema not available, continue to global search
     }
     
-    // Fallback: Try old schema (user_integrations_voiceagent)
-    if (accounts.length === 0 && userId) {
-      try {
-        const fallbackQuery = await pool.query(
-          `SELECT id::text as id, 
-                  COALESCE(
-                    NULLIF(credentials->>'unipile_account_id', ''),
-                    NULLIF(credentials->>'account_id', ''),
-                    NULLIF(credentials->>'unipileAccountId', '')
-                  ) as unipile_account_id 
-           FROM ${schema}.user_integrations_voiceagent 
-           WHERE provider = 'linkedin'
-           AND (user_id::text = $1 OR user_id = $1::integer)
-           AND is_connected = TRUE
-           AND (
-             (credentials->>'unipile_account_id' IS NOT NULL AND credentials->>'unipile_account_id' != '' AND credentials->>'unipile_account_id' != 'null')
-             OR
-             (credentials->>'account_id' IS NOT NULL AND credentials->>'account_id' != '' AND credentials->>'account_id' != 'null')
-             OR
-             (credentials->>'unipileAccountId' IS NOT NULL AND credentials->>'unipileAccountId' != '' AND credentials->>'unipileAccountId' != 'null')
-           )
-           ORDER BY connected_at DESC NULLS LAST, created_at DESC`,
-          [userId]
-        );
-        
-        if (fallbackQuery.rows.length > 0) {
-          accounts.push(...fallbackQuery.rows.map(row => ({
-            id: row.id,
-            unipile_account_id: row.unipile_account_id,
-            account_name: 'LinkedIn Account'
-          })));
-        }
-      } catch (fallbackError) {
-        // Ignore fallback errors
-      }
-    }
-    
-    // If still no accounts, try global search
+    // If no accounts found, try global search
     if (accounts.length === 0) {
       try {
         const globalQuery = await pool.query(
-          `SELECT id, unipile_account_id, account_name
-           FROM ${schema}.linkedin_accounts
-           WHERE is_active = TRUE
-           AND unipile_account_id IS NOT NULL
+          `SELECT id, provider_account_id, account_name
+           FROM ${schema}.social_linkedin_accounts
+           WHERE status = 'active'
+           AND provider_account_id IS NOT NULL
            ORDER BY created_at DESC`
         );
         
         if (globalQuery.rows.length > 0) {
           accounts.push(...globalQuery.rows.map(row => ({
             id: row.id,
-            unipile_account_id: row.unipile_account_id,
+            unipile_account_id: row.provider_account_id,
             account_name: row.account_name || 'LinkedIn Account'
           })));
         }
@@ -166,20 +129,20 @@ async function verifyAccountHealth(unipileAccountId) {
  * Get LinkedIn account for execution (with fallback strategies)
  */
 async function getLinkedInAccountForExecution(tenantId, userId) {
-  let accountResult;
+  let accountResult = { rows: [] };  // Initialize with empty result to prevent undefined errors
   
   const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
-  // Strategy 1: Try ${schema}.linkedin_accounts table by tenant_id (TDD schema)
+  // Strategy 1: Try social_linkedin_accounts table by tenant_id
   try {
     accountResult = await pool.query(
-      `SELECT id, unipile_account_id FROM ${schema}.linkedin_accounts 
+      `SELECT id, provider_account_id FROM ${schema}.social_linkedin_accounts
        WHERE tenant_id = $1 
-       AND is_active = TRUE
-       AND unipile_account_id IS NOT NULL
+       AND status = 'active'
+       AND provider_account_id IS NOT NULL
        ORDER BY created_at DESC LIMIT 1`,
       [tenantId]
     );
-    logger.info('[LinkedIn Account Helper] Found LinkedIn account(s) in linkedin_accounts', { count: accountResult.rows.length, tenantId });
+    logger.info('[LinkedIn Account Helper] Found LinkedIn account in social_linkedin_accounts', { count: accountResult.rows.length, tenantId });
   } catch (tddError) {
     // Fallback to old schema if TDD table doesn't exist
     logger.debug('[LinkedIn Account Helper] TDD schema not found, trying old schema', { error: tddError.message });
@@ -188,153 +151,20 @@ async function getLinkedInAccountForExecution(tenantId, userId) {
     accountResult = { rows: [] };
   }
   
-  // Strategy 2: If not found, try user_integrations_voiceagent by user_id
-  if (accountResult.rows.length === 0 && userId) {
-    logger.debug('[LinkedIn Account Helper] No account in linkedin_accounts, checking user_integrations_voiceagent for user', { userId });
-    try {
-      accountResult = await pool.query(
-        `SELECT id::text as id, 
-                COALESCE(
-                  NULLIF(credentials->>'unipile_account_id', ''),
-                  NULLIF(credentials->>'account_id', ''),
-                  NULLIF(credentials->>'unipileAccountId', '')
-                ) as unipile_account_id 
-         FROM ${schema}.user_integrations_voiceagent 
-         WHERE provider = 'linkedin'
-         AND (user_id::text = $1 OR user_id = $1::integer)
-         AND is_connected = TRUE
-         AND (
-           (credentials->>'unipile_account_id' IS NOT NULL AND credentials->>'unipile_account_id' != '' AND credentials->>'unipile_account_id' != 'null')
-           OR
-           (credentials->>'account_id' IS NOT NULL AND credentials->>'account_id' != '' AND credentials->>'account_id' != 'null')
-           OR
-           (credentials->>'unipileAccountId' IS NOT NULL AND credentials->>'unipileAccountId' != '' AND credentials->>'unipileAccountId' != 'null')
-         )
-         ORDER BY connected_at DESC NULLS LAST, created_at DESC LIMIT 1`,
-        [userId]
-      );
-      logger.info('[LinkedIn Account Helper] Found LinkedIn account(s) in user_integrations_voiceagent for user', { count: accountResult.rows.length, userId });
-    } catch (err) {
-      logger.warn('[LinkedIn Account Helper] Error querying user_integrations_voiceagent', { error: err.message });
-    }
-  }
-  
-  // Strategy 3: If still not found, try user_integrations_voiceagent by tenant_id (LAD standard - no organization_id)
-  if (accountResult.rows.length === 0 && tenantId) {
-    logger.debug('[LinkedIn Account Helper] No account found for user, checking user_integrations_voiceagent for tenant', { tenantId });
-    try {
-      // Try UUID first, then integer if that fails
-      try {
-        accountResult = await pool.query(
-          `SELECT uiv.id::text as id, 
-                  COALESCE(
-                    NULLIF(uiv.credentials->>'unipile_account_id', ''),
-                    NULLIF(uiv.credentials->>'account_id', ''),
-                    NULLIF(uiv.credentials->>'unipileAccountId', '')
-                  ) as unipile_account_id 
-           FROM ${schema}.user_integrations_voiceagent uiv
-           JOIN ${schema}.users_voiceagent uva ON uiv.user_id = uva.user_id
-           WHERE uiv.provider = 'linkedin'
-           AND uva.tenant_id = $1::uuid
-           AND uiv.is_connected = TRUE
-           AND (
-             (uiv.credentials->>'unipile_account_id' IS NOT NULL AND uiv.credentials->>'unipile_account_id' != '' AND uiv.credentials->>'unipile_account_id' != 'null')
-             OR
-             (uiv.credentials->>'account_id' IS NOT NULL AND uiv.credentials->>'account_id' != '' AND uiv.credentials->>'account_id' != 'null')
-             OR
-             (uiv.credentials->>'unipileAccountId' IS NOT NULL AND uiv.credentials->>'unipileAccountId' != '' AND uiv.credentials->>'unipileAccountId' != 'null')
-           )
-           ORDER BY uiv.connected_at DESC NULLS LAST, uiv.created_at DESC LIMIT 1`,
-          [tenantId]
-        );
-      } catch (uuidError) {
-        // If UUID fails, try as integer (old schema - but use tenant_id, not organization_id)
-        if (uuidError.message && uuidError.message.includes('operator does not exist')) {
-          accountResult = await pool.query(
-            `SELECT uiv.id::text as id, 
-                    COALESCE(
-                      NULLIF(uiv.credentials->>'unipile_account_id', ''),
-                      NULLIF(uiv.credentials->>'account_id', ''),
-                      NULLIF(uiv.credentials->>'unipileAccountId', '')
-                    ) as unipile_account_id 
-             FROM ${schema}.user_integrations_voiceagent uiv
-             JOIN ${schema}.users_voiceagent uva ON uiv.user_id = uva.user_id
-             WHERE uiv.provider = 'linkedin'
-             AND uva.tenant_id = $1::integer
-             AND uiv.is_connected = TRUE
-             AND (
-               (uiv.credentials->>'unipile_account_id' IS NOT NULL AND uiv.credentials->>'unipile_account_id' != '' AND uiv.credentials->>'unipile_account_id' != 'null')
-               OR
-               (uiv.credentials->>'account_id' IS NOT NULL AND uiv.credentials->>'account_id' != '' AND uiv.credentials->>'account_id' != 'null')
-               OR
-               (uiv.credentials->>'unipileAccountId' IS NOT NULL AND uiv.credentials->>'unipileAccountId' != '' AND uiv.credentials->>'unipileAccountId' != 'null')
-             )
-             ORDER BY uiv.connected_at DESC NULLS LAST, uiv.created_at DESC LIMIT 1`,
-            [tenantId]
-          );
-        } else {
-          throw uuidError;
-        }
-      }
-      logger.info('[LinkedIn Account Helper] Found LinkedIn account(s) in user_integrations_voiceagent for tenant', { count: accountResult.rows.length, tenantId });
-    } catch (err) {
-      logger.warn('[LinkedIn Account Helper] Error querying user_integrations_voiceagent by tenant', { error: err.message });
-    }
-  }
-  
-  // Strategy 4: If still not found, try any active account in linkedin_accounts (TDD schema)
+  // Strategy 2: If not found, try global search in social_linkedin_accounts
   if (accountResult.rows.length === 0) {
-    logger.debug('[LinkedIn Account Helper] No account found for tenant/user, searching for any active account in linkedin_accounts');
+    logger.debug('[LinkedIn Account Helper] No account found for tenant/user, searching for any active account in social_linkedin_accounts');
     try {
       accountResult = await pool.query(
-        `SELECT id, unipile_account_id FROM ${schema}.linkedin_accounts 
-         WHERE is_active = TRUE
-         AND unipile_account_id IS NOT NULL
+        `SELECT id, provider_account_id FROM ${schema}.social_linkedin_accounts 
+         WHERE status = 'active'
+         AND provider_account_id IS NOT NULL
          ORDER BY created_at DESC LIMIT 1`
       );
-      logger.info('[LinkedIn Account Helper] Found active LinkedIn account(s) globally in linkedin_accounts', { count: accountResult.rows.length });
-    } catch (tddError) {
-      // Fallback to old schema if TDD table doesn't exist
-      try {
-        accountResult = await pool.query(
-          `SELECT id, unipile_account_id FROM ${schema}.linkedin_accounts 
-           WHERE is_active = TRUE
-           AND unipile_account_id IS NOT NULL
-           ORDER BY created_at DESC LIMIT 1`
-        );
-        logger.info('[LinkedIn Account Helper] Found active LinkedIn account(s) globally in linkedin_accounts', { count: accountResult.rows.length });
-      } catch (fallbackError) {
-        logger.warn('[LinkedIn Account Helper] Error querying linkedin_accounts', { error: fallbackError.message });
-      }
-    }
-  }
-  
-  // Strategy 5: Last resort - try any active account in user_integrations_voiceagent
-  if (accountResult.rows.length === 0) {
-    logger.debug('[LinkedIn Account Helper] No account in linkedin_accounts, searching for any active account in user_integrations_voiceagent');
-    try {
-      accountResult = await pool.query(
-        `SELECT id::text as id, 
-                COALESCE(
-                  NULLIF(credentials->>'unipile_account_id', ''),
-                  NULLIF(credentials->>'account_id', ''),
-                  NULLIF(credentials->>'unipileAccountId', '')
-                ) as unipile_account_id 
-         FROM ${schema}.user_integrations_voiceagent 
-         WHERE provider = 'linkedin'
-         AND is_connected = TRUE
-         AND (
-           (credentials->>'unipile_account_id' IS NOT NULL AND credentials->>'unipile_account_id' != '' AND credentials->>'unipile_account_id' != 'null')
-           OR
-           (credentials->>'account_id' IS NOT NULL AND credentials->>'account_id' != '' AND credentials->>'account_id' != 'null')
-           OR
-           (credentials->>'unipileAccountId' IS NOT NULL AND credentials->>'unipileAccountId' != '' AND credentials->>'unipileAccountId' != 'null')
-         )
-         ORDER BY connected_at DESC NULLS LAST, created_at DESC LIMIT 1`
-      );
-      logger.info('[LinkedIn Account Helper] Found active LinkedIn account(s) globally in user_integrations_voiceagent', { count: accountResult.rows.length });
-    } catch (err) {
-      logger.warn('[LinkedIn Account Helper] Error querying user_integrations_voiceagent globally', { error: err.message });
+      logger.info('[LinkedIn Account Helper] Found active LinkedIn account globally', { count: accountResult.rows.length });
+    } catch (error) {
+      logger.warn('[LinkedIn Account Helper] Error querying social_linkedin_accounts', { error: error.message });
+      accountResult = { rows: [] };  // Ensure accountResult is never undefined
     }
   }
   
@@ -342,7 +172,7 @@ async function getLinkedInAccountForExecution(tenantId, userId) {
     return null;
   }
   
-  const accountId = accountResult.rows[0].unipile_account_id;
+  const accountId = accountResult.rows[0].provider_account_id;
   
   // Verify account health before returning (quick check)
   // Note: We don't verify on every call to avoid performance issues
@@ -375,14 +205,20 @@ async function sendConnectionRequestWithFallback(
   
   logger.info('[LinkedIn Account Helper] Trying accounts for connection request', { accountCount: accountsToTry.length });
   
-  // Track which strategies we've tried
+  // Track which strategies we've tried and error patterns
   const triedStrategies = new Set();
+  const accountErrors = {}; // Track errors per account
+  let actualRateLimitErrors = 0; // Count actual rate limit errors
+  let credentialErrors = 0; // Count credential-related errors
+  let otherErrors = 0; // Count other errors
   
   for (const account of accountsToTry) {
     const accountId = account.unipile_account_id;
     const accountName = account.account_name || 'LinkedIn Account';
     
     logger.debug('[LinkedIn Account Helper] Trying account', { accountName, accountId });
+    
+    accountErrors[accountId] = [];
     
     // Strategy 1: If user wants message, try with message first
     if (userWantsMessage && message && !triedStrategies.has(`${accountId}:with_message`)) {
@@ -396,6 +232,13 @@ async function sendConnectionRequestWithFallback(
         return { ...result, accountUsed: accountName, strategy: 'with_message' };
       }
       
+      // Track the error reason
+      accountErrors[accountId].push({
+        strategy: 'with_message',
+        error: result.error,
+        isRateLimit: result.isRateLimit
+      });
+      
       // Check if it's a rate limit error (monthly limit for messages)
       if (result.isRateLimit || 
           (result.error && (
@@ -404,10 +247,24 @@ async function sendConnectionRequestWithFallback(
             result.error.includes('provider limit')
           ))) {
         logger.warn('[LinkedIn Account Helper] Rate limit with message, trying without message', { accountName });
+        actualRateLimitErrors++;
         // Continue to Strategy 2 (without message)
       } else {
         // Other error (not rate limit) - try next account
         logger.warn('[LinkedIn Account Helper] Error with message', { accountName, error: result.error });
+        
+        // Classify error type
+        if (result.error && (
+          result.error.includes('credentials') || 
+          result.error.includes('expired') ||
+          result.error.includes('checkpoint') ||
+          result.error.includes('Account not found') ||
+          result.statusCode === 401 || result.statusCode === 404
+        )) {
+          credentialErrors++;
+        } else {
+          otherErrors++;
+        }
         continue; // Try next account
       }
     }
@@ -430,6 +287,13 @@ async function sendConnectionRequestWithFallback(
         };
       }
       
+      // Track the error reason
+      accountErrors[accountId].push({
+        strategy: 'without_message',
+        error: result.error,
+        isRateLimit: result.isRateLimit
+      });
+      
       // Check if it's a rate limit error
       if (result.isRateLimit || 
           (result.error && (
@@ -440,23 +304,72 @@ async function sendConnectionRequestWithFallback(
             result.error.includes('monthly limit')
           ))) {
         logger.warn('[LinkedIn Account Helper] Rate limit without message, trying next account', { accountName });
+        actualRateLimitErrors++;
         continue; // Try next account
       } else {
         // Other error - try next account
         logger.warn('[LinkedIn Account Helper] Error without message', { accountName, error: result.error });
+        
+        // Classify error type
+        if (result.error && (
+          result.error.includes('credentials') || 
+          result.error.includes('expired') ||
+          result.error.includes('checkpoint') ||
+          result.error.includes('Account not found') ||
+          result.statusCode === 401 || result.statusCode === 404
+        )) {
+          credentialErrors++;
+        } else {
+          otherErrors++;
+        }
         continue; // Try next account
       }
     }
   }
   
-  // All accounts and strategies exhausted
-  logger.error('[LinkedIn Account Helper] All accounts exhausted. Weekly/monthly limit reached for all LinkedIn accounts');
+  // All accounts and strategies exhausted - determine root cause
+  logger.error('[LinkedIn Account Helper] All accounts exhausted', { 
+    totalAccounts: accountsToTry.length,
+    actualRateLimitErrors,
+    credentialErrors,
+    otherErrors,
+    accountErrors
+  });
+  
+  // Determine the most accurate error message based on what we encountered
+  let errorMessage = '';
+  let errorType = '';
+  
+  if (credentialErrors > 0 && actualRateLimitErrors === 0) {
+    // Primary issue is account credentials
+    errorMessage = 'No valid LinkedIn accounts available. Please verify your connected accounts are still active and their credentials are valid in Unipile.';
+    errorType = 'no_valid_accounts';
+  } else if (actualRateLimitErrors > 0) {
+    // We hit actual rate limits
+    errorMessage = 'Weekly limit is completed. All LinkedIn accounts have reached their connection request limits. Please try again next week.';
+    errorType = 'weekly_limit_completed';
+  } else if (otherErrors > 0) {
+    // Other errors occurred
+    errorMessage = `Connection request failed. All available accounts encountered errors. Please check your LinkedIn account configuration.`;
+    errorType = 'account_errors';
+  } else {
+    // No accounts available at all
+    errorMessage = 'No LinkedIn accounts configured. Please connect a LinkedIn account first.';
+    errorType = 'no_accounts_configured';
+  }
+  
   return {
     success: false,
-    error: 'Weekly limit is completed. All LinkedIn accounts have reached their connection request limits. Please try again next week.',
-    errorType: 'weekly_limit_completed',
-    isRateLimit: true,
+    error: errorMessage,
+    errorType: errorType,
+    isRateLimit: actualRateLimitErrors > 0,
     allAccountsExhausted: true,
+    diagnostics: {
+      totalAccountsTried: accountsToTry.length,
+      actualRateLimitErrors,
+      credentialErrors,
+      otherErrors
+    },
     employee: {
       fullname: employee.fullname,
       profile_url: employee.profile_url || employee.linkedin_url
@@ -464,9 +377,82 @@ async function sendConnectionRequestWithFallback(
   };
 }
 
+/**
+ * Verify account is valid and ready before campaign execution
+ * This should be called once per campaign, not per request
+ * 
+ * @param {string} unipileAccountId - Account ID to verify
+ * @returns {Promise<Object>} { valid: boolean, reason: string, canRetry: boolean }
+ */
+async function verifyAccountReadyForCampaign(unipileAccountId) {
+  try {
+    logger.info('[LinkedIn Account Helper] Verifying account health before campaign', { unipileAccountId });
+    
+    // Try to get account status from database first
+    const schema = getSchema(null);
+    
+    // Check TDD schema
+    try {
+      const result = await pool.query(
+        `SELECT id, status, updated_at FROM ${schema}.social_linkedin_accounts 
+         WHERE provider_account_id = $1 LIMIT 1`,
+        [unipileAccountId]
+      );
+      
+      if (result.rows.length > 0) {
+        const account = result.rows[0];
+        
+        if (account.status === 'expired' || account.status === 'revoked' || account.status === 'error') {
+          logger.warn('[LinkedIn Account Helper] Account marked as inactive/expired in database', {
+            unipileAccountId,
+            status: account.status
+          });
+          
+          return {
+            valid: false,
+            reason: 'Account is marked as inactive or expired',
+            canRetry: false,
+            requiresReconnection: true
+          };
+        }
+        
+        logger.info('[LinkedIn Account Helper] Account status check passed in TDD schema', {
+          unipileAccountId,
+          is_active: account.is_active,
+          status: account.status
+        });
+        
+        return { valid: true, reason: 'OK', canRetry: false };
+      }
+    } catch (error) {
+      logger.warn('[LinkedIn Account Helper] Could not check TDD schema', { error: error.message });
+    }
+    
+    // Fallback check
+    logger.info('[LinkedIn Account Helper] Account health verified (fallback)', { unipileAccountId });
+    return { valid: true, reason: 'OK', canRetry: false };
+    
+  } catch (error) {
+    logger.error('[LinkedIn Account Helper] Error verifying account health', {
+      error: error.message,
+      unipileAccountId
+    });
+    
+    // If we can't reach database, assume account might still be valid
+    // (network issue, not account issue)
+    return {
+      valid: true,
+      reason: 'Could not verify, proceeding cautiously',
+      canRetry: false,
+      warning: error.message
+    };
+  }
+}
+
 module.exports = {
   getAllLinkedInAccountsForTenant,
   getLinkedInAccountForExecution,
-  sendConnectionRequestWithFallback
+  sendConnectionRequestWithFallback,
+  verifyAccountReadyForCampaign
 };
 
