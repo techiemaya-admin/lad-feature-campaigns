@@ -5,7 +5,7 @@
  */
 
 const Redis = require('ioredis');
-const { logger } = require('../../../core/utils/logger');
+const logger = require('../../../core/utils/logger');
 
 class CampaignEventsService {
   constructor() {

@@ -4,8 +4,8 @@
  */
 
 const { campaignEventsService } = require('../services/campaignEventsService');
-const { db } = require('../../../../shared/database/connection');
-const { logger } = require('../../../core/utils/logger');
+const { db } = require('../../../shared/database/connection');
+const logger = require('../../../core/utils/logger');
 
 /**
  * SSE endpoint for real-time campaigns list updates
