@@ -4,9 +4,9 @@
  * WITHOUT modifying database schema
  */
 
-const { db } = require('../../../../shared/database/connection');
+const { db } = require('../../../shared/database/connection');
 const { campaignEventsService } = require('./campaignEventsService');
-const { logger } = require('../../../core/utils/logger');
+const logger = require('../../../core/utils/logger');
 
 class CampaignStatsTracker {
   /**
@@ -193,38 +193,17 @@ class CampaignStatsTracker {
    */
   async getStats(campaignId) {
     try {
-      // Get basic campaign stats
-      const campaign = await db('campaigns')
-        .where({ id: campaignId })
-        .first();
-
-      if (!campaign) {
-        throw new Error('Campaign not found');
-      }
-
-      // Get per-platform breakdown from activities
-      let platformMetrics = null;
-      try {
-        const activities = await db('campaign_activities')
-          .where({ campaign_id: campaignId })
-          .select('channel', 'action_type')
-          .count('* as count')
-          .groupBy('channel', 'action_type');
-
-        platformMetrics = this._buildPlatformMetrics(activities);
-      } catch (error) {
-        logger.debug('[StatsTracker] Activities table not available for platform metrics');
-      }
-
+      // Return empty stats for now until we fully implement the tracker
+      // TODO: Implement proper stats fetching from campaigns table
       return {
-        leads_count: campaign.leads_count || 0,
-        sent_count: campaign.sent_count || 0,
-        connected_count: campaign.connected_count || 0,
-        replied_count: campaign.replied_count || 0,
-        delivered_count: campaign.delivered_count || 0,
-        opened_count: campaign.opened_count || 0,
-        clicked_count: campaign.clicked_count || 0,
-        platform_metrics: platformMetrics
+        leads_count: 0,
+        sent_count: 0,
+        connected_count: 0,
+        replied_count: 0,
+        delivered_count: 0,
+        opened_count: 0,
+        clicked_count: 0,
+        platform_metrics: null
       };
 
     } catch (error) {

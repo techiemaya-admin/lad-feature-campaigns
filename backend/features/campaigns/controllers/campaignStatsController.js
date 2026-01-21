@@ -5,7 +5,7 @@
 
 const { campaignEventsService } = require('../services/campaignEventsService');
 const { campaignStatsTracker } = require('../services/campaignStatsTracker');
-const { logger } = require('../../../core/utils/logger');
+const logger = require('../../../core/utils/logger');
 
 /**
  * SSE endpoint for real-time campaign stats updates
