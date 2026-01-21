@@ -85,13 +85,30 @@ jobs:
           git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
           
+          # Clean up any unstaged changes outside features/campaigns
+          echo "🧹 Cleaning working directory..."
+          git status
+          
+          # Stash any uncommitted changes first
+          if ! git diff --quiet || ! git diff --staged --quiet; then
+            echo "⚠️ Found uncommitted changes, stashing..."
+            git stash
+          fi
+          
           # Pull latest changes to avoid conflicts
           echo "📥 Pulling latest changes..."
           git pull origin develop --rebase || {
             echo "⚠️ Rebase conflict detected"
             git rebase --abort
+            git stash pop || true
             exit 1
           }
+          
+          # Restore any stashed changes
+          if git stash list | grep -q .; then
+            echo "📥 Restoring stashed changes..."
+            git stash pop || true
+          fi
           
           # Stage changes
           git add features/campaigns/
@@ -230,13 +247,30 @@ jobs:
           git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
           
+          # Clean up any unstaged changes
+          echo "🧹 Cleaning working directory..."
+          git status
+          
+          # Stash any uncommitted changes first
+          if ! git diff --quiet || ! git diff --staged --quiet; then
+            echo "⚠️ Found uncommitted changes, stashing..."
+            git stash
+          fi
+          
           # Pull latest
           echo "📥 Pulling latest changes..."
           git pull origin develop --rebase || {
             echo "⚠️ Rebase conflict detected"
             git rebase --abort
+            git stash pop || true
             exit 1
           }
+          
+          # Restore any stashed changes
+          if git stash list | grep -q .; then
+            echo "📥 Restoring stashed changes..."
+            git stash pop || true
+          fi
           
           # Stage all changes
           git add sdk/features/campaigns/
