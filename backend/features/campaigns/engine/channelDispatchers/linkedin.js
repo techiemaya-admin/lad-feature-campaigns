@@ -1,8 +1,5 @@
 const unipileService = require('../services/unipileService');
-const { getSchema } = require('../../../core/utils/schemaHelper');
 const { pool } = require('../../../../shared/database/connection');
-const logger = require('../../../core/utils/logger');
-
 /**
  * LinkedIn Channel Dispatcher
  * Handles all LinkedIn-related actions
@@ -13,30 +10,22 @@ class LinkedInDispatcher {
    */
   async execute(stepType, lead, stepConfig, userId, tenantId) {
     try {
-      logger.info('[LinkedInDispatcher] Executing step', { stepType, leadId: lead.id });
-
       switch (stepType) {
         case 'linkedin_connect':
           return await this.sendConnectionRequest(lead, stepConfig, userId);
-
         case 'linkedin_message':
           return await this.sendMessage(lead, stepConfig, userId);
-
         case 'linkedin_visit':
           return await this.visitProfile(lead, userId);
-
         case 'linkedin_follow':
           return await this.followProfile(lead, userId);
-
         default:
           return { success: false, error: `Unsupported LinkedIn action: ${stepType}` };
       }
     } catch (error) {
-      logger.error('[LinkedInDispatcher] Error', { error: error.message, stack: error.stack });
       return { success: false, error: error.message };
     }
   }
-
   /**
    * Send LinkedIn connection request
    */
@@ -44,30 +33,24 @@ class LinkedInDispatcher {
     try {
       const leadData = lead.lead_data || {};
       const linkedinUrl = leadData.linkedin_url || leadData.linkedin_profile_url;
-
       if (!linkedinUrl) {
         throw new Error('No LinkedIn URL found for lead');
       }
-
       // Optional message (LinkedIn limits connection messages)
       const message = stepConfig.message || '';
-
       const result = await unipileService.sendConnectionRequest(
         userId,
         linkedinUrl,
         message
       );
-
       return {
         success: true,
         data: result
       };
     } catch (error) {
-      logger.error('[LinkedInDispatcher] Connection request failed', { error: error.message, stack: error.stack });
       throw error;
     }
   }
-
   /**
    * Send LinkedIn message
    */
@@ -75,29 +58,23 @@ class LinkedInDispatcher {
     try {
       const leadData = lead.lead_data || {};
       const linkedinUrl = leadData.linkedin_url || leadData.linkedin_profile_url;
-
       if (!linkedinUrl) {
         throw new Error('No LinkedIn URL found for lead');
       }
-
       const message = this.personalizeMessage(stepConfig.message, leadData);
-
       const result = await unipileService.sendMessage(
         userId,
         linkedinUrl,
         message
       );
-
       return {
         success: true,
         data: result
       };
     } catch (error) {
-      logger.error('[LinkedInDispatcher] Message send failed', { error: error.message, stack: error.stack });
       throw error;
     }
   }
-
   /**
    * Visit LinkedIn profile
    */
@@ -107,11 +84,9 @@ class LinkedInDispatcher {
         ? JSON.parse(lead.lead_data) 
         : (lead.lead_data || {});
       const linkedinUrl = leadData.linkedin_url || leadData.linkedin_profile_url;
-
       if (!linkedinUrl) {
         throw new Error('No LinkedIn URL found for lead');
       }
-
       // Get LinkedIn account ID for the user
       let linkedinAccountId = null;
       try {
@@ -126,9 +101,7 @@ class LinkedInDispatcher {
           linkedinAccountId = accountQuery.rows[0].unipile_account_id;
         }
       } catch (accountErr) {
-        logger.warn('[LinkedInDispatcher] Could not get LinkedIn account ID', { error: accountErr.message });
       }
-
       // Visit profile and get contact details
       let result;
       if (linkedinAccountId) {
@@ -138,85 +111,66 @@ class LinkedInDispatcher {
         // Fallback to simple visit
         result = await unipileService.visitProfile(userId, linkedinUrl);
       }
-
       // After successful visit, generate and save summary
       if (result && result.success !== false) {
         try {
           const profileData = result.profile || result;
-          
           // Generate summary using Gemini AI
           let summary = null;
           try {
             const GoogleGenerativeAI = require('@google/generative-ai');
             const geminiApiKey = process.env.GEMINI_API_KEY;
-            
             if (geminiApiKey) {
               const genAI = new GoogleGenerativeAI(geminiApiKey);
               const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-              
               const name = leadData.name || leadData.first_name || leadData.employee_name || 'Unknown';
               const title = leadData.title || leadData.employee_title || profileData.headline || profileData.title || 'Not specified';
               const company = leadData.company_name || leadData.company || profileData.company || 'Not specified';
               const location = leadData.location || leadData.city || leadData.employee_city || profileData.location || 'Not specified';
               const headline = profileData.headline || leadData.headline || leadData.employee_headline || 'Not specified';
               const bio = profileData.summary || profileData.bio || leadData.bio || leadData.summary || 'Not specified';
-              
               const prompt = `Generate a professional 2-3 sentence summary for this LinkedIn profile:
-
 Name: ${name}
 Title: ${title}
 Company: ${company}
 Location: ${location}
 Headline: ${headline}
 Bio/Summary: ${bio}
-
 Generate a concise, professional summary highlighting their role, expertise, and key characteristics. Focus on what makes them a valuable prospect.`;
-
               const geminiResult = await model.generateContent(prompt);
               const response = await geminiResult.response;
               summary = response.text().trim();
-              
-              logger.info('[LinkedInDispatcher] Profile summary generated', { name });
             } else {
-              logger.warn('[LinkedInDispatcher] GEMINI_API_KEY not set, skipping summary generation');
             }
           } catch (geminiErr) {
-            logger.error('[LinkedInDispatcher] Error calling Gemini API', { error: geminiErr.message, stack: geminiErr.stack });
           }
-          
           // Per TDD: Use dynamic schema - Save summary to campaign_leads table
           if (summary && lead.id) {
             try {
               // Get current lead_data with tenant enforcement
-              const schema = getSchema(null);
+              const schema = process.env.DB_SCHEMA || 'lad_dev';
               // First get tenant_id for security check
               const tenantCheck = await pool.query(
                 `SELECT tenant_id FROM ${schema}.campaign_leads WHERE id = $1`,
                 [lead.id]
               );
-              
               if (tenantCheck.rows.length === 0) {
                 throw new Error('Campaign lead not found');
               }
-              
               const leadTenantId = tenantCheck.rows[0].tenant_id;
-              
               const leadDataQuery = await pool.query(
                 `SELECT lead_data FROM ${schema}.campaign_leads WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE`,
                 [lead.id, leadTenantId]
               );
-              
               let currentLeadData = {};
               if (leadDataQuery.rows.length > 0 && leadDataQuery.rows[0].lead_data) {
                 currentLeadData = typeof leadDataQuery.rows[0].lead_data === 'string' 
                   ? JSON.parse(leadDataQuery.rows[0].lead_data)
                   : leadDataQuery.rows[0].lead_data;
               }
-              
               // Add summary to lead_data
               currentLeadData.profile_summary = summary;
               currentLeadData.profile_summary_generated_at = new Date().toISOString();
-              
               // Update campaign_leads with summary
               await pool.query(
                 `UPDATE ${schema}.campaign_leads 
@@ -224,28 +178,21 @@ Generate a concise, professional summary highlighting their role, expertise, and
                  WHERE id = $2 AND is_deleted = FALSE`,
                 [JSON.stringify(currentLeadData), lead.id]
               );
-              
-              logger.info('[LinkedInDispatcher] Profile summary saved to database', { leadId: lead.id });
             } catch (dbErr) {
-              logger.error('[LinkedInDispatcher] Error saving summary to database', { error: dbErr.message, stack: dbErr.stack });
             }
           }
         } catch (summaryErr) {
           // Don't fail the visit if summary generation fails
-          logger.error('[LinkedInDispatcher] Error generating profile summary', { error: summaryErr.message, stack: summaryErr.stack });
         }
       }
-
       return {
         success: true,
         data: result
       };
     } catch (error) {
-      logger.error('[LinkedInDispatcher] Profile visit failed', { error: error.message, stack: error.stack });
       throw error;
     }
   }
-
   /**
    * Follow LinkedIn profile
    */
@@ -253,29 +200,23 @@ Generate a concise, professional summary highlighting their role, expertise, and
     try {
       const leadData = lead.lead_data || {};
       const linkedinUrl = leadData.linkedin_url || leadData.linkedin_profile_url;
-
       if (!linkedinUrl) {
         throw new Error('No LinkedIn URL found for lead');
       }
-
       const result = await unipileService.followProfile(userId, linkedinUrl);
-
       return {
         success: true,
         data: result
       };
     } catch (error) {
-      logger.error('[LinkedInDispatcher] Follow failed', { error: error.message, stack: error.stack });
       throw error;
     }
   }
-
   /**
    * Personalize message with lead data
    */
   personalizeMessage(template, leadData) {
     let message = template;
-
     // Replace placeholders
     const replacements = {
       '{{first_name}}': leadData.first_name || '',
@@ -284,13 +225,10 @@ Generate a concise, professional summary highlighting their role, expertise, and
       '{{title}}': leadData.title || leadData.headline || '',
       '{{company}}': leadData.organization || leadData.company || '',
     };
-
     for (const [placeholder, value] of Object.entries(replacements)) {
       message = message.replace(new RegExp(placeholder, 'g'), value);
     }
-
     return message;
   }
 }
-
-module.exports = new LinkedInDispatcher();
+module.exports = new LinkedInDispatcher();

@@ -4,23 +4,19 @@
  * Multi-channel outreach campaigns with workflow automation.
  * Supports LinkedIn, Email, WhatsApp, Instagram, Voice calls, and more.
  */
-
 module.exports = {
   name: 'Campaigns',
   key: 'campaigns',
   version: '1.0.0',
   description: 'Multi-channel outreach campaigns with LinkedIn and Email automation',
-  
   // Feature availability
   plans: ['professional', 'enterprise'],
-  
   // Credit costs
   credits: {
     per_campaign: 0,  // No cost to create campaign
     per_lead: 0.01,   // Small cost per lead processed
     per_action: 0.05  // Cost per action (message, connection request, etc.)
   },
-  
   // API routes provided by this feature
   routes: [
     '',           // GET /api/campaigns - List campaigns
@@ -34,12 +30,10 @@ module.exports = {
     ':id/activities',  // GET /api/campaigns/:id/activities - Get activities
     ':id/steps'   // GET/POST /api/campaigns/:id/steps - Manage workflow steps
   ],
-  
   // Dependencies
   dependencies: [
     'apollo-leads'  // For lead generation
   ],
-  
   // Feature capabilities
   capabilities: [
     'view_campaigns',
@@ -48,4 +42,4 @@ module.exports = {
     'delete_campaigns',
     'manage_campaign_leads'
   ]
-};
+};

@@ -2,18 +2,14 @@
  * LinkedIn Account Query Service
  * Handles database queries for LinkedIn accounts
  */
-
 const { pool } = require('../../../shared/database/connection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
-const logger = require('../../../core/utils/logger');
-
 /**
  * Get all connected LinkedIn accounts for a user/tenant
  * Uses TDD schema (${schema}.linkedin_accounts) with fallback to old schema
  */
 async function getUserLinkedInAccounts(userId) {
   try {
-    const schema = userId ? getSchema({ user: { tenant_id: userId } }) : getSchema(null);
+    const schema = process.env.DB_SCHEMA || 'lad_dev';
     // Use ${schema}.linkedin_accounts table per TDD
     // First try the TDD schema, fallback to old schema if needed
     let query = `
@@ -31,7 +27,6 @@ async function getUserLinkedInAccounts(userId) {
       AND is_active = TRUE
       ORDER BY created_at DESC
     `;
-    
     // Get tenant_id from user_id (userId might be user_id, need to get tenant_id)
     // First try using userId as tenant_id (in dev they might be the same)
     let result;
@@ -40,7 +35,6 @@ async function getUserLinkedInAccounts(userId) {
       result = await pool.query(query, [userId]);
     } catch (tddError) {
       // Fallback to old schema if TDD table doesn't exist
-      logger.warn('[LinkedIn Account Query] TDD table not found, using fallback', { error: tddError.message });
       useTddSchema = false;
       query = `
         SELECT id, credentials, is_connected, connected_at
@@ -50,19 +44,15 @@ async function getUserLinkedInAccounts(userId) {
         AND is_connected = TRUE
         ORDER BY connected_at DESC NULLS LAST, created_at DESC
       `;
-      
       try {
         result = await pool.query(query, [userId]);
       } catch (fallbackError) {
-        logger.error('[LinkedIn Account Query] Fallback query also failed', { error: fallbackError.message, stack: fallbackError.stack });
         return [];
       }
     }
-    
     if (!result || result.rows.length === 0) {
       return [];
     }
-    
     // Map results to consistent format
     if (useTddSchema) {
       return result.rows.map(row => ({
@@ -82,7 +72,6 @@ async function getUserLinkedInAccounts(userId) {
         const credentials = typeof row.credentials === 'string' 
           ? JSON.parse(row.credentials) 
           : row.credentials || {};
-        
         return {
           id: row.id, // Database ID
           connectionId: row.id, // For frontend compatibility
@@ -97,18 +86,16 @@ async function getUserLinkedInAccounts(userId) {
       });
     }
   } catch (error) {
-    logger.error('[LinkedIn Account Query] Error getting LinkedIn accounts', { error: error.message, stack: error.stack });
     return [];
   }
 }
-
 /**
  * Find LinkedIn account by unipile_account_id
  */
 async function findAccountByUnipileId(tenantId, unipileAccountId) {
   try {
     // Try TDD schema first
-    const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
+    const schema = process.env.DB_SCHEMA || 'lad_dev';
     try {
       const result = await pool.query(
         `SELECT id, unipile_account_id, is_active
@@ -118,14 +105,12 @@ async function findAccountByUnipileId(tenantId, unipileAccountId) {
          LIMIT 1`,
         [tenantId, unipileAccountId]
       );
-      
       if (result.rows.length > 0) {
         return { account: result.rows[0], schema: 'tdd' };
       }
     } catch (tddError) {
       // Fall through to old schema
     }
-    
     // Fallback to old schema
     const result = await pool.query(
       `SELECT id, credentials
@@ -136,20 +121,15 @@ async function findAccountByUnipileId(tenantId, unipileAccountId) {
        LIMIT 1`,
       [tenantId, unipileAccountId]
     );
-    
     if (result.rows.length > 0) {
       return { account: result.rows[0], schema: 'old' };
     }
-    
     return null;
   } catch (error) {
-    logger.error('[LinkedIn Account Query] Error finding account', { error: error.message, stack: error.stack });
     return null;
   }
 }
-
 module.exports = {
   getUserLinkedInAccounts,
   findAccountByUnipileId
-};
-
+};

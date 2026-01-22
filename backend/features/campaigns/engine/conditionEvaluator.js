@@ -1,8 +1,6 @@
 /**
  * Condition Evaluator - evaluates workflow conditions
  */
-const logger = require('../../../core/utils/logger');
-
 class ConditionEvaluator {
   /**
    * Evaluate a condition step
@@ -12,35 +10,25 @@ class ConditionEvaluator {
       const stepConfig = typeof step.data === 'string' 
         ? JSON.parse(step.data) 
         : (step.data || {});
-
       const conditionType = stepConfig.conditionType;
-
       switch (conditionType) {
         case 'response_received':
           return this.checkResponseReceived(lead, executionResult);
-
         case 'profile_matches':
           return this.checkProfileMatches(lead, stepConfig);
-
         case 'engagement_level':
           return this.checkEngagementLevel(lead, stepConfig);
-
         case 'time_elapsed':
           return this.checkTimeElapsed(lead, stepConfig);
-
         case 'custom_field':
           return this.checkCustomField(lead, stepConfig);
-
         default:
-          logger.warn('[ConditionEvaluator] Unknown condition type', { conditionType });
           return false;
       }
     } catch (error) {
-      logger.error('[ConditionEvaluator] Error evaluating condition', { error: error.message, stack: error.stack });
       return false;
     }
   }
-
   /**
    * Check if lead has responded
    */
@@ -48,14 +36,12 @@ class ConditionEvaluator {
     // Check if there's a response in the execution result
     return executionResult?.responseReceived || false;
   }
-
   /**
    * Check if lead profile matches criteria
    */
   checkProfileMatches(lead, stepConfig) {
     const criteria = stepConfig.profileCriteria || {};
     const leadData = lead.lead_data || {};
-
     // Check title match
     if (criteria.title) {
       const title = leadData.title || leadData.headline || '';
@@ -63,7 +49,6 @@ class ConditionEvaluator {
         return false;
       }
     }
-
     // Check seniority match
     if (criteria.seniority) {
       const seniority = leadData.seniority_level || '';
@@ -71,7 +56,6 @@ class ConditionEvaluator {
         return false;
       }
     }
-
     // Check industry match
     if (criteria.industry) {
       const industry = leadData.industry || '';
@@ -79,33 +63,26 @@ class ConditionEvaluator {
         return false;
       }
     }
-
     return true;
   }
-
   /**
    * Check engagement level
    */
   checkEngagementLevel(lead, stepConfig) {
     const minEngagement = stepConfig.minEngagementScore || 0;
     const leadEngagement = lead.engagement_score || 0;
-
     return leadEngagement >= minEngagement;
   }
-
   /**
    * Check time elapsed since last activity
    */
   checkTimeElapsed(lead, stepConfig) {
     const requiredDays = stepConfig.daysElapsed || 0;
     const lastActivityDate = lead.last_activity_at || lead.created_at;
-
     if (!lastActivityDate) return false;
-
     const daysSinceActivity = (Date.now() - new Date(lastActivityDate).getTime()) / (1000 * 60 * 60 * 24);
     return daysSinceActivity >= requiredDays;
   }
-
   /**
    * Check custom field value
    */
@@ -113,10 +90,8 @@ class ConditionEvaluator {
     const fieldName = stepConfig.fieldName;
     const expectedValue = stepConfig.expectedValue;
     const operator = stepConfig.operator || 'equals';
-
     const customFields = lead.custom_fields || {};
     const actualValue = customFields[fieldName];
-
     switch (operator) {
       case 'equals':
         return actualValue === expectedValue;
@@ -133,5 +108,4 @@ class ConditionEvaluator {
     }
   }
 }
-
-module.exports = new ConditionEvaluator();
+module.exports = new ConditionEvaluator();

@@ -2,19 +2,14 @@
  * LinkedIn Account Service
  * Handles account management operations
  */
-
 const { pool } = require('../../../shared/database/connection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
 const UnipileBaseService = require('./UnipileBaseService');
 const axios = require('axios');
 const { getUserLinkedInAccounts, findAccountByUnipileId } = require('./LinkedInAccountQueryService');
-const logger = require('../../../core/utils/logger');
-
 class LinkedInAccountService {
   constructor() {
     this.baseService = new UnipileBaseService();
   }
-
   /**
    * Disconnect a specific LinkedIn account
    * Uses TDD schema: ${schema}.linkedin_accounts with tenant_id (UUID)
@@ -24,20 +19,15 @@ class LinkedInAccountService {
    */
   async disconnectAccount(tenantId, unipileAccountId) {
     try {
-      logger.info('[LinkedIn Account] Disconnecting account', { unipileAccountId, tenantId });
-      
-      const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
+      const schema = process.env.DB_SCHEMA || 'lad_dev';
       // Try TDD schema first (${schema}.linkedin_accounts)
       const accountResult = await findAccountByUnipileId(tenantId, unipileAccountId);
-      
       if (!accountResult || !accountResult.account) {
         throw new Error('LinkedIn account not found for this tenant/user');
       }
-      
       const account = accountResult.account;
       // Use schema from accountResult if available, otherwise use the one we calculated
       const finalSchema = accountResult.schema || schema;
-      
       // Try to delete from Unipile using SDK (don't fail if it errors)
       if (this.baseService.isConfigured()) {
         try {
@@ -48,16 +38,13 @@ class LinkedInAccountService {
           if (sdkBaseUrl.endsWith('/api/v1')) {
             sdkBaseUrl = sdkBaseUrl.replace(/\/api\/v1$/, '');
           }
-          
           const token = (this.baseService.dsn && this.baseService.token) 
             ? this.baseService.token.trim() 
             : (process.env.UNIPILE_TOKEN || '').trim();
-          
           if (token) {
             const unipile = new UnipileClient(sdkBaseUrl, token);
             if (unipile.account && typeof unipile.account.delete === 'function') {
               await unipile.account.delete(unipileAccountId);
-              logger.info('[LinkedIn Account] Account deleted from Unipile via SDK', { accountId: unipileAccountId });
             } else {
               throw new Error('SDK delete method not available');
             }
@@ -71,13 +58,10 @@ class LinkedInAccountService {
               `${baseUrl}/accounts/${unipileAccountId}`,
               { headers, timeout: 30000 }
             );
-            logger.info('[LinkedIn Account] Account deleted from Unipile via HTTP', { accountId: unipileAccountId });
           } catch (httpError) {
-            logger.warn('[LinkedIn Account] Error deleting from Unipile (continuing)', { error: httpError.message });
           }
         }
       }
-
       // Mark as inactive/disconnected in database
       if (accountResult.schema === 'tdd') {
         await pool.query(
@@ -87,7 +71,6 @@ class LinkedInAccountService {
            WHERE id = $1`,
           [account.id]
         );
-        logger.info('[LinkedIn Account] Account disconnected (TDD schema)', { accountId: unipileAccountId });
       } else {
         await pool.query(
           `UPDATE ${finalSchema}.user_integrations_voiceagent
@@ -96,12 +79,9 @@ class LinkedInAccountService {
            WHERE id = $1`,
           [account.id]
         );
-        logger.info('[LinkedIn Account] Account disconnected (fallback schema)', { accountId: unipileAccountId });
       }
-
       // Get remaining accounts
       const remainingAccounts = await getUserLinkedInAccounts(tenantId);
-
       return {
         success: true,
         disconnectedAccountId: unipileAccountId,
@@ -109,11 +89,9 @@ class LinkedInAccountService {
         remainingAccountsList: remainingAccounts
       };
     } catch (error) {
-      logger.error('[LinkedIn Account] Error disconnecting account', { error: error.message, stack: error.stack });
       throw error;
     }
   }
-
   /**
    * Get all connected LinkedIn accounts for a user
    * @param {string} userId - User ID
@@ -122,7 +100,6 @@ class LinkedInAccountService {
   async getUserLinkedInAccounts(userId) {
     return await getUserLinkedInAccounts(userId);
   }
-
   /**
    * Get all connected accounts across all users (for cron jobs)
    * @returns {Array} Array of {userId, account} objects
@@ -136,14 +113,11 @@ class LinkedInAccountService {
         AND is_connected = TRUE
         ORDER BY connected_at DESC
       `;
-      
       const result = await pool.query(query);
-      
       return result.rows.map(row => {
         const creds = typeof row.credentials === 'string' 
           ? JSON.parse(row.credentials) 
           : (row.credentials || {});
-        
         return {
           userId: row.user_id,
           account: {
@@ -156,11 +130,9 @@ class LinkedInAccountService {
         };
       });
     } catch (error) {
-      logger.error('[LinkedIn Account] Error getting all accounts', { error: error.message, stack: error.stack });
       return [];
     }
   }
-
   /**
    * Sync account data (connections, messages, etc.)
    * @param {Object} account - Account object
@@ -169,16 +141,11 @@ class LinkedInAccountService {
   async syncAccountData(account) {
     try {
       const { unipile_account_id } = account;
-      
-      logger.info('[LinkedIn Account] Syncing account data', { accountId: unipile_account_id });
-      
       if (!this.baseService.isConfigured()) {
         throw new Error('Unipile is not configured');
       }
-
       const baseUrl = this.baseService.getBaseUrl();
       const headers = this.baseService.getAuthHeaders();
-
       // Fetch connections
       let connections = [];
       try {
@@ -190,9 +157,7 @@ class LinkedInAccountService {
           ? connResponse.data 
           : (connResponse.data?.data || connResponse.data?.connections || []);
       } catch (err) {
-        logger.warn('[LinkedIn Account] Error fetching connections', { error: err.message });
       }
-
       // Update lastSyncedAt in credentials
       const userId = account.userId;
       if (userId) {
@@ -205,14 +170,11 @@ class LinkedInAccountService {
            LIMIT 1`,
           [userId, unipile_account_id]
         );
-
         if (integrationQuery.rows.length > 0) {
           const creds = typeof integrationQuery.rows[0].credentials === 'string'
             ? JSON.parse(integrationQuery.rows[0].credentials)
             : (integrationQuery.rows[0].credentials || {});
-          
           creds.lastSyncedAt = new Date().toISOString();
-          
           await pool.query(
             `UPDATE ${schema}.user_integrations_voiceagent
              SET credentials = $1::jsonb, updated_at = CURRENT_TIMESTAMP
@@ -221,20 +183,17 @@ class LinkedInAccountService {
           );
         }
       }
-
       return {
         success: true,
         connectionsCount: connections.length
       };
     } catch (error) {
-      logger.error('[LinkedIn Account] Error syncing account data', { error: error.message, stack: error.stack });
       return {
         success: false,
         error: error.message
       };
     }
   }
-
   /**
    * Sync from Unipile (get account status)
    * @param {string} unipileAccountId - Unipile account ID
@@ -245,21 +204,16 @@ class LinkedInAccountService {
       if (!this.baseService.isConfigured()) {
         throw new Error('Unipile is not configured');
       }
-
       const baseUrl = this.baseService.getBaseUrl();
       const headers = this.baseService.getAuthHeaders();
-
       const response = await axios.get(
         `${baseUrl}/accounts/${unipileAccountId}`,
         { headers, timeout: 30000 }
       );
-
       const accountDetails = response.data;
-      
       if (!accountDetails) {
         return { success: false, error: 'Account not found' };
       }
-
       // Update credentials with latest info
       const integrationQuery = await pool.query(
         `SELECT id, credentials, user_id
@@ -269,17 +223,14 @@ class LinkedInAccountService {
          LIMIT 1`,
         [unipileAccountId]
       );
-
       if (integrationQuery.rows.length > 0) {
         const creds = typeof integrationQuery.rows[0].credentials === 'string'
           ? JSON.parse(integrationQuery.rows[0].credentials)
           : (integrationQuery.rows[0].credentials || {});
-        
         // Update with latest profile info
         creds.profile_name = accountDetails.profile_name || accountDetails.name || creds.profile_name;
         creds.profile_url = accountDetails.profile_url || accountDetails.url || creds.profile_url;
         creds.email = accountDetails.email || creds.email;
-        
         await pool.query(
           `UPDATE ${schema}.user_integrations_voiceagent
            SET credentials = $1::jsonb, updated_at = CURRENT_TIMESTAMP
@@ -287,20 +238,17 @@ class LinkedInAccountService {
           [JSON.stringify(creds), integrationQuery.rows[0].id]
         );
       }
-
       return {
         success: true,
         account: accountDetails
       };
     } catch (error) {
-      logger.error('[LinkedIn Account] Error syncing from Unipile', { error: error.message, stack: error.stack });
       return {
         success: false,
         error: error.message
       };
     }
   }
-
   /**
    * Solve checkpoint (Yes/No validation)
    * @param {string} unipileAccountId - Unipile account ID
@@ -313,7 +261,6 @@ class LinkedInAccountService {
       if (!this.baseService.isConfigured()) {
         throw new Error('Unipile is not configured');
       }
-
       const baseUrl = this.baseService.getBaseUrl();
       let sdkBaseUrl = baseUrl;
       if (sdkBaseUrl.endsWith('/api/v1')) {
@@ -321,22 +268,17 @@ class LinkedInAccountService {
       } else if (sdkBaseUrl.endsWith('/api/v1/')) {
         sdkBaseUrl = sdkBaseUrl.replace(/\/api\/v1\/$/, '');
       }
-
       const token = (this.baseService.dsn && this.baseService.token) 
         ? this.baseService.token.trim() 
         : (process.env.UNIPILE_TOKEN || '').trim();
-
       if (!token) {
         throw new Error('UNIPILE_TOKEN is not configured');
       }
-
       // Try SDK first (like pluto_campaigns)
       const { UnipileClient } = require('unipile-node-sdk');
       const unipile = new UnipileClient(sdkBaseUrl, token);
-
       let solveResponse;
       if (unipile.account && typeof unipile.account.solveCheckpoint === 'function') {
-        logger.debug('[LinkedIn Account] Using SDK solveCheckpoint', { accountId: unipileAccountId, checkpointType, answer });
         solveResponse = await unipile.account.solveCheckpoint({
           account_id: unipileAccountId,
           type: checkpointType,
@@ -344,7 +286,6 @@ class LinkedInAccountService {
         });
       } else {
         // Fallback to HTTP
-        logger.debug('[LinkedIn Account] SDK method not available, using HTTP fallback');
         const headers = this.baseService.getAuthHeaders();
         const response = await axios.post(
           `${baseUrl}/accounts/${unipileAccountId}/solve-checkpoint`,
@@ -356,15 +297,11 @@ class LinkedInAccountService {
         );
         solveResponse = response.data;
       }
-
-      logger.info('[LinkedIn Account] Checkpoint solved successfully', { accountId: unipileAccountId });
       return solveResponse;
     } catch (error) {
-      logger.error('[LinkedIn Account] Error solving checkpoint', { error: error.message, stack: error.stack });
       throw error;
     }
   }
-
   /**
    * Verify OTP for checkpoint
    * @param {string} unipileAccountId - Unipile account ID
@@ -376,7 +313,6 @@ class LinkedInAccountService {
       if (!this.baseService.isConfigured()) {
         throw new Error('Unipile is not configured');
       }
-
       const baseUrl = this.baseService.getBaseUrl();
       let sdkBaseUrl = baseUrl;
       if (sdkBaseUrl.endsWith('/api/v1')) {
@@ -384,22 +320,17 @@ class LinkedInAccountService {
       } else if (sdkBaseUrl.endsWith('/api/v1/')) {
         sdkBaseUrl = sdkBaseUrl.replace(/\/api\/v1\/$/, '');
       }
-
       const token = (this.baseService.dsn && this.baseService.token) 
         ? this.baseService.token.trim() 
         : (process.env.UNIPILE_TOKEN || '').trim();
-
       if (!token) {
         throw new Error('UNIPILE_TOKEN is not configured');
       }
-
       // Try SDK first (like pluto_campaigns)
       const { UnipileClient } = require('unipile-node-sdk');
       const unipile = new UnipileClient(sdkBaseUrl, token);
-
       let verificationResponse;
       if (unipile.account && typeof unipile.account.solveCodeCheckpoint === 'function') {
-        logger.debug('[LinkedIn Account] Using SDK solveCodeCheckpoint', { accountId: unipileAccountId });
         verificationResponse = await unipile.account.solveCodeCheckpoint({
           provider: 'LINKEDIN',
           account_id: unipileAccountId,
@@ -407,7 +338,6 @@ class LinkedInAccountService {
         });
       } else {
         // Fallback to HTTP
-        logger.debug('[LinkedIn Account] SDK method not available, using HTTP fallback');
         const headers = this.baseService.getAuthHeaders();
         const response = await axios.post(
           `${baseUrl}/accounts/${unipileAccountId}/solve-checkpoint`,
@@ -419,15 +349,10 @@ class LinkedInAccountService {
         );
         verificationResponse = response.data;
       }
-
-      logger.info('[LinkedIn Account] OTP verified successfully', { accountId: unipileAccountId });
       return verificationResponse;
     } catch (error) {
-      logger.error('[LinkedIn Account] Error verifying OTP', { error: error.message, stack: error.stack });
       throw error;
     }
   }
 }
-
-module.exports = new LinkedInAccountService();
-
+module.exports = new LinkedInAccountService();

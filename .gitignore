@@ -68,6 +68,7 @@ package.json
 
 # Documentation files
 *.md
+!README.md
 
 # Test files
 **/*test*.js
@@ -78,14 +79,19 @@ test/
 tests/
 
 # Check/debug scripts (local testing only)
-check*.js
-check*.sql
-debug*.js
-verify*.js
+check-*.js
+create-*.js
+delete-*.js
+fix-*.js
+link-*.js
+pause-*.js
+replace-*.js
+reset-*.js
+restart-*.js
+simulate-*.js
+trigger-*.js
 test-*.js
+*.sql
 
-# Ignore core and shared folders
+# Backend utilities (provided by parent STS service in microservice deployments)
 backend/core/
-backend/shared/
-shared/
-core/
