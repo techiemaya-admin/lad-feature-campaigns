@@ -3,8 +3,10 @@
  * Handles email and phone reveal for campaign leads using Apollo API
  * LAD Architecture Compliant - No SQL in controllers, uses logger
  */
+
 const axios = require('axios');
 const CampaignLeadModel = require('../models/CampaignLeadModel');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const logger = require('../../../core/utils/logger');
 /**
  * Get backend URL from environment variables
@@ -33,7 +35,7 @@ function getAuthHeaders(req) {
  * Update campaign lead with revealed contact info
  */
 async function updateLeadWithRevealedContact(leadId, campaignId, tenantId, req, contactType, contactValue, metadata) {
-  const schema = process.env.DB_SCHEMA || 'lad_dev';
+  const schema = getSchema(req);
   try {
     const lead = await CampaignLeadModel.getLeadById(leadId, campaignId, tenantId, schema);
     if (!lead) {

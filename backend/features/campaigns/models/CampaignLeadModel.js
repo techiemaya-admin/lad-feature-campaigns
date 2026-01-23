@@ -2,7 +2,9 @@
  * Campaign Lead Model
  * Handles database operations for campaign leads
  */
+
 const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const { randomUUID } = require('crypto');
 class CampaignLeadModel {
   /**
@@ -22,7 +24,7 @@ class CampaignLeadModel {
       leadData: customData = {},
       status = 'active'
     } = leadData;
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use dynamic schema with snapshot JSONB (not individual columns)
     const snapshot = {
       first_name: firstName,
@@ -56,7 +58,7 @@ class CampaignLeadModel {
    * Get lead by ID
    */
   static async getById(leadId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema
     const query = `
       SELECT * FROM ${schema}.campaign_leads
@@ -69,7 +71,7 @@ class CampaignLeadModel {
    * Get leads by campaign ID
    */
   static async getByCampaignId(campaignId, tenantId, filters = {}, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const { status, limit = 100, offset = 0 } = filters;
     // Per TDD: Use lad_dev schema
     // LEFT JOIN with leads table to get inbound lead data when lead_id is present
@@ -102,7 +104,7 @@ class CampaignLeadModel {
    * Check if lead exists by Apollo ID
    */
   static async existsByApolloId(campaignId, tenantId, apolloPersonId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema
     const query = `
       SELECT id FROM ${schema}.campaign_leads
@@ -116,7 +118,7 @@ class CampaignLeadModel {
    * Update campaign lead
    */
   static async update(leadId, tenantId, updates, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema, update snapshot JSONB or other direct columns
     const allowedFields = [
       'snapshot', 'lead_data', 'status',
@@ -150,7 +152,7 @@ class CampaignLeadModel {
    * Delete campaign lead
    */
   static async delete(leadId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema (soft delete)
     const query = `
       UPDATE ${schema}.campaign_leads
@@ -165,7 +167,7 @@ class CampaignLeadModel {
    * Get active leads for processing
    */
   static async getActiveLeadsForCampaign(campaignId, tenantId, limit = 10, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema
     const query = `
       SELECT * FROM ${schema}.campaign_leads
@@ -242,7 +244,7 @@ class CampaignLeadModel {
    * Bulk create leads
    */
   static async bulkCreate(campaignId, tenantId, leads, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     if (!leads || leads.length === 0) {
       return [];
     }
@@ -286,4 +288,4 @@ class CampaignLeadModel {
     return result.rows;
   }
 }
-module.exports = CampaignLeadModel;
+module.exports = CampaignLeadModel;

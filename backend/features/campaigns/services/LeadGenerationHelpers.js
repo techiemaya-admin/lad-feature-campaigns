@@ -2,14 +2,16 @@
  * Lead Generation Helpers
  * Helper functions for lead generation service
  */
+
 const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 /**
  * Check if lead already exists in campaign
  */
 async function checkLeadExists(campaignId, apolloPersonId, req = null) {
   try {
     // Per TDD: Use dynamic schema
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const existingLead = await pool.query(
       `SELECT id FROM ${schema}.campaign_leads 
        WHERE campaign_id = $1 AND lead_data->>'apollo_person_id' = $2 AND is_deleted = FALSE`,
@@ -53,7 +55,7 @@ function createSnapshot(fields) {
  * Save lead to campaign
  */
 async function saveLeadToCampaign(campaignId, tenantId, leadId, snapshot, leadData, req = null) {
-  const schema = tenantId ? process.env.DB_SCHEMA || 'lad_dev' : process.env.DB_SCHEMA || 'lad_dev';
+  const schema = getSchema(null);
   const insertResult = await pool.query(
     `INSERT INTO ${schema}.campaign_leads 
      (tenant_id, campaign_id, lead_id, status, snapshot, lead_data, created_at)
@@ -69,7 +71,7 @@ async function saveLeadToCampaign(campaignId, tenantId, leadId, snapshot, leadDa
 async function updateCampaignConfig(campaignId, config, req = null, tenantId = null) {
   try {
     // Per TDD: Use dynamic schema
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const actualTenantId = tenantId || req?.user?.tenant_id || req?.user?.tenantId;
     if (!actualTenantId) {
       throw new Error('Tenant context required for campaign config update');
@@ -89,7 +91,7 @@ async function updateCampaignConfig(campaignId, config, req = null, tenantId = n
 async function updateStepConfig(stepId, stepConfig, req = null, tenantId = null) {
   try {
     // Per TDD: Use dynamic schema
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const actualTenantId = tenantId || req?.user?.tenant_id || req?.user?.tenantId;
     if (!actualTenantId) {
       throw new Error('Tenant context required for step config update');
@@ -109,4 +111,4 @@ module.exports = {
   saveLeadToCampaign,
   updateCampaignConfig,
   updateStepConfig
-};
+};

@@ -1,4 +1,5 @@
 const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const stepExecutor = require('./stepExecutor');
 const conditionEvaluator = require('./conditionEvaluator');
 /**
@@ -12,7 +13,7 @@ class WorkflowEngine {
   async processCampaign(campaignId, userId, tenantId) {
     try {
       // Per TDD: Use dynamic schema
-      const schema = process.env.DB_SCHEMA || 'lad_dev';
+      const schema = getSchema(req);
       const campaignResult = await pool.query(
         `SELECT * FROM ${schema}.campaigns WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE`,
         [campaignId, tenantId]
@@ -86,7 +87,7 @@ class WorkflowEngine {
         // Determine next step
         currentStepId = await this.getNextStep(currentStep, lead, workflow, result);
         // Per TDD: Use dynamic schema
-        const schema = process.env.DB_SCHEMA || 'lad_dev';
+        const schema = getSchema(req);
         await pool.query(
           `UPDATE ${schema}.campaign_leads SET current_step_order = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND tenant_id = $3 AND is_deleted = FALSE`,
           [currentStepId, lead.id, tenantId]
@@ -131,7 +132,7 @@ class WorkflowEngine {
   async getPendingDelayedLeads(tenantId = null) {
     try {
       // Per TDD: Use dynamic schema
-      const schema = process.env.DB_SCHEMA || 'lad_dev';
+      const schema = getSchema(req);
       const result = await pool.query(`
         SELECT DISTINCT cl.*, c.config as workflow, c.created_by_user_id as user_id, c.tenant_id
         FROM ${schema}.campaign_leads cl
@@ -150,4 +151,4 @@ class WorkflowEngine {
     }
   }
 }
-module.exports = new WorkflowEngine();
+module.exports = new WorkflowEngine();

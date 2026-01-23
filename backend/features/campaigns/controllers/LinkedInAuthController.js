@@ -2,6 +2,8 @@
  * LinkedIn Auth Controller
  * Handles OAuth, connection, and checkpoint operations
  */
+
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const linkedInService = require('../services/LinkedInIntegrationService');
 const linkedInAccountStorage = require('../services/LinkedInAccountStorageService');
 class LinkedInAuthController {
@@ -202,7 +204,7 @@ class LinkedInAuthController {
             accountDetails = result;
           }
         }
-        const schema = process.env.DB_SCHEMA || 'lad_dev';
+        const schema = getSchema(req);
         // Use tenantId for TDD schema (${schema}.linkedin_accounts uses tenant_id)
         const tenantId = req.user.tenantId || req.user.userId || req.user.user_id;
         if (tenantId) {
@@ -308,4 +310,4 @@ class LinkedInAuthController {
     return LinkedInCheckpointController.getCheckpointStatus(req, res);
   }
 }
-module.exports = LinkedInAuthController;
+module.exports = LinkedInAuthController;

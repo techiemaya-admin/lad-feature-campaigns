@@ -2,13 +2,16 @@
  * Campaign Step Repository
  * SQL queries only - no business logic
  */
-const { pool } = require('../../../shared/database/connection');
+
+const { getSchema } = require('../../../core/utils/schemaHelper');
+const { pool } = require('../utils/dbConnection');
+const logger = require('../../../core/utils/logger');
 class CampaignStepRepository {
   /**
    * Create a new campaign step
    */
   static async create(stepData, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema();
     const {
       campaignId,
       type,
@@ -40,7 +43,7 @@ class CampaignStepRepository {
    * Get steps for a campaign
    */
   static async getStepsByCampaignId(campaignId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema();
     let query = `
       SELECT 
         id, tenant_id, campaign_id,
@@ -133,7 +136,7 @@ class CampaignStepRepository {
    * Get step by ID
    */
   static async getById(stepId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema();
     let query = `
       SELECT 
         id, tenant_id, campaign_id,
@@ -221,7 +224,7 @@ class CampaignStepRepository {
    * Update campaign step
    */
   static async update(stepId, tenantId, updates, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const fieldMapping = {
       'type': 'step_type',
       'order': 'step_order',
@@ -257,7 +260,7 @@ class CampaignStepRepository {
    * Delete campaign step
    */
   static async delete(stepId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const query = `
       DELETE FROM ${schema}.campaign_steps
       WHERE id = $1 AND tenant_id = $2
@@ -270,7 +273,7 @@ class CampaignStepRepository {
    * Delete all steps for a campaign
    */
   static async deleteByCampaignId(campaignId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const query = `
       DELETE FROM ${schema}.campaign_steps
       WHERE campaign_id = $1 AND tenant_id = $2
@@ -283,7 +286,7 @@ class CampaignStepRepository {
    * Bulk create steps
    */
   static async bulkCreate(campaignId, tenantId, steps, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     if (!steps || steps.length === 0) {
       return [];
     }

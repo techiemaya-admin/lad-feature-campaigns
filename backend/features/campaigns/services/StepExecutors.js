@@ -3,6 +3,7 @@
  * Handles execution of various campaign step types
  */
 const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const axios = require('axios');
 const BACKEND_URL = process.env.BACKEND_INTERNAL_URL || process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL;
 if (!BACKEND_URL) {
@@ -15,7 +16,7 @@ if (!BACKEND_URL) {
 // Per TDD: Use dynamic schema
 async function getLeadData(campaignLeadId, req = null, tenantId = null) {
   try {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Get tenant_id from req or parameter
     const actualTenantId = tenantId || req?.user?.tenant_id || req?.user?.tenantId;
     let leadDataResult;
@@ -254,7 +255,7 @@ async function executeDelayStep(stepConfig) {
 async function executeConditionStep(stepConfig, campaignLead) {
   const conditionType = stepConfig.condition || stepConfig.conditionType;
   // Per TDD: Use dynamic schema
-  const schema = process.env.DB_SCHEMA || 'lad_dev';
+  const schema = getSchema(req);
   const activitiesResult = await pool.query(
     `SELECT status FROM ${schema}.campaign_lead_activities 
      WHERE campaign_lead_id = $1 AND is_deleted = FALSE
@@ -286,4 +287,4 @@ module.exports = {
   executeVoiceAgentStep,
   executeDelayStep,
   executeConditionStep
-};
+};

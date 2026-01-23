@@ -3,6 +3,7 @@
  * Handles lead generation with daily limits and offset tracking
  */
 const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const { searchEmployees, searchEmployeesFromDatabase } = require('./LeadSearchService');
 const UnipileApolloAdapterService = require('../../apollo-leads/services/UnipileApolloAdapterService');
 /**
@@ -13,7 +14,7 @@ const UnipileApolloAdapterService = require('../../apollo-leads/services/Unipile
  */
 async function getExistingLeadIds(tenantId) {
   try {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema();
     const result = await pool.query(
       `SELECT DISTINCT lead_data->>'apollo_person_id' as apollo_person_id,
               lead_data->>'id' as lead_id
@@ -55,7 +56,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       stepConfig = JSON.parse(stepConfig);
     }
     // LAD Architecture: Use dynamic schema resolution
-    const schema = process.env.DB_SCHEMA || 'lad_dev'; // No req available, will use default
+    const schema = getSchema(req); // No req available, will use default
     // Get campaign to access config (leads_per_day, lead_gen_offset)
     // First try to get config from campaigns table (if config column exists)
     let campaignConfig = {};
@@ -200,8 +201,9 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     });
     // PRODUCTION-GRADE: Check search source preference (Unipile, Apollo, or Auto)
     // Get campaign configuration for source preference
+    const schema = getSchema(null);
     const campaignQuery = await pool.query(
-      `SELECT config, search_source FROM ${process.env.DB_SCHEMA || 'lad_dev'}.campaigns 
+      `SELECT config, search_source FROM ${schema}.campaigns 
        WHERE id = $1 AND is_deleted = FALSE`,
       [campaignId]
     );
@@ -502,4 +504,4 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
 }
 module.exports = {
   executeLeadGeneration
-};
+};

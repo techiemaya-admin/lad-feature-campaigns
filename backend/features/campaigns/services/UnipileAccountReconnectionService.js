@@ -4,7 +4,9 @@
  * Implements smart retry logic without marking accounts as expired prematurely
  * LAD Architecture Compliant - Uses logger instead of console
  */
+
 const axios = require('axios');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 class UnipileAccountReconnectionService {
     constructor(baseService) {
         this.base = baseService;
@@ -140,7 +142,7 @@ class UnipileAccountReconnectionService {
     async markAccountAsExpired(accountId) {
         try {
             const { pool } = require('../../../shared/database/connection');
-            const schema = process.env.DB_SCHEMA || 'lad_dev';
+            const schema = getSchema(req);
             const result = await pool.query(
                 `UPDATE ${schema}.social_linkedin_accounts 
                  SET status = 'expired', updated_at = CURRENT_TIMESTAMP 
@@ -239,4 +241,4 @@ class UnipileAccountReconnectionService {
         };
     }
 }
-module.exports = UnipileAccountReconnectionService;
+module.exports = UnipileAccountReconnectionService;

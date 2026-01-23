@@ -3,12 +3,13 @@
  * Handles profile summary generation and saving
  */
 const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 /**
  * Generate and save profile summary for a LinkedIn visit
  */
 async function generateAndSaveProfileSummary(campaignLeadId, leadData, profileData, employee) {
   try {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Generate summary using Gemini AI
     let summary = null;
     try {
@@ -76,4 +77,4 @@ Generate a concise, professional summary highlighting their role, expertise, and
 }
 module.exports = {
   generateAndSaveProfileSummary
-};
+};

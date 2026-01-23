@@ -2,8 +2,10 @@
  * Campaign Model
  * Handles database operations for campaigns
  */
+
 // Use helper to resolve database connection path for both local and production
 const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 class CampaignModel {
   /**
    * Create a new campaign
@@ -16,7 +18,7 @@ class CampaignModel {
       config = {},
       inbound_lead_ids
     } = campaignData;
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     let campaign = null;
     // Try different INSERT queries based on database schema
     // Use created_by (correct column name) first, then fallback to created_by_user_id
@@ -85,7 +87,7 @@ class CampaignModel {
    * Get campaign by ID
    */
   static async getById(campaignId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const query = `
       SELECT * FROM ${schema}.campaigns
       WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
@@ -98,7 +100,7 @@ class CampaignModel {
    */
   static async list(tenantId, filters = {}, req = null) {
     const { status, search, limit = 50, offset = 0 } = filters;
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     let query = `
       SELECT 
         c.*,
@@ -206,7 +208,7 @@ class CampaignModel {
    * Update campaign
    */
   static async update(campaignId, tenantId, updates, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const allowedFields = ['name', 'status', 'config', 'execution_state', 'last_lead_check_at', 'next_run_at', 'last_execution_reason'];
     const setClause = [];
     const values = [campaignId, tenantId];
@@ -248,7 +250,7 @@ class CampaignModel {
    * Used by scheduled processor to update execution state
    */
   static async updateExecutionState(campaignId, executionState, options = {}, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const { lastLeadCheckAt = null, nextRunAt = null, lastExecutionReason = null } = options;
     const setClause = [];
     const values = [campaignId];
@@ -299,7 +301,7 @@ class CampaignModel {
    * Soft delete campaign
    */
   static async delete(campaignId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const query = `
       UPDATE ${schema}.campaigns
       SET is_deleted = TRUE, updated_at = CURRENT_TIMESTAMP
@@ -313,7 +315,7 @@ class CampaignModel {
    * Get campaign statistics
    */
   static async getStats(tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const query = `
       SELECT
         COUNT(DISTINCT c.id) as total_campaigns,
@@ -358,7 +360,7 @@ class CampaignModel {
    * Get running campaigns
    */
   static async getRunningCampaigns(tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const query = `
       SELECT * FROM ${schema}.campaigns
       WHERE tenant_id = $1 AND status = 'running' AND is_deleted = FALSE
@@ -368,4 +370,4 @@ class CampaignModel {
     return result.rows;
   }
 }
-module.exports = CampaignModel;
+module.exports = CampaignModel;

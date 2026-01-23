@@ -2,13 +2,15 @@
  * Campaign Lead Activity Repository
  * SQL queries only - no business logic
  */
-const { pool } = require('../../../shared/database/connection');
+
+const { getSchema } = require('../../../core/utils/schemaHelper');
+const { pool } = require('../utils/dbConnection');
 class CampaignLeadActivityRepository {
   /**
    * Create a new activity
    */
   static async create(activityData, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const {
       tenantId,
       campaignId,
@@ -59,7 +61,7 @@ class CampaignLeadActivityRepository {
    * Get activity by ID
    */
   static async getById(activityId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const query = `
       SELECT * FROM ${schema}.campaign_lead_activities
       WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
@@ -71,7 +73,7 @@ class CampaignLeadActivityRepository {
    * Get activities by campaign lead ID
    */
   static async getByLeadId(campaignLeadId, tenantId, limit = 100, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const query = `
       SELECT * FROM ${schema}.campaign_lead_activities
       WHERE campaign_lead_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
@@ -85,7 +87,7 @@ class CampaignLeadActivityRepository {
    * Get last successful activity for a lead
    */
   static async getLastSuccessfulActivity(campaignLeadId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const query = `
       SELECT * FROM ${schema}.campaign_lead_activities
       WHERE campaign_lead_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
@@ -100,7 +102,7 @@ class CampaignLeadActivityRepository {
    * Check if step was already executed for lead
    */
   static async stepAlreadyExecuted(campaignLeadId, stepId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const query = `
       SELECT id, status FROM ${schema}.campaign_lead_activities
       WHERE campaign_lead_id = $1 AND step_id = $2 AND tenant_id = $3 AND is_deleted = FALSE
@@ -115,7 +117,7 @@ class CampaignLeadActivityRepository {
    * Update activity
    */
   static async update(activityId, tenantId, updates, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const allowedFields = [
       'status', 'error_message', 'metadata', 'message_content', 'subject',
       'provider', 'provider_event_id', 'executed_at'
@@ -146,7 +148,7 @@ class CampaignLeadActivityRepository {
    * Get activities by campaign ID
    */
   static async getByCampaignId(campaignId, tenantId, filters = {}, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const { status, stepType, limit = 1000, offset = 0 } = filters;
     let query = `
       SELECT cla.* FROM ${schema}.campaign_lead_activities cla
@@ -172,7 +174,7 @@ class CampaignLeadActivityRepository {
    * Get activity stats for a campaign
    */
   static async getCampaignStats(campaignId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const query = `
       SELECT
         COUNT(*) as total_activities,
@@ -194,7 +196,7 @@ class CampaignLeadActivityRepository {
    * Delete activities by lead ID
    */
   static async deleteByLeadId(campaignLeadId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const query = `
       UPDATE ${schema}.campaign_lead_activities
       SET is_deleted = TRUE, updated_at = CURRENT_TIMESTAMP

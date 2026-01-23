@@ -2,13 +2,15 @@
  * Campaign Step Model
  * Handles database operations for campaign steps (workflow builder)
  */
+
 const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 class CampaignStepModel {
   /**
    * Create a new campaign step
    */
   static async create(stepData, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const {
       campaignId,
       type,
@@ -41,7 +43,7 @@ class CampaignStepModel {
    * Get steps for a campaign
    */
   static async getStepsByCampaignId(campaignId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema and step_order column, alias for compatibility
     // Try with step_type/step_order first, fallback to type/order if columns don't exist
     let query = `
@@ -140,7 +142,7 @@ class CampaignStepModel {
    * Get step by ID
    */
   static async getById(stepId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema, alias for compatibility
     // Try with step_type/step_order first, fallback to type/order if columns don't exist
     let query = `
@@ -234,7 +236,7 @@ class CampaignStepModel {
    * Update campaign step
    */
   static async update(stepId, tenantId, updates, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Map JavaScript field names to database column names
     const fieldMapping = {
       'type': 'step_type',
@@ -272,7 +274,7 @@ class CampaignStepModel {
    * Delete campaign step
    */
   static async delete(stepId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema
     const query = `
       DELETE FROM ${schema}.campaign_steps
@@ -286,7 +288,7 @@ class CampaignStepModel {
    * Delete all steps for a campaign
    */
   static async deleteByCampaignId(campaignId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema
     const query = `
       DELETE FROM ${schema}.campaign_steps
@@ -300,7 +302,7 @@ class CampaignStepModel {
    * Bulk create steps (for workflow builder)
    */
   static async bulkCreate(campaignId, tenantId, steps, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     if (!steps || steps.length === 0) {
       return [];
     }
@@ -405,4 +407,4 @@ class CampaignStepModel {
     }
   }
 }
-module.exports = CampaignStepModel;
+module.exports = CampaignStepModel;

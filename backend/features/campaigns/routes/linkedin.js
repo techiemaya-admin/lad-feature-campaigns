@@ -5,6 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const { authenticateToken: jwtAuth } = require('../../../core/middleware/auth');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const linkedInIntegrationService = require('../services/LinkedInIntegrationService');
 // GET /api/campaigns/linkedin/status - Check LinkedIn connection status
 router.get('/status', jwtAuth, async (req, res) => {
@@ -165,7 +166,7 @@ router.post('/disconnect', jwtAuth, async (req, res) => {
     if (connectionId && !targetUnipileAccountId) {
       try {
         const { pool } = require('../../../shared/database/connection');
-        const schema = process.env.DB_SCHEMA || 'lad_dev';
+        const schema = getSchema(req);
         // Check if connection_id is a UUID (from ${schema}.linkedin_accounts) or integer
         const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(connectionId);
         if (isUUID) {
@@ -258,4 +259,4 @@ router.get('/accounts', jwtAuth, async (req, res) => {
     });
   }
 });
-module.exports = router;
+module.exports = router;

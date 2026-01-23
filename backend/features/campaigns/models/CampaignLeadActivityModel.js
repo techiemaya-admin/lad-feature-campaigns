@@ -8,7 +8,7 @@ class CampaignLeadActivityModel {
    * Create a new activity
    */
   static async create(activityData, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const {
       tenantId,
       campaignId, // Required in TDD schema
@@ -60,7 +60,7 @@ class CampaignLeadActivityModel {
    * Get activity by ID
    */
   static async getById(activityId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema
     const query = `
       SELECT * FROM ${schema}.campaign_lead_activities
@@ -73,7 +73,7 @@ class CampaignLeadActivityModel {
    * Get activities by campaign lead ID
    */
   static async getByLeadId(campaignLeadId, tenantId, limit = 100, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema
     const query = `
       SELECT * FROM ${schema}.campaign_lead_activities
@@ -88,7 +88,7 @@ class CampaignLeadActivityModel {
    * Get last successful activity for a lead
    */
   static async getLastSuccessfulActivity(campaignLeadId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema
     const query = `
       SELECT * FROM ${schema}.campaign_lead_activities
@@ -104,7 +104,7 @@ class CampaignLeadActivityModel {
    * Check if step was already executed for lead
    */
   static async stepAlreadyExecuted(campaignLeadId, stepId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema
     const query = `
       SELECT id, status FROM ${schema}.campaign_lead_activities
@@ -120,7 +120,7 @@ class CampaignLeadActivityModel {
    * Update activity
    */
   static async update(activityId, tenantId, updates, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema, update allowed fields
     const allowedFields = [
       'status', 'error_message', 'metadata', 'message_content', 'subject',
@@ -154,7 +154,7 @@ class CampaignLeadActivityModel {
    * Get activities by campaign ID (for analytics)
    */
   static async getByCampaignId(campaignId, tenantId, filters = {}, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const { status, stepType, limit = 1000, offset = 0 } = filters;
     // Per TDD: Use lad_dev schema
     let query = `
@@ -181,7 +181,7 @@ class CampaignLeadActivityModel {
    * Get activity stats for a campaign
    */
   static async getCampaignStats(campaignId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema
     const query = `
       SELECT
@@ -204,7 +204,7 @@ class CampaignLeadActivityModel {
    * Delete activities by lead ID
    */
   static async deleteByLeadId(campaignLeadId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Per TDD: Use lad_dev schema (soft delete)
     const query = `
       UPDATE ${schema}.campaign_lead_activities

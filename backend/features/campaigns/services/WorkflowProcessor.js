@@ -3,7 +3,9 @@
  * Handles processing leads through workflow steps
  * LAD Architecture Compliant - Uses logger instead of console
  */
+
 const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const { validateStepConfig } = require('./StepValidators');
 // Lazy load executeStepForLead to avoid circular dependency with CampaignProcessor
 // CampaignProcessor imports processLeadThroughWorkflow from this file,
@@ -18,7 +20,7 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     // Find the last successfully completed step for this lead
     // This ensures we don't re-execute steps that were already completed
     // LAD Architecture: Get schema from tenant context
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const lastSuccessfulActivityResult = await pool.query(
       `SELECT step_id, status, created_at FROM ${schema}.campaign_lead_activities 
        WHERE campaign_lead_id = $1 
@@ -187,4 +189,4 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
 }
 module.exports = {
   processLeadThroughWorkflow
-};
+};

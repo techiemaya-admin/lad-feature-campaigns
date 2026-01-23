@@ -3,7 +3,9 @@
  * Handles lead profile summary generation
  * LAD Architecture Compliant - No SQL in controllers, uses logger
  */
+
 const CampaignLeadModel = require('../models/CampaignLeadModel');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const UnipileLeadSearchService = require('../../apollo-leads/services/UnipileLeadSearchService');
 const LinkedInAccountHelper = require('../services/LinkedInAccountHelper');
 const logger = require('../../../core/utils/logger');
@@ -18,7 +20,7 @@ class CampaignLeadsSummaryController {
       const tenantId = req.user.tenantId;
       const { id: campaignId, leadId } = req.params;
       // LAD Architecture: Use model layer instead of direct SQL in controller
-      const schema = process.env.DB_SCHEMA || 'lad_dev';
+      const schema = getSchema(req);
       const leadResult = await CampaignLeadModel.getLeadData(leadId, campaignId, tenantId, schema);
       if (!leadResult) {
         return res.status(404).json({
@@ -74,7 +76,7 @@ class CampaignLeadsSummaryController {
       let lead = profileData;
       let linkedinUrl = null;
       if (!lead) {
-        const schema = process.env.DB_SCHEMA || 'lad_dev';
+        const schema = getSchema(req);
         const dbLead = await CampaignLeadModel.getLeadById(leadId, campaignId, tenantId, schema);
         if (!dbLead) {
           return res.status(404).json({
@@ -155,7 +157,7 @@ Summary:`;
       // Save summary to lead_data
       // LAD Architecture: Use model layer instead of direct SQL in controller
       try {
-        const schema = process.env.DB_SCHEMA || 'lad_dev';
+        const schema = getSchema(req);
         await CampaignLeadModel.updateLeadData(leadId, campaignId, tenantId, schema, {
           profile_summary: summary,
           profile_summary_generated_at: new Date().toISOString(),

@@ -5,6 +5,7 @@
  */
 const { pool } = require('../../../shared/database/connection');
 const logger = require('../../../core/utils/logger');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const { validateStepConfig } = require('./StepValidators');
 const { createActivity, updateActivityStatus } = require('./CampaignActivityService');
 const { executeLeadGeneration } = require('./LeadGenerationService');
@@ -43,7 +44,7 @@ async function executeStepForLead(campaignId, step, campaignLead, userId, tenant
     // Record activity start (skip for lead generation as it's campaign-level and creates leads)
     if (stepType !== 'lead_generation' && campaignLead && campaignLead.id) {
       // Get tenant_id from campaign
-      const schema = process.env.DB_SCHEMA || 'lad_dev'; // No req available in this context
+      const schema = getSchema();
       const campaignQuery = await pool.query(
         `SELECT tenant_id FROM ${schema}.campaigns WHERE id = $1 AND is_deleted = FALSE`,
         [campaignId]
@@ -107,7 +108,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
     // This allows scheduled service to process all running campaigns regardless of tenantId passed
     // Per TDD: Use dynamic schema resolution based on tenantId
     // Create a mock req object for schema resolution if tenantId is available
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(null); // No req available in this context
     let query = `SELECT * FROM ${schema}.campaigns WHERE id = $1 AND status = 'running' AND tenant_id = $2`;
     let params = [campaignId, tenantId];
     // Try with is_deleted first, fallback without it

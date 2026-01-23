@@ -3,6 +3,8 @@
  * Handles checkpoint operations (OTP, Yes/No validation)
  * Extracted from LinkedInAuthController to comply with 499-line limit
  */
+
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const linkedInService = require('../services/LinkedInIntegrationService');
 class LinkedInCheckpointController {
   /**
@@ -38,7 +40,7 @@ class LinkedInCheckpointController {
       try {
         const { pool } = require('../../../shared/database/connection');
         const tenantId = req.user.tenantId || userId;
-        const schema = process.env.DB_SCHEMA || 'lad_dev';
+        const schema = getSchema(req);
         const checkpointQuery = `
           SELECT metadata
           FROM ${schema}.linkedin_accounts
@@ -150,4 +152,4 @@ class LinkedInCheckpointController {
     }
   }
 }
-module.exports = LinkedInCheckpointController;
+module.exports = LinkedInCheckpointController;

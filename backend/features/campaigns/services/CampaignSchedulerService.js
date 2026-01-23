@@ -2,7 +2,9 @@
  * Campaign Scheduler Service
  * Handles periodic checking of campaigns to ensure they run on schedule
  */
+
 const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const CampaignProcessor = require('./CampaignProcessor');
 const { campaignStatsTracker } = require('./campaignStatsTracker');
 const { campaignEventsService } = require('./campaignEventsService');
@@ -33,7 +35,7 @@ class CampaignSchedulerService {
     async checkCampaigns() {
         try {
             // Use configured schema or default to lad_dev
-            const schema = process.env.DB_SCHEMA || 'lad_dev';
+            const schema = getSchema(req);
             // Query for campaigns that are:
             // 1. 'active' (continuous processing)
             // 2. 'sleeping_until_next_day' AND next_run_at <= NOW()

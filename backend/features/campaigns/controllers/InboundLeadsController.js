@@ -5,6 +5,7 @@
 const { pool } = require('../../../shared/database/connection');
 const { randomUUID } = require('crypto');
 const logger = require('../../../core/utils/logger');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 
 class InboundLeadsController {
   /**
@@ -30,7 +31,7 @@ class InboundLeadsController {
         });
       }
       // Use schemaHelper for production compatibility
-      const schema = process.env.DB_SCHEMA || 'lad_dev';
+      const schema = getSchema(req);
       const savedLeads = [];
       const errors = [];
 
@@ -143,7 +144,7 @@ class InboundLeadsController {
       const tenantId = req.user.tenantId;
       const { limit = 50, offset = 0, search } = req.query;
       // Use schemaHelper for production compatibility
-      const schema = process.env.DB_SCHEMA || 'lad_dev';
+      const schema = getSchema(req);
       let query = `
         SELECT 
           id, 

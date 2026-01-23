@@ -3,8 +3,10 @@
  * Handles lead management for campaigns
  * LAD Architecture Compliant - No SQL in controllers, uses logger instead of console
  */
+
 const CampaignLeadModel = require('../models/CampaignLeadModel');
 const CampaignLeadActivityModel = require('../models/CampaignLeadActivityModel');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const logger = require('../../../core/utils/logger');
 
 class CampaignLeadsController {
@@ -18,7 +20,7 @@ class CampaignLeadsController {
       const { id } = req.params;
       const { status, limit, offset } = req.query;
       // LAD Architecture: Use model layer instead of direct SQL in controller
-      const schema = process.env.DB_SCHEMA || 'lad_dev';
+      const schema = getSchema(req);
       const leads = await CampaignLeadModel.getByCampaignId(id, tenantId, {
         status,
         limit: parseInt(limit) || 100,

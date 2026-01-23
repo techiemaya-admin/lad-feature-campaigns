@@ -3,6 +3,7 @@
  * Handles saving leads to database (leads and campaign_leads tables)
  */
 const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const {
   checkLeadExists,
   extractLeadFields,
@@ -139,7 +140,7 @@ async function findOrCreateLead(tenantId, sourceId, fields, leadData, source = '
   let leadId = null;
   try {
     // Find existing lead by source_id and source
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const findLeadResult = await pool.query(
       `SELECT id FROM ${schema}.leads 
        WHERE tenant_id = $1 AND source_id = $2 AND source = $3
@@ -197,7 +198,7 @@ async function findOrCreateLead(tenantId, sourceId, fields, leadData, source = '
       try {
         const { randomUUID } = require('crypto');
         leadId = randomUUID();
-        const schema = process.env.DB_SCHEMA || 'lad_dev';
+        const schema = getSchema(req);
         await pool.query(
           `INSERT INTO ${schema}.leads (id, tenant_id, first_name, last_name, email, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -225,4 +226,4 @@ async function findOrCreateLead(tenantId, sourceId, fields, leadData, source = '
 module.exports = {
   saveLeadsToCampaign,
   findOrCreateLead
-};
+};

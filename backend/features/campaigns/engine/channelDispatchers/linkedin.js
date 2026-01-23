@@ -1,4 +1,6 @@
 const unipileService = require('../services/unipileService');
+const { getSchema } = require('../../../../core/utils/schemaHelper');
+const { pool } = require('../../../../shared/database/connection');
 const { pool } = require('../../../../shared/database/connection');
 /**
  * LinkedIn Channel Dispatcher
@@ -148,7 +150,7 @@ Generate a concise, professional summary highlighting their role, expertise, and
           if (summary && lead.id) {
             try {
               // Get current lead_data with tenant enforcement
-              const schema = process.env.DB_SCHEMA || 'lad_dev';
+              const schema = getSchema(null);
               // First get tenant_id for security check
               const tenantCheck = await pool.query(
                 `SELECT tenant_id FROM ${schema}.campaign_leads WHERE id = $1`,
@@ -231,4 +233,4 @@ Generate a concise, professional summary highlighting their role, expertise, and
     return message;
   }
 }
-module.exports = new LinkedInDispatcher();
+module.exports = new LinkedInDispatcher();

@@ -1,4 +1,5 @@
 const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const linkedinDispatcher = require('./channelDispatchers/linkedin');
 const voiceDispatcher = require('./channelDispatchers/voice');
 const emailDispatcher = require('./channelDispatchers/email');
@@ -84,7 +85,7 @@ class StepExecutor {
     const delayMs = (days * 24 * 60 * 60 * 1000) + (hours * 60 * 60 * 1000) + (minutes * 60 * 1000);
     const scheduledAt = new Date(Date.now() + delayMs);
     // Per TDD: Use dynamic schema (note: TDD schema uses executed_at, not scheduled_at)
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     await pool.query(
       `UPDATE ${schema}.campaign_lead_activities 
        SET executed_at = $1, status = 'pending', updated_at = CURRENT_TIMESTAMP
@@ -110,7 +111,7 @@ class StepExecutor {
    */
   async markLeadCompleted(leadId) {
     // Per TDD: Use dynamic schema
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     await pool.query(
       `UPDATE ${schema}.campaign_leads 
        SET status = 'completed', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
@@ -124,7 +125,7 @@ class StepExecutor {
   async createActivity(campaignId, leadId, stepId, stepType) {
     // Per TDD: Use dynamic schema - need tenant_id and campaign_lead_id
     // Get tenant_id from campaign
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const campaignResult = await pool.query(
       `SELECT tenant_id FROM ${schema}.campaigns WHERE id = $1 AND is_deleted = FALSE`,
       [campaignId]
@@ -153,7 +154,7 @@ class StepExecutor {
    */
   async updateActivityStatus(activityId, status, errorMessage = null) {
     // Per TDD: Use dynamic schema
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     await pool.query(
       `UPDATE ${schema}.campaign_lead_activities 
        SET status = $1, error_message = $2, updated_at = CURRENT_TIMESTAMP
@@ -184,4 +185,4 @@ class StepExecutor {
     return { valid: true };
   }
 }
-module.exports = new StepExecutor();
+module.exports = new StepExecutor();

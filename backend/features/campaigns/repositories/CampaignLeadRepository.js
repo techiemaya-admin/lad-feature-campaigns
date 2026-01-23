@@ -2,7 +2,9 @@
  * Campaign Lead Repository
  * SQL queries only - no business logic
  */
-const { pool } = require('../../../shared/database/connection');
+
+const { pool } = require('../utils/dbConnection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const { randomUUID } = require('crypto');
 class CampaignLeadRepository {
   /**
@@ -22,7 +24,7 @@ class CampaignLeadRepository {
       leadData: customData = {},
       status = 'active'
     } = leadData;
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const snapshot = {
       first_name: firstName,
       last_name: lastName,
@@ -55,7 +57,7 @@ class CampaignLeadRepository {
    * Get lead by ID
    */
   static async getById(leadId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const query = `
       SELECT * FROM ${schema}.campaign_leads
       WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
@@ -67,7 +69,7 @@ class CampaignLeadRepository {
    * Get leads by campaign ID
    */
   static async getByCampaignId(campaignId, tenantId, filters = {}, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const { status, limit = 100, offset = 0 } = filters;
     let query = `
       SELECT * FROM ${schema}.campaign_leads
@@ -88,7 +90,7 @@ class CampaignLeadRepository {
    * Check if lead exists by Apollo ID
    */
   static async existsByApolloId(campaignId, tenantId, apolloPersonId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const query = `
       SELECT id FROM ${schema}.campaign_leads
       WHERE campaign_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
@@ -101,7 +103,7 @@ class CampaignLeadRepository {
    * Update campaign lead
    */
   static async update(leadId, tenantId, updates, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const allowedFields = [
       'snapshot', 'lead_data', 'status',
       'current_step_order', 'started_at', 'completed_at', 'error_message'
@@ -132,7 +134,7 @@ class CampaignLeadRepository {
    * Delete campaign lead
    */
   static async delete(leadId, tenantId, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const query = `
       UPDATE ${schema}.campaign_leads
       SET is_deleted = TRUE, updated_at = CURRENT_TIMESTAMP
@@ -146,7 +148,7 @@ class CampaignLeadRepository {
    * Get active leads for processing
    */
   static async getActiveLeadsForCampaign(campaignId, tenantId, limit = 10, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     const query = `
       SELECT * FROM ${schema}.campaign_leads
       WHERE campaign_id = $1 AND tenant_id = $2 AND status = 'active' AND is_deleted = FALSE
@@ -216,7 +218,7 @@ class CampaignLeadRepository {
    * Bulk create leads
    */
   static async bulkCreate(campaignId, tenantId, leads, req = null) {
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     if (!leads || leads.length === 0) {
       return [];
     }

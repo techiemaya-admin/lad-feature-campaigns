@@ -3,6 +3,7 @@
  * Handles account management operations
  */
 const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const UnipileBaseService = require('./UnipileBaseService');
 const axios = require('axios');
 const { getUserLinkedInAccounts, findAccountByUnipileId } = require('./LinkedInAccountQueryService');
@@ -19,7 +20,7 @@ class LinkedInAccountService {
    */
   async disconnectAccount(tenantId, unipileAccountId) {
     try {
-      const schema = process.env.DB_SCHEMA || 'lad_dev';
+      const schema = getSchema(req);
       // Try TDD schema first (${schema}.linkedin_accounts)
       const accountResult = await findAccountByUnipileId(tenantId, unipileAccountId);
       if (!accountResult || !accountResult.account) {
@@ -355,4 +356,4 @@ class LinkedInAccountService {
     }
   }
 }
-module.exports = new LinkedInAccountService();
+module.exports = new LinkedInAccountService();

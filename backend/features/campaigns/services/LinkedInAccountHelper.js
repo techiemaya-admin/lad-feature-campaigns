@@ -3,6 +3,7 @@
  * Handles LinkedIn account lookup and connection request fallback logic
  */
 const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 const unipileService = require('./unipileService');
 /**
  * Get all available LinkedIn accounts for a tenant/user (for account fallback)
@@ -12,7 +13,7 @@ async function getAllLinkedInAccountsForTenant(tenantId, userId) {
   try {
     // Use tenantId directly (LAD standard - no organization_id conversion needed)
     const resolvedTenantId = tenantId || userId;
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Try social_linkedin_accounts table first
     try {
       const query = `
@@ -109,7 +110,7 @@ async function verifyAccountHealth(unipileAccountId) {
  */
 async function getLinkedInAccountForExecution(tenantId, userId) {
   let accountResult = { rows: [] };  // Initialize with empty result to prevent undefined errors
-  const schema = process.env.DB_SCHEMA || 'lad_dev';
+  const schema = getSchema(req);
   // Strategy 1: Try social_linkedin_accounts table by tenant_id
   try {
     accountResult = await pool.query(
@@ -321,7 +322,7 @@ async function sendConnectionRequestWithFallback(
 async function verifyAccountReadyForCampaign(unipileAccountId) {
   try {
     // Try to get account status from database first
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Check TDD schema
     try {
       const result = await pool.query(
@@ -371,4 +372,4 @@ module.exports = {
   getLinkedInAccountForExecution,
   sendConnectionRequestWithFallback,
   verifyAccountReadyForCampaign
-};
+};

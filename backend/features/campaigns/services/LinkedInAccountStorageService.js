@@ -3,7 +3,9 @@
  * Handles database operations for LinkedIn account storage
  * Uses TDD schema: ${schema}.linkedin_accounts with tenant_id (UUID)
  */
+
 const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 class LinkedInAccountStorageService {
   /**
    * Save LinkedIn account credentials to database
@@ -16,7 +18,7 @@ class LinkedInAccountStorageService {
     if (!unipileAccountId) {
       throw new Error('unipile_account_id is required');
     }
-    const schema = process.env.DB_SCHEMA || 'lad_dev';
+    const schema = getSchema(req);
     // Use TDD schema: ${schema}.linkedin_accounts
     // First try TDD schema, fallback to old schema if needed
     try {
@@ -63,4 +65,4 @@ class LinkedInAccountStorageService {
     }
   }
 }
-module.exports = new LinkedInAccountStorageService();
+module.exports = new LinkedInAccountStorageService();
