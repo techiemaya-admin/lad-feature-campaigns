@@ -1,4 +1,4 @@
-const getSchema = require('../../../core/utils/schemaHelper');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 
 /**
  * Repository for LinkedIn accounts data access

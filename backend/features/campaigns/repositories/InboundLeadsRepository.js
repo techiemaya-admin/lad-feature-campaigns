@@ -1,5 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
-const getSchema = require('../../../core/utils/schemaHelper');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 
 /**
  * Repository for inbound leads data access
