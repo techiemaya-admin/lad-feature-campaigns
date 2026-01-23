@@ -48,6 +48,21 @@ coverage/
 backend/.env
 backend/generate-token.js
 backend/middleware/auth.js
+
+# Test and check scripts (root level only)
+/test-*.js
+/check-*.js
+/create-*.js
+/delete-*.js
+/fix-*.js
+/link-*.js
+/pause-*.js
+/replace-*.js
+/reset-*.js
+/restart-*.js
+/simulate-*.js
+/trigger-*.js
+/local-*.js
 backend/node_modules/
 
 # Test files and tokens

@@ -6,6 +6,10 @@ const { pool } = require('../../../shared/database/connection');
 const { randomUUID } = require('crypto');
 const logger = require('../../../core/utils/logger');
 const { getSchema } = require('../../../core/utils/schemaHelper');
+const InboundLeadsRepository = require('../repositories/InboundLeadsRepository');
+
+// Initialize repository
+const inboundLeadsRepository = new InboundLeadsRepository(pool);
 
 class InboundLeadsController {
   /**
@@ -30,15 +34,12 @@ class InboundLeadsController {
           error: 'No leads provided'
         });
       }
-      // Use schemaHelper for production compatibility
-      const schema = getSchema(req);
+
       const savedLeads = [];
       const errors = [];
 
       for (const leadData of leads) {
         try {
-          // Generate lead ID
-          const leadId = randomUUID();
           // Use firstName and lastName if provided, otherwise parse from name or companyName
           let firstName = leadData.firstName || '';
           let lastName = leadData.lastName || '';
@@ -51,64 +52,34 @@ class InboundLeadsController {
               lastName = nameParts.slice(1).join(' ') || '';
             }
           }
-          // Insert into leads table
-          const result = await pool.query(
-            `INSERT INTO ${schema}.leads (
-              id, 
-              tenant_id, 
-              source, 
-              source_id,
-              first_name, 
-              last_name, 
-              email, 
-              phone, 
-              company_name, 
-              title, 
-              linkedin_url,
-              custom_fields,
-              raw_data,
-              created_at, 
-              updated_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT (id, tenant_id) DO UPDATE SET
-              first_name = EXCLUDED.first_name,
-              last_name = EXCLUDED.last_name,
-              email = EXCLUDED.email,
-              phone = EXCLUDED.phone,
-              company_name = EXCLUDED.company_name,
-              linkedin_url = EXCLUDED.linkedin_url,
-              custom_fields = EXCLUDED.custom_fields,
-              raw_data = EXCLUDED.raw_data,
-              updated_at = CURRENT_TIMESTAMP
-            RETURNING id`,
-            [
-              leadId,
-              tenantId,
-              'inbound_upload', // Source identifier
-              leadId, // Use same ID as source_id for uploaded leads
-              firstName || null,
-              lastName || null,
-              leadData.email || null,
-              leadData.phone || leadData.whatsapp || null,
-              leadData.companyName || null,
-              leadData.title || null,
-              leadData.linkedinProfile || null,
-              JSON.stringify({
-                whatsapp: leadData.whatsapp,
-                website: leadData.website,
-                notes: leadData.notes
-              }),
-              JSON.stringify(leadData) // Store full data
-            ]
-          );
+
+          // Use repository to create lead
+          const result = await inboundLeadsRepository.createLead(req, {
+            tenantId,
+            source: 'inbound_upload',
+            sourceId: randomUUID(),
+            firstName: firstName || null,
+            lastName: lastName || null,
+            email: leadData.email || null,
+            phone: leadData.phone || leadData.whatsapp || null,
+            companyName: leadData.companyName || null,
+            title: leadData.title || null,
+            linkedinUrl: leadData.linkedinProfile || null,
+            customFields: JSON.stringify({
+              whatsapp: leadData.whatsapp,
+              website: leadData.website,
+              notes: leadData.notes
+            }),
+            rawData: JSON.stringify(leadData)
+          });
+
           savedLeads.push({
-            id: result.rows[0].id,
+            id: result.id,
             ...leadData
           });
 
         } catch (leadError) {
-
+          logger.error('Failed to save individual lead:', leadError);
           errors.push({
             lead: leadData.companyName || leadData.email,
             error: leadError.message
@@ -127,7 +98,7 @@ class InboundLeadsController {
         message: `Successfully saved ${savedLeads.length} of ${leads.length} leads`
       });
     } catch (error) {
-
+      logger.error('Failed to save inbound leads:', error);
       res.status(500).json({
         success: false,
         error: 'Failed to save inbound leads',
@@ -143,47 +114,22 @@ class InboundLeadsController {
     try {
       const tenantId = req.user.tenantId;
       const { limit = 50, offset = 0, search } = req.query;
-      // Use schemaHelper for production compatibility
-      const schema = getSchema(req);
-      let query = `
-        SELECT 
-          id, 
-          source, 
-          source_id,
-          first_name, 
-          last_name, 
-          email, 
-          phone, 
-          company_name, 
-          title, 
-          linkedin_url,
-          custom_fields,
-          created_at, 
-          updated_at
-        FROM ${schema}.leads 
-        WHERE tenant_id = $1 
-          AND source = 'inbound_upload'
-      `;
-      const params = [tenantId];
-      if (search) {
-        query += ` AND (
-          first_name ILIKE $${params.length + 1} OR 
-          last_name ILIKE $${params.length + 1} OR 
-          email ILIKE $${params.length + 1} OR 
-          company_name ILIKE $${params.length + 1}
-        )`;
-        params.push(`%${search}%`);
-      }
-      query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-      params.push(parseInt(limit), parseInt(offset));
-      const result = await pool.query(query, params);
+
+      // Use repository to get leads
+      const leads = await inboundLeadsRepository.searchLeads(req, {
+        tenantId,
+        search,
+        limit,
+        offset
+      });
+
       res.json({
         success: true,
-        data: result.rows,
-        total: result.rows.length
+        data: leads,
+        total: leads.length
       });
     } catch (error) {
-
+      logger.error('Failed to fetch inbound leads:', error);
       res.status(500).json({
         success: false,
         error: 'Failed to fetch inbound leads'

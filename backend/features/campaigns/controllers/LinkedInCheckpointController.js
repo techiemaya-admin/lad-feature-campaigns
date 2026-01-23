@@ -6,6 +6,13 @@
 
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const linkedInService = require('../services/LinkedInIntegrationService');
+const LinkedInAccountRepository = require('../repositories/LinkedInAccountRepository');
+const { pool } = require('../../../shared/database/connection');
+const logger = require('../../../core/utils/logger');
+
+// Initialize repository
+const linkedInAccountRepository = new LinkedInAccountRepository(pool);
+
 class LinkedInCheckpointController {
   /**
    * Solve checkpoint (Yes/No validation)
@@ -38,24 +45,17 @@ class LinkedInCheckpointController {
       // Get checkpoint type from database (default: IN_APP_VALIDATION)
       let checkpointType = 'IN_APP_VALIDATION';
       try {
-        const { pool } = require('../../../shared/database/connection');
         const tenantId = req.user.tenantId || userId;
-        const schema = getSchema(req);
-        const checkpointQuery = `
-          SELECT metadata
-          FROM ${schema}.linkedin_accounts
-          WHERE unipile_account_id = $1 AND tenant_id = $2 AND is_active = TRUE
-          ORDER BY created_at DESC
-          LIMIT 1
-        `;
-        const checkpointResult = await pool.query(checkpointQuery, [unipileAccountId, tenantId]);
-        if (checkpointResult.rows.length > 0) {
-          const metadata = typeof checkpointResult.rows[0].metadata === 'string'
-            ? JSON.parse(checkpointResult.rows[0].metadata)
-            : (checkpointResult.rows[0].metadata || {});
-          checkpointType = metadata.checkpoint?.type || 'IN_APP_VALIDATION';
+        const metadata = await linkedInAccountRepository.getCheckpointMetadata(req, {
+          unipileAccountId,
+          tenantId
+        });
+        
+        if (metadata && metadata.checkpoint) {
+          checkpointType = metadata.checkpoint.type || 'IN_APP_VALIDATION';
         }
       } catch (dbError) {
+        logger.warn('Failed to fetch checkpoint metadata, using default type:', dbError);
       }
       const result = await linkedInService.solveCheckpoint(unipileAccountId, answer, checkpointType);
       res.json({
@@ -64,6 +64,7 @@ class LinkedInCheckpointController {
         result
       });
     } catch (error) {
+      logger.error('Failed to solve checkpoint:', error);
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to solve checkpoint'
