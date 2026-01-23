@@ -6,6 +6,7 @@ const { pool } = require('../../../shared/database/connection');
 const CampaignProcessor = require('./CampaignProcessor');
 const { campaignStatsTracker } = require('./campaignStatsTracker');
 const { campaignEventsService } = require('./campaignEventsService');
+const logger = require('../../../core/utils/logger');
 class CampaignSchedulerService {
     constructor() {
         this.isRunning = false;
@@ -87,4 +88,4 @@ class CampaignSchedulerService {
         }
     }
 }
-module.exports = new CampaignSchedulerService();
+module.exports = new CampaignSchedulerService();

@@ -5,6 +5,7 @@
  */
 const axios = require('axios');
 const CampaignLeadModel = require('../models/CampaignLeadModel');
+const logger = require('../../../core/utils/logger');
 /**
  * Get backend URL from environment variables
  * LAD Architecture: No hardcoded URLs
@@ -194,4 +195,4 @@ class CampaignLeadsRevealController {
     }
   }
 }
-module.exports = CampaignLeadsRevealController;
+module.exports = CampaignLeadsRevealController;

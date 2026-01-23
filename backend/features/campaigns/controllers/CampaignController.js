@@ -10,6 +10,8 @@ const CampaignLeadsController = require('./CampaignLeadsController');
 const CampaignLeadsSummaryController = require('./CampaignLeadsSummaryController');
 const CampaignLeadsRevealController = require('./CampaignLeadsRevealController');
 const CampaignStepsController = require('./CampaignStepsController');
+const logger = require('../../../core/utils/logger');
+
 class CampaignController {
   // CRUD methods - delegate to CampaignCRUDController
   static async listCampaigns(req, res) {
@@ -197,4 +199,4 @@ class CampaignController {
     }
   }
 }
-module.exports = CampaignController;
+module.exports = CampaignController;

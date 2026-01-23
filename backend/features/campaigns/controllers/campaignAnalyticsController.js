@@ -3,6 +3,7 @@
  * Handles fetching real-time campaign activity data
  */
 const { query, pool } = require('../../../shared/database/connection');
+const logger = require('../../../core/utils/logger');
 /**
  * Get campaign analytics/activity feed
  * GET /api/campaigns/:id/analytics
@@ -236,4 +237,4 @@ async function getCampaignAnalyticsSummary(req, res) {
 module.exports = {
   getCampaignAnalytics,
   getCampaignAnalyticsSummary
-};
+};

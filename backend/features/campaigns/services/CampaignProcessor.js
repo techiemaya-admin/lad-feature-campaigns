@@ -4,6 +4,7 @@
  * Note: processLeadThroughWorkflow has been moved to WorkflowProcessor.js
  */
 const { pool } = require('../../../shared/database/connection');
+const logger = require('../../../core/utils/logger');
 const { validateStepConfig } = require('./StepValidators');
 const { createActivity, updateActivityStatus } = require('./CampaignActivityService');
 const { executeLeadGeneration } = require('./LeadGenerationService');

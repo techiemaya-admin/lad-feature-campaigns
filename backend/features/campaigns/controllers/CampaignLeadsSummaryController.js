@@ -6,6 +6,8 @@
 const CampaignLeadModel = require('../models/CampaignLeadModel');
 const UnipileLeadSearchService = require('../../apollo-leads/services/UnipileLeadSearchService');
 const LinkedInAccountHelper = require('../services/LinkedInAccountHelper');
+const logger = require('../../../core/utils/logger');
+
 class CampaignLeadsSummaryController {
   /**
    * GET /api/campaigns/:id/leads/:leadId/summary
@@ -226,4 +228,4 @@ LinkedIn: ${profile.linkedin_url || baseProfile.linkedin_url || 'Not available'}
   }
   return profileInfo;
 }
-module.exports = CampaignLeadsSummaryController;
+module.exports = CampaignLeadsSummaryController;

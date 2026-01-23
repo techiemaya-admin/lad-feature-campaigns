@@ -6,6 +6,8 @@ const CampaignModel = require('../models/CampaignModel');
 const CampaignExecutionService = require('../services/CampaignExecutionService');
 const { campaignStatsTracker } = require('../services/campaignStatsTracker');
 const { campaignEventsService } = require('../services/campaignEventsService');
+const logger = require('../../../core/utils/logger');
+
 class CampaignActionsController {
   /**
    * POST /api/campaigns/:id/start
@@ -141,4 +143,4 @@ class CampaignActionsController {
     }
   }
 }
-module.exports = CampaignActionsController;
+module.exports = CampaignActionsController;

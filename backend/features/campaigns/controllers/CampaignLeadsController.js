@@ -5,6 +5,8 @@
  */
 const CampaignLeadModel = require('../models/CampaignLeadModel');
 const CampaignLeadActivityModel = require('../models/CampaignLeadActivityModel');
+const logger = require('../../../core/utils/logger');
+
 class CampaignLeadsController {
   /**
    * GET /api/campaigns/:id/leads
@@ -202,4 +204,4 @@ class CampaignLeadsController {
     }
   }
 }
-module.exports = CampaignLeadsController;
+module.exports = CampaignLeadsController;

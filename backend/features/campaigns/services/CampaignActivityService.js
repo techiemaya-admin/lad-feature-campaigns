@@ -4,6 +4,7 @@
  */
 const { pool } = require('../../../shared/database/connection');
 const { getChannelForStepType } = require('./StepValidators');
+const logger = require('../../../core/utils/logger');
 /**
  * Create activity record for a step execution
  */
@@ -86,4 +87,4 @@ module.exports = {
   createActivity,
   updateActivityStatus,
   createLeadGenerationActivity
-};
+};

@@ -8,6 +8,8 @@ const CampaignExecutionService = require('../services/CampaignExecutionService')
 const { campaignStatsTracker } = require('../services/campaignStatsTracker');
 const { campaignEventsService } = require('../services/campaignEventsService');
 const { pool } = require('../../../shared/database/connection');
+const logger = require('../../../core/utils/logger');
+
 class CampaignCRUDController {
   /**
    * GET /api/campaigns

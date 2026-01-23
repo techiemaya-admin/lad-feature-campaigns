@@ -4,6 +4,8 @@
  */
 const { pool } = require('../../../shared/database/connection');
 const { randomUUID } = require('crypto');
+const logger = require('../../../core/utils/logger');
+
 class InboundLeadsController {
   /**
    * Save inbound leads to leads table
