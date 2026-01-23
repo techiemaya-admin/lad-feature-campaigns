@@ -111,6 +111,7 @@ class CampaignLeadsSummaryController {
           const accounts = await accountHelper.getActiveLinkedInAccounts(tenantId);
           if (accounts && accounts.length > 0) {
             unipileAccountId = accounts[0].unipile_account_id;
+            logger.info('Fetching Unipile profile details', {
               leadName: lead.name,
               linkedinUrl,
               accountId: unipileAccountId 
@@ -124,13 +125,16 @@ class CampaignLeadsSummaryController {
             const postsResult = await UnipileLeadSearchService.getLinkedInPosts(linkedinUrl, unipileAccountId, 10);
             if (postsResult.success && postsResult.posts.length > 0) {
               unipilePosts = postsResult.posts;
+              logger.info('Fetched LinkedIn posts from Unipile', {
                 leadName: lead.name,
                 postCount: unipilePosts.length 
               });
             }
           } else {
+            logger.warn('No active LinkedIn accounts found for Unipile data fetch');
           }
         } catch (unipileError) {
+          logger.error('Failed to fetch Unipile data', {
             error: unipileError.message,
             leadName: lead.name
           });

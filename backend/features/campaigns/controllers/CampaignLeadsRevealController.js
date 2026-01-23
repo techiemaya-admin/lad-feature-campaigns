@@ -73,11 +73,14 @@ async function updateLeadWithRevealedContact(leadId, campaignId, tenantId, req, 
       snapshot: snapshot,
       lead_data: leadData
     }, req);
+    
+    logger.info('Lead contact info revealed and updated', {
       leadId, 
       contactType, 
       from_cache: metadata.from_cache 
     });
   } catch (updateError) {
+    logger.error('Failed to update lead with revealed contact', {
       error: updateError.message, 
       stack: updateError.stack,
       contactType
