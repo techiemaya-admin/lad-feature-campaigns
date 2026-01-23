@@ -53,15 +53,18 @@ class CampaignActionsController {
             try {
               const stats = await campaignStatsTracker.getStats(id);
               await campaignEventsService.publishCampaignListUpdate(id, stats);
+              logger.info('Campaign started - SSE event published', {
                 campaignId: id, 
                 leads: stats.leads_count, 
                 sent: stats.sent_count,
                 connected: stats.connected_count 
               });
             } catch (sseError) {
+              logger.error('Failed to publish SSE event', { error: sseError.message });
             }
           })
           .catch(err => {
+            logger.error('Campaign processing failed in background', {
               campaignId: id,
               error: err.message,
               name: err.name,
@@ -72,6 +75,7 @@ class CampaignActionsController {
             });
           });
       } catch (syncError) {
+        logger.error('Synchronous error starting campaign', { error: syncError.message, campaignId: id });
       }
       res.json({
         success: true,
