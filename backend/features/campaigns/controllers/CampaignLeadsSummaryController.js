@@ -6,9 +6,9 @@
 
 const CampaignLeadModel = require('../models/CampaignLeadModel');
 const { getSchema } = require('../../../core/utils/schemaHelper');
-const logger = require('../../../core/utils/logger');
 const UnipileLeadSearchService = require('../../apollo-leads/services/UnipileLeadSearchService');
 const LinkedInAccountHelper = require('../services/LinkedInAccountHelper');
+const logger = require('../../../core/utils/logger');
 
 class CampaignLeadsSummaryController {
   /**
@@ -19,30 +19,25 @@ class CampaignLeadsSummaryController {
     try {
       const tenantId = req.user.tenantId;
       const { id: campaignId, leadId } = req.params;
-
       // LAD Architecture: Use model layer instead of direct SQL in controller
       const schema = getSchema(req);
       const leadResult = await CampaignLeadModel.getLeadData(leadId, campaignId, tenantId, schema);
-
       if (!leadResult) {
         return res.status(404).json({
           success: false,
           error: 'Lead not found'
         });
       }
-
       // Extract summary from lead_data
       const leadData = leadResult.lead_data;
       const parsedLeadData = typeof leadData === 'string' ? JSON.parse(leadData) : (leadData || {});
       const summary = parsedLeadData.profile_summary || null;
-
       res.json({
         success: true,
         summary: summary,
         exists: !!summary
       });
     } catch (error) {
-      logger.error('[Campaign Leads Summary] Error getting lead summary', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to get lead summary',
@@ -50,7 +45,6 @@ class CampaignLeadsSummaryController {
       });
     }
   }
-
   /**
    * POST /api/campaigns/:id/leads/:leadId/summary
    * Generate profile summary for a lead using Unipile profile data and recent posts
@@ -60,7 +54,6 @@ class CampaignLeadsSummaryController {
       const tenantId = req.user.tenantId;
       const { id: campaignId, leadId } = req.params;
       const { profileData } = req.body;
-
       // Initialize Gemini AI
       let genAI = null;
       let GoogleGenerativeAI = null;
@@ -71,25 +64,20 @@ class CampaignLeadsSummaryController {
           genAI = new GoogleGenerativeAI(geminiApiKey);
         }
       } catch (error) {
-        logger.warn('[Profile Summary] Gemini AI package not available', { error: error.message });
       }
-
       if (!genAI) {
         return res.status(503).json({
           success: false,
           error: 'Gemini AI is not available. Please set GEMINI_API_KEY environment variable.'
         });
       }
-
       // Get lead data from database
       // LAD Architecture: Use model layer instead of direct SQL in controller
       let lead = profileData;
       let linkedinUrl = null;
-      
       if (!lead) {
         const schema = getSchema(req);
         const dbLead = await CampaignLeadModel.getLeadById(leadId, campaignId, tenantId, schema);
-
         if (!dbLead) {
           return res.status(404).json({
             success: false,
@@ -97,9 +85,7 @@ class CampaignLeadsSummaryController {
           });
         }
         const leadDataFull = dbLead.lead_data_full || {};
-        
         linkedinUrl = dbLead.linkedin_url || leadDataFull.linkedin_url || leadDataFull.employee_linkedin_url;
-        
         lead = {
           name: dbLead.first_name && dbLead.last_name 
             ? `${dbLead.first_name} ${dbLead.last_name}`.trim()
@@ -114,81 +100,60 @@ class CampaignLeadsSummaryController {
       } else {
         linkedinUrl = profileData.linkedin_url || profileData.employee_linkedin_url;
       }
-
       // Fetch profile data and recent posts from Unipile
       let unipileProfile = null;
       let unipilePosts = [];
       let unipileAccountId = null;
-
       if (linkedinUrl) {
         try {
           // Get active Unipile account
           const accountHelper = new LinkedInAccountHelper();
           const accounts = await accountHelper.getActiveLinkedInAccounts(tenantId);
-          
           if (accounts && accounts.length > 0) {
             unipileAccountId = accounts[0].unipile_account_id;
-            
-            logger.info('[Profile Summary] Fetching Unipile data', { 
               leadName: lead.name,
               linkedinUrl,
               accountId: unipileAccountId 
             });
-
             // Fetch profile details from Unipile
             const profileResult = await UnipileLeadSearchService.getProfileDetails(linkedinUrl, unipileAccountId);
             if (profileResult.success && profileResult.profile) {
               unipileProfile = profileResult.profile;
-              logger.info('[Profile Summary] Fetched Unipile profile', { leadName: lead.name });
             }
-
             // Fetch recent posts from Unipile
             const postsResult = await UnipileLeadSearchService.getLinkedInPosts(linkedinUrl, unipileAccountId, 10);
             if (postsResult.success && postsResult.posts.length > 0) {
               unipilePosts = postsResult.posts;
-              logger.info('[Profile Summary] Fetched Unipile posts', { 
                 leadName: lead.name,
                 postCount: unipilePosts.length 
               });
             }
           } else {
-            logger.warn('[Profile Summary] No active Unipile account found, using basic profile data', { leadName: lead.name });
           }
         } catch (unipileError) {
-          logger.error('[Profile Summary] Error fetching Unipile data', { 
             error: unipileError.message,
             leadName: lead.name
           });
           // Continue with fallback to basic profile data
         }
       }
-
       // Build comprehensive profile information for Gemini, prioritizing Unipile data
       const profileInfo = buildProfileInfo(lead, unipileProfile, unipilePosts);
-
       // Create prompt for Gemini
       const prompt = `Analyze the following LinkedIn profile information and recent posts to create a concise, professional summary that highlights:
-
 1. Professional background, expertise, and current role
 2. Key accomplishments and notable projects
 3. Industry context and role significance
 4. Recent professional activities and engagement (based on posts)
 5. Potential value and relevance to professional networks
-
 Keep the summary professional, insightful, and concise (2-3 paragraphs maximum). Reference specific insights from their recent activities and professional engagement.
-
 Profile Information:
 ${profileInfo}
-
 Summary:`;
-
-      logger.info('[Profile Summary] Generating summary', { leadName: lead.name });
-
       const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
       const result = await model.generateContent(prompt);
       const response = await result.response;
       const summary = response.text().trim();
-
       // Save summary to lead_data
       // LAD Architecture: Use model layer instead of direct SQL in controller
       try {
@@ -198,13 +163,9 @@ Summary:`;
           profile_summary_generated_at: new Date().toISOString(),
           profile_summary_source: unipileProfile ? 'unipile_profile_and_posts' : 'fallback_profile_data'
         });
-
-        logger.info('[Profile Summary] Summary saved to database', { leadId, campaignId });
       } catch (saveError) {
-        logger.error('[Profile Summary] Error saving summary to database', { error: saveError.message, stack: saveError.stack });
         // Don't fail the request if save fails
       }
-
       res.json({
         success: true,
         summary: summary,
@@ -212,7 +173,6 @@ Summary:`;
         generated_at: new Date().toISOString()
       });
     } catch (error) {
-      logger.error('[Campaign Leads Summary] Error generating lead summary', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to generate lead summary',
@@ -221,14 +181,12 @@ Summary:`;
     }
   }
 }
-
 /**
  * Build comprehensive profile information from Unipile and fallback data
  */
 function buildProfileInfo(baseProfile, unipileProfile, posts) {
   // Use Unipile data if available, fallback to base profile
   const profile = unipileProfile || baseProfile;
-  
   let profileInfo = `
 Name: ${profile.name || baseProfile.name || 'Unknown'}
 Title: ${profile.title || profile.headline || baseProfile.title || 'Not specified'}
@@ -236,15 +194,12 @@ Company: ${profile.company || profile.company_name || baseProfile.company || 'No
 Location: ${profile.location || profile.city || baseProfile.location || 'Not specified'}
 LinkedIn: ${profile.linkedin_url || baseProfile.linkedin_url || 'Not available'}
   `.trim();
-
   if (profile.headline || profile.employee_headline) {
     profileInfo += `\nHeadline: ${profile.headline || profile.employee_headline}`;
   }
-
   if (profile.bio || profile.summary || profile.about) {
     profileInfo += `\nBio/About: ${profile.bio || profile.summary || profile.about}`;
   }
-
   if (profile.experience || profile.experiences) {
     const experiences = profile.experience || profile.experiences || [];
     if (Array.isArray(experiences) && experiences.length > 0) {
@@ -255,7 +210,6 @@ LinkedIn: ${profile.linkedin_url || baseProfile.linkedin_url || 'Not available'}
       });
     }
   }
-
   if (profile.education || profile.educations) {
     const education = profile.education || profile.educations || [];
     if (Array.isArray(education) && education.length > 0) {
@@ -265,7 +219,6 @@ LinkedIn: ${profile.linkedin_url || baseProfile.linkedin_url || 'Not available'}
       });
     }
   }
-
   if (posts && Array.isArray(posts) && posts.length > 0) {
     profileInfo += '\n\nRecent Posts & Activities:';
     posts.slice(0, 5).forEach((post, idx) => {
@@ -275,9 +228,6 @@ LinkedIn: ${profile.linkedin_url || baseProfile.linkedin_url || 'Not available'}
       if (postDate) profileInfo += ` (${postDate})`;
     });
   }
-
   return profileInfo;
 }
-
 module.exports = CampaignLeadsSummaryController;
-

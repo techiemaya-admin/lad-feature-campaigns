@@ -5,7 +5,6 @@
 
 const { pool } = require('../../../shared/database/connection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
-
 /**
  * Check if lead already exists in campaign
  */
@@ -20,11 +19,9 @@ async function checkLeadExists(campaignId, apolloPersonId, req = null) {
     );
     return existingLead.rows.length > 0 ? existingLead.rows[0] : null;
   } catch (err) {
-    logger.error('[Lead Generation] Error checking for existing lead', { error: err.message, stack: err.stack });
     throw err;
   }
 }
-
 /**
  * Extract lead fields from employee data
  */
@@ -40,7 +37,6 @@ function extractLeadFields(employee) {
     phone: employee.phone || employee.employee_phone || employee.phone_number || null
   };
 }
-
 /**
  * Create snapshot JSONB from lead fields
  */
@@ -55,12 +51,11 @@ function createSnapshot(fields) {
     phone: fields.phone
   });
 }
-
 /**
  * Save lead to campaign
  */
 async function saveLeadToCampaign(campaignId, tenantId, leadId, snapshot, leadData, req = null) {
-  const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(req);
+  const schema = getSchema(null);
   const insertResult = await pool.query(
     `INSERT INTO ${schema}.campaign_leads 
      (tenant_id, campaign_id, lead_id, status, snapshot, lead_data, created_at)
@@ -70,7 +65,6 @@ async function saveLeadToCampaign(campaignId, tenantId, leadId, snapshot, leadDa
   );
   return insertResult.rows[0].id;
 }
-
 /**
  * Update campaign config with offset and date
  */
@@ -82,18 +76,15 @@ async function updateCampaignConfig(campaignId, config, req = null, tenantId = n
     if (!actualTenantId) {
       throw new Error('Tenant context required for campaign config update');
     }
-    
     await pool.query(
       `UPDATE ${schema}.campaigns SET config = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND tenant_id = $3`,
       [JSON.stringify(config), campaignId, actualTenantId]
     );
   } catch (updateError) {
     // If config column doesn't exist or update fails, log but don't throw
-    logger.warn('[Lead Generation] Could not update campaign config', { error: updateError.message, campaignId });
     throw updateError;
   }
 }
-
 /**
  * Update step config with offset and date
  */
@@ -105,17 +96,14 @@ async function updateStepConfig(stepId, stepConfig, req = null, tenantId = null)
     if (!actualTenantId) {
       throw new Error('Tenant context required for step config update');
     }
-    
     await pool.query(
       `UPDATE ${schema}.campaign_steps SET config = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND tenant_id = $3`,
       [JSON.stringify(stepConfig), stepId, actualTenantId]
     );
   } catch (stepUpdateErr) {
-    logger.error('[Lead Generation] Error storing offset in step config', { error: stepUpdateErr.message, stack: stepUpdateErr.stack, stepId });
     throw stepUpdateErr;
   }
 }
-
 module.exports = {
   checkLeadExists,
   extractLeadFields,
@@ -124,4 +112,3 @@ module.exports = {
   updateCampaignConfig,
   updateStepConfig
 };
-

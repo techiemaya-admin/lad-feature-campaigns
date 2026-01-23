@@ -10,7 +10,6 @@
  * - CampaignLeadActivityModel.ACTIVITY_STATUS
  * - CampaignLeadActivityModel.ACTION_TYPE
  */
-
 // Campaign Types
 const CAMPAIGN_TYPE = {
   EMAIL: 'email',
@@ -19,7 +18,6 @@ const CAMPAIGN_TYPE = {
   LINKEDIN: 'linkedin',
   MULTI_CHANNEL: 'multi-channel'
 };
-
 // Campaign Step Status
 const STEP_STATUS = {
   PENDING: 'pending',
@@ -28,7 +26,6 @@ const STEP_STATUS = {
   FAILED: 'failed',
   SKIPPED: 'skipped'
 };
-
 // Activity Types
 const ACTIVITY_TYPE = {
   STEP_STARTED: 'step_started',
@@ -40,7 +37,6 @@ const ACTIVITY_TYPE = {
   MESSAGE_SENT: 'message_sent',
   RESPONSE_RECEIVED: 'response_received'
 };
-
 // LinkedIn Checkpoint Types
 const CHECKPOINT_TYPE = {
   IN_APP_VALIDATION: 'IN_APP_VALIDATION',
@@ -48,7 +44,6 @@ const CHECKPOINT_TYPE = {
   SMS_PIN_VERIFICATION: 'SMS_PIN_VERIFICATION',
   CAPTCHA: 'CAPTCHA'
 };
-
 // LinkedIn Account Status
 const LINKEDIN_ACCOUNT_STATUS = {
   ACTIVE: 'active',
@@ -57,7 +52,6 @@ const LINKEDIN_ACCOUNT_STATUS = {
   EXPIRED: 'expired',
   ERROR: 'error'
 };
-
 // Error Codes
 const ERROR_CODE = {
   CAMPAIGN_NOT_FOUND: 'CAMPAIGN_NOT_FOUND',
@@ -69,7 +63,6 @@ const ERROR_CODE = {
   DATABASE_ERROR: 'DATABASE_ERROR',
   VALIDATION_ERROR: 'VALIDATION_ERROR'
 };
-
 // Channel Types
 const CHANNEL = {
   EMAIL: 'email',
@@ -77,7 +70,6 @@ const CHANNEL = {
   VOICE: 'voice',
   LINKEDIN: 'linkedin'
 };
-
 // Execution Status
 const EXECUTION_STATUS = {
   SUCCESS: 'success',
@@ -85,7 +77,6 @@ const EXECUTION_STATUS = {
   PENDING: 'pending',
   RETRY: 'retry'
 };
-
 // Default Values
 const DEFAULTS = {
   PAGE_SIZE: 20,
@@ -93,7 +84,6 @@ const DEFAULTS = {
   RETRY_ATTEMPTS: 3,
   TIMEOUT_MS: 30000
 };
-
 // API Configuration
 const API_CONFIG = {
   // Unipile API base URL (can be overridden via UNIPILE_DSN or UNIPILE_API_BASE_URL)
@@ -101,7 +91,6 @@ const API_CONFIG = {
   // Unipile lookup timeout (ms)
   UNIPILE_LOOKUP_TIMEOUT_MS: 15000
 };
-
 module.exports = {
   // Feature-level constants (not model-specific)
   CAMPAIGN_TYPE,
@@ -114,4 +103,4 @@ module.exports = {
   EXECUTION_STATUS,
   DEFAULTS,
   API_CONFIG
-};
+};

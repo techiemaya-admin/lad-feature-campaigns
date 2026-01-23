@@ -8,7 +8,6 @@ const axios = require('axios');
 const CampaignLeadModel = require('../models/CampaignLeadModel');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const logger = require('../../../core/utils/logger');
-
 /**
  * Get backend URL from environment variables
  * LAD Architecture: No hardcoded URLs
@@ -19,7 +18,6 @@ function getBackendUrl() {
   if (process.env.NEXT_PUBLIC_BACKEND_URL) return process.env.NEXT_PUBLIC_BACKEND_URL;
   throw new Error('BACKEND_URL, BACKEND_INTERNAL_URL, or NEXT_PUBLIC_BACKEND_URL must be configured');
 }
-
 /**
  * Get authentication headers from request
  */
@@ -33,7 +31,6 @@ function getAuthHeaders(req) {
   }
   return headers;
 }
-
 /**
  * Update campaign lead with revealed contact info
  */
@@ -42,26 +39,19 @@ async function updateLeadWithRevealedContact(leadId, campaignId, tenantId, req, 
   try {
     const lead = await CampaignLeadModel.getLeadById(leadId, campaignId, tenantId, schema);
     if (!lead) {
-      logger.warn('[Campaign Leads Reveal] Lead not found for update', { leadId, campaignId });
       return;
     }
-
     // Parse existing snapshot and lead_data
     let snapshot = {};
     let leadData = {};
-    
     try {
       snapshot = typeof lead.snapshot === 'string' ? JSON.parse(lead.snapshot || '{}') : (lead.snapshot || {});
     } catch (e) {
-      logger.warn('[Campaign Leads Reveal] Error parsing snapshot', { error: e.message });
     }
-    
     try {
       leadData = typeof lead.lead_data === 'string' ? JSON.parse(lead.lead_data || '{}') : (lead.lead_data || {});
     } catch (e) {
-      logger.warn('[Campaign Leads Reveal] Error parsing lead_data', { error: e.message });
     }
-
     // Update with revealed contact info
     if (contactType === 'email') {
       snapshot.email = contactValue;
@@ -78,20 +68,16 @@ async function updateLeadWithRevealedContact(leadId, campaignId, tenantId, req, 
       leadData.phone_revealed_from_cache = metadata.from_cache;
       leadData.phone_reveal_credits_used = metadata.credits_used;
     }
-
     // Save updated data
     await CampaignLeadModel.update(leadId, tenantId, {
       snapshot: snapshot,
       lead_data: leadData
     }, req);
-
-    logger.info('[Campaign Leads Reveal] Contact revealed and saved to campaign lead', { 
       leadId, 
       contactType, 
       from_cache: metadata.from_cache 
     });
   } catch (updateError) {
-    logger.error('[Campaign Leads Reveal] Error updating lead with revealed contact', { 
       error: updateError.message, 
       stack: updateError.stack,
       contactType
@@ -99,7 +85,6 @@ async function updateLeadWithRevealedContact(leadId, campaignId, tenantId, req, 
     // Don't fail the request if update fails - contact was still revealed
   }
 }
-
 class CampaignLeadsRevealController {
   /**
    * POST /api/campaigns/:id/leads/:leadId/reveal-email
@@ -110,19 +95,14 @@ class CampaignLeadsRevealController {
       const tenantId = req.user.tenantId;
       const { id: campaignId, leadId } = req.params;
       const { apollo_person_id } = req.body;
-
       if (!apollo_person_id) {
         return res.status(400).json({
           success: false,
           error: 'apollo_person_id is required'
         });
       }
-
       const BACKEND_URL = getBackendUrl();
       const headers = getAuthHeaders(req);
-
-      logger.info('[Campaign Leads Reveal] Revealing email via Apollo API', { campaignId, leadId, apollo_person_id });
-
       const apolloResponse = await axios.post(
         `${BACKEND_URL}/api/apollo-leads/reveal-email`,
         {
@@ -132,7 +112,6 @@ class CampaignLeadsRevealController {
         },
         { headers, timeout: 30000 }
       );
-
       if (!apolloResponse.data.success) {
         return res.status(400).json({
           success: false,
@@ -140,15 +119,12 @@ class CampaignLeadsRevealController {
           credits_used: apolloResponse.data.credits_used || 0
         });
       }
-
       const { email, from_cache, credits_used } = apolloResponse.data;
-
       // Update campaign lead with revealed email
       await updateLeadWithRevealedContact(leadId, campaignId, tenantId, req, 'email', email, {
         from_cache,
         credits_used
       });
-
       res.json({
         success: true,
         email: email,
@@ -156,7 +132,6 @@ class CampaignLeadsRevealController {
         credits_used: credits_used
       });
     } catch (error) {
-      logger.error('[Campaign Leads Reveal] Error revealing email', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to reveal email',
@@ -164,7 +139,6 @@ class CampaignLeadsRevealController {
       });
     }
   }
-
   /**
    * POST /api/campaigns/:id/leads/:leadId/reveal-phone
    * Reveal phone for a campaign lead using Apollo API
@@ -174,19 +148,14 @@ class CampaignLeadsRevealController {
       const tenantId = req.user.tenantId;
       const { id: campaignId, leadId } = req.params;
       const { apollo_person_id } = req.body;
-
       if (!apollo_person_id) {
         return res.status(400).json({
           success: false,
           error: 'apollo_person_id is required'
         });
       }
-
       const BACKEND_URL = getBackendUrl();
       const headers = getAuthHeaders(req);
-
-      logger.info('[Campaign Leads Reveal] Revealing phone via Apollo API', { campaignId, leadId, apollo_person_id });
-
       const apolloResponse = await axios.post(
         `${BACKEND_URL}/api/apollo-leads/reveal-phone`,
         {
@@ -196,7 +165,6 @@ class CampaignLeadsRevealController {
         },
         { headers, timeout: 30000 }
       );
-
       if (!apolloResponse.data.success) {
         return res.status(400).json({
           success: false,
@@ -204,9 +172,7 @@ class CampaignLeadsRevealController {
           credits_used: apolloResponse.data.credits_used || 0
         });
       }
-
       const { phone, from_cache, credits_used, processing, message } = apolloResponse.data;
-
       // Update campaign lead with revealed phone (if phone is available immediately)
       if (phone && !processing) {
         await updateLeadWithRevealedContact(leadId, campaignId, tenantId, req, 'phone', phone, {
@@ -214,7 +180,6 @@ class CampaignLeadsRevealController {
           credits_used
         });
       }
-
       res.json({
         success: true,
         phone: phone,
@@ -224,7 +189,6 @@ class CampaignLeadsRevealController {
         message: message || null
       });
     } catch (error) {
-      logger.error('[Campaign Leads Reveal] Error revealing phone', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to reveal phone',
@@ -233,6 +197,4 @@ class CampaignLeadsRevealController {
     }
   }
 }
-
 module.exports = CampaignLeadsRevealController;
-

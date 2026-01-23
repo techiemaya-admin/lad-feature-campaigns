@@ -2,8 +2,6 @@
  * LinkedIn Profile Helper
  * Handles profile URL extraction and checkpoint detection
  */
-const logger = require('../../../core/utils/logger');
-
 /**
  * Extract LinkedIn profile URL from Unipile response
  * Checks all possible fields that Unipile might return (like pluto_campaigns)
@@ -12,7 +10,6 @@ const logger = require('../../../core/utils/logger');
  */
 function extractLinkedInProfileUrl(unipileResponse) {
   if (!unipileResponse) return null;
-  
   // Check all possible fields in order of preference
   // Unipile may return profile URL in different fields depending on the API endpoint
   const possibleFields = [
@@ -27,7 +24,6 @@ function extractLinkedInProfileUrl(unipileResponse) {
     unipileResponse.profile?.profile?.profile_url,
     unipileResponse.profile?.profile?.public_profile_url,
   ];
-  
   // Find first valid URL
   for (const url of possibleFields) {
     if (url && typeof url === 'string' && url.trim() !== '') {
@@ -36,23 +32,19 @@ function extractLinkedInProfileUrl(unipileResponse) {
       if (trimmedUrl.startsWith('http://') || trimmedUrl.startsWith('https://')) {
         // Ensure it's a LinkedIn URL
         if (trimmedUrl.includes('linkedin.com')) {
-          logger.debug('[LinkedIn Profile URL] Found valid profile URL', { url: trimmedUrl });
           return trimmedUrl;
         }
       }
     }
   }
-  
   // Check connection_params.im.publicIdentifier (this is where Unipile stores it in account list responses)
   if (unipileResponse.connection_params?.im?.publicIdentifier) {
     const publicIdentifier = unipileResponse.connection_params.im.publicIdentifier;
     if (typeof publicIdentifier === 'string' && publicIdentifier.trim() !== '') {
       const constructedUrl = `https://www.linkedin.com/in/${publicIdentifier.trim()}`;
-      logger.debug('[LinkedIn Profile URL] Constructed URL from connection_params.im.publicIdentifier', { url: constructedUrl });
       return constructedUrl;
     }
   }
-  
   // Also check connection_params.im.id (fallback if publicIdentifier not available)
   if (unipileResponse.connection_params?.im?.id) {
     const imId = unipileResponse.connection_params.im.id;
@@ -62,7 +54,6 @@ function extractLinkedInProfileUrl(unipileResponse) {
       // Skip this for now as we'd need to fetch the profile to get the publicIdentifier
     }
   }
-  
   // If we have a profile ID, we could construct URL, but only if we're sure it's correct
   // Don't construct from email username as that's usually wrong
   if (unipileResponse.profile?.id) {
@@ -70,22 +61,17 @@ function extractLinkedInProfileUrl(unipileResponse) {
     // Only construct if it looks like a valid LinkedIn profile ID (not email-based)
     if (typeof profileId === 'string' && profileId.length > 0 && !profileId.includes('@')) {
       const constructedUrl = `https://www.linkedin.com/in/${profileId}`;
-      logger.debug('[LinkedIn Profile URL] Constructed URL from profile ID', { url: constructedUrl });
       return constructedUrl;
     }
   }
-  
-  logger.debug('[LinkedIn Profile URL] No valid profile URL found in Unipile response', {
     responseKeys: Object.keys(unipileResponse),
     profileKeys: unipileResponse.profile ? Object.keys(unipileResponse.profile) : null,
     connectionParamsKeys: unipileResponse.connection_params ? Object.keys(unipileResponse.connection_params) : null,
     imKeys: unipileResponse.connection_params?.im ? Object.keys(unipileResponse.connection_params.im) : null,
     publicIdentifier: unipileResponse.connection_params?.im?.publicIdentifier
   });
-  
   return null;
 }
-
 /**
  * Detect checkpoint type and extract checkpoint information
  */
@@ -93,13 +79,11 @@ function detectCheckpoint(account, unipile = null) {
   if (!account || account.object !== 'Checkpoint' || !account.checkpoint) {
     return null;
   }
-  
   const checkpointType = account.checkpoint.type || 'IN_APP_VALIDATION';
   const hasCodeField = !!account.checkpoint.code;
   const hasChallengeField = !!account.checkpoint.challenge;
   const isOTP = hasCodeField || hasChallengeField || checkpointType === 'OTP' || checkpointType === 'SMS' || checkpointType === 'EMAIL';
   const isYesNo = !isOTP && (checkpointType === 'IN_APP_VALIDATION' || checkpointType === 'YES_NO');
-  
   return {
     type: checkpointType,
     isOTP,
@@ -107,7 +91,6 @@ function detectCheckpoint(account, unipile = null) {
     checkpoint: account.checkpoint
   };
 }
-
 /**
  * Extract checkpoint information from account response
  */
@@ -115,17 +98,14 @@ async function extractCheckpointInfo(account, unipile, accountId) {
   if (!account || account.object !== 'Checkpoint' || !account.checkpoint) {
     return null;
   }
-  
   const checkpointDetection = detectCheckpoint(account, unipile);
   if (!checkpointDetection) {
     return null;
   }
-  
   // Try to fetch account details for more checkpoint information
   let checkpointMessage = null;
   let checkpointSentTo = null;
   let checkpointExpiresAt = null;
-  
   try {
     if (unipile && unipile.account && typeof unipile.account.getOne === 'function') {
       const accountDetails = await unipile.account.getOne(accountId);
@@ -136,15 +116,12 @@ async function extractCheckpointInfo(account, unipile, accountId) {
       }
     }
   } catch (detailError) {
-    logger.warn('[LinkedIn Profile Helper] Could not fetch account details for checkpoint info', { error: detailError.message });
   }
-  
   // Extract checkpoint fields from response
   const checkpointObj = account.checkpoint || {};
   checkpointMessage = checkpointMessage || checkpointObj.message || checkpointObj.description;
   checkpointSentTo = checkpointSentTo || checkpointObj.sent_to || checkpointObj.sentTo;
   checkpointExpiresAt = checkpointExpiresAt || checkpointObj.expires_at || checkpointObj.expiresAt;
-  
   return {
     object: 'Checkpoint',
     account_id: accountId,
@@ -159,10 +136,8 @@ async function extractCheckpointInfo(account, unipile, accountId) {
     }
   };
 }
-
 module.exports = {
   extractLinkedInProfileUrl,
   detectCheckpoint,
   extractCheckpointInfo
-};
-
+};

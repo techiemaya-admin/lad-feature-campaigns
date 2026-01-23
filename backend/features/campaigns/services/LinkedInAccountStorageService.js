@@ -6,8 +6,6 @@
 
 const { pool } = require('../../../shared/database/connection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
-const logger = require('../../../core/utils/logger');
-
 class LinkedInAccountStorageService {
   /**
    * Save LinkedIn account credentials to database
@@ -20,8 +18,7 @@ class LinkedInAccountStorageService {
     if (!unipileAccountId) {
       throw new Error('unipile_account_id is required');
     }
-
-    const schema = tenantId ? getSchema({ user: { tenant_id: tenantId } }) : getSchema(null);
+    const schema = getSchema(req);
     // Use TDD schema: ${schema}.linkedin_accounts
     // First try TDD schema, fallback to old schema if needed
     try {
@@ -36,7 +33,6 @@ class LinkedInAccountStorageService {
           metadata = EXCLUDED.metadata,
           updated_at = CURRENT_TIMESTAMP
       `;
-
       const metadata = {
         profile_name: credentials.profile_name || null,
         profile_url: credentials.profile_url || null,
@@ -44,7 +40,6 @@ class LinkedInAccountStorageService {
         connected_at: credentials.connected_at || new Date().toISOString(),
         ...credentials // Include any other fields
       };
-
       await pool.query(query, [
         tenantId,
         unipileAccountId,
@@ -52,12 +47,8 @@ class LinkedInAccountStorageService {
         true, // is_active
         JSON.stringify(metadata)
       ]);
-
-      logger.info('[LinkedIn Storage] Account saved to linkedin_accounts', { schema });
     } catch (tddError) {
       // Fallback to old schema if TDD table doesn't exist
-      logger.warn('[LinkedIn Storage] TDD table not found, using fallback', { error: tddError.message });
-      
       // Try old schema with user_id as text (in case it's actually text, not integer)
       try {
         await pool.query(
@@ -68,14 +59,10 @@ class LinkedInAccountStorageService {
            SET credentials = $2::jsonb, is_connected = TRUE, connected_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP`,
           [tenantId, JSON.stringify(credentials)]
         );
-        logger.info('[LinkedIn Storage] Account saved to user_integrations_voiceagent (fallback)');
       } catch (fallbackError) {
-        logger.error('[LinkedIn Storage] Both TDD and fallback schemas failed', { error: fallbackError.message, stack: fallbackError.stack });
         throw fallbackError;
       }
     }
   }
 }
-
 module.exports = new LinkedInAccountStorageService();
-

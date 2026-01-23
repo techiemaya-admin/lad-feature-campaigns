@@ -3,31 +3,24 @@
  * Handles real-time event emission for campaign stats updates
  * Uses Redis pub/sub for distributed event broadcasting
  */
-
 const Redis = require('ioredis');
-const logger = require('../../../core/utils/logger');
-
 class CampaignEventsService {
   constructor() {
     // Redis pub/sub clients (separate instances required)
     this.publisher = process.env.REDIS_URL 
       ? new Redis(process.env.REDIS_URL)
       : null;
-    
     this.subscriber = process.env.REDIS_URL
       ? new Redis(process.env.REDIS_URL)
       : null;
-
     // In-memory fallback for development
     this.inMemoryListeners = new Map();
-    
     if (this.subscriber) {
       this.subscriber.on('message', (channel, message) => {
         this._handleMessage(channel, message);
       });
     }
   }
-
   /**
    * Publish campaign stats update event
    * @param {string} campaignId 
@@ -40,24 +33,41 @@ class CampaignEventsService {
       stats,
       timestamp: new Date().toISOString()
     };
-
     const channel = `campaign:${campaignId}:stats`;
     const payload = JSON.stringify(event);
-
     try {
       if (this.publisher) {
         await this.publisher.publish(channel, payload);
-        logger.debug(`[CampaignEvents] Published to Redis: ${channel}`);
       } else {
         // In-memory fallback
         this._emitInMemory(channel, event);
-        logger.debug(`[CampaignEvents] Emitted in-memory: ${channel}`);
       }
+      // Also publish to global campaigns list channel
+      await this.publishCampaignListUpdate(campaignId, stats);
     } catch (error) {
-      logger.error('[CampaignEvents] Failed to publish event:', error);
     }
   }
-
+  /**
+   * Publish campaign list update event (for campaigns table)
+   */
+  async publishCampaignListUpdate(campaignId, stats) {
+    const event = {
+      type: 'campaign-update',
+      campaignId,
+      stats,
+      timestamp: new Date().toISOString()
+    };
+    const channel = 'campaigns:list:updates';
+    const payload = JSON.stringify(event);
+    try {
+      if (this.publisher) {
+        await this.publisher.publish(channel, payload);
+      } else {
+        this._emitInMemory(channel, event);
+      }
+    } catch (error) {
+    }
+  }
   /**
    * Subscribe to campaign updates
    * @param {function} callback - Callback receives event object
@@ -68,16 +78,12 @@ class CampaignEventsService {
     const isGlobalSubscription = typeof callbackOrCampaignId === 'function';
     const actualCallback = isGlobalSubscription ? callbackOrCampaignId : callback;
     const campaignId = isGlobalSubscription ? null : callbackOrCampaignId;
-
     if (campaignId) {
       // Subscribe to specific campaign
       const channel = `campaign:${campaignId}:stats`;
-
       if (this.subscriber) {
         await this.subscriber.subscribe(channel);
-        logger.debug(`[CampaignEvents] Subscribed to Redis: ${channel}`);
       }
-      
       // Store listener
       if (!this.inMemoryListeners.has(channel)) {
         this.inMemoryListeners.set(channel, new Set());
@@ -86,21 +92,16 @@ class CampaignEventsService {
     } else {
       // Global subscription to ALL campaigns
       const globalChannel = 'campaign:*:stats';
-      
       if (this.subscriber) {
         await this.subscriber.psubscribe(globalChannel);
-        logger.debug(`[CampaignEvents] Subscribed to Redis pattern: ${globalChannel}`);
       }
-      
       // Store global listener
       if (!this.inMemoryListeners.has('__global__')) {
         this.inMemoryListeners.set('__global__', new Set());
       }
       this.inMemoryListeners.get('__global__').add(actualCallback);
-      logger.debug(`[CampaignEvents] Added global listener`);
     }
   }
-
   /**
    * Unsubscribe from campaign updates
    * @param {function} callback 
@@ -109,14 +110,11 @@ class CampaignEventsService {
     const isGlobalSubscription = typeof callbackOrCampaignId === 'function';
     const actualCallback = isGlobalSubscription ? callbackOrCampaignId : callback;
     const campaignId = isGlobalSubscription ? null : callbackOrCampaignId;
-
     if (campaignId) {
       const channel = `campaign:${campaignId}:stats`;
-      
       const listeners = this.inMemoryListeners.get(channel);
       if (listeners) {
         listeners.delete(actualCallback);
-        
         // Unsubscribe from Redis if no more listeners
         if (listeners.size === 0 && this.subscriber) {
           await this.subscriber.unsubscribe(channel);
@@ -127,14 +125,12 @@ class CampaignEventsService {
       const globalListeners = this.inMemoryListeners.get('__global__');
       if (globalListeners) {
         globalListeners.delete(actualCallback);
-        
         if (globalListeners.size === 0 && this.subscriber) {
           await this.subscriber.punsubscribe('campaign:*:stats');
         }
       }
     }
   }
-
   /**
    * Handle incoming Redis messages
    * @private
@@ -144,10 +140,8 @@ class CampaignEventsService {
       const event = JSON.parse(message);
       this._emitInMemory(channel, event);
     } catch (error) {
-      logger.error('[CampaignEvents] Failed to parse message:', error);
     }
   }
-
   /**
    * Emit event to in-memory listeners
    * @private
@@ -160,11 +154,9 @@ class CampaignEventsService {
         try {
           callback(event);
         } catch (error) {
-          logger.error('[CampaignEvents] Listener error:', error);
         }
       });
     }
-
     // Also emit to global listeners
     const globalListeners = this.inMemoryListeners.get('__global__');
     if (globalListeners) {
@@ -172,12 +164,10 @@ class CampaignEventsService {
         try {
           callback(event);
         } catch (error) {
-          logger.error('[CampaignEvents] Global listener error:', error);
         }
       });
     }
   }
-
   /**
    * Cleanup connections
    */
@@ -187,8 +177,6 @@ class CampaignEventsService {
     this.inMemoryListeners.clear();
   }
 }
-
 // Singleton instance
 const campaignEventsService = new CampaignEventsService();
-
-module.exports = { campaignEventsService };
+module.exports = { campaignEventsService };

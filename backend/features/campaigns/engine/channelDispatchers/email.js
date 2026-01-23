@@ -1,11 +1,8 @@
 const axios = require('axios');
-const logger = require('../../../core/utils/logger');
-
 const BACKEND_URL = process.env.BACKEND_INTERNAL_URL || process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL;
 if (!BACKEND_URL) {
   throw new Error('BACKEND_URL, BACKEND_INTERNAL_URL, or NEXT_PUBLIC_BACKEND_URL must be set');
 }
-
 /**
  * Email Channel Dispatcher
  * Handles all email-related actions
@@ -16,24 +13,18 @@ class EmailDispatcher {
    */
   async execute(stepType, lead, stepConfig, userId, tenantId) {
     try {
-      logger.info('[EmailDispatcher] Executing step', { stepType, leadId: lead.id });
-
       switch (stepType) {
         case 'email_send':
           return await this.sendEmail(lead, stepConfig, userId, tenantId);
-
         case 'email_followup':
           return await this.sendFollowupEmail(lead, stepConfig, userId, tenantId);
-
         default:
           return { success: false, error: `Unsupported email action: ${stepType}` };
       }
     } catch (error) {
-      logger.error('[EmailDispatcher] Error', { error: error.message, stack: error.stack });
       return { success: false, error: error.message };
     }
   }
-
   /**
    * Send email
    */
@@ -41,14 +32,11 @@ class EmailDispatcher {
     try {
       const leadData = lead.lead_data || {};
       const email = leadData.email || leadData.email_address;
-
       if (!email) {
         throw new Error('No email address found for lead');
       }
-
       const subject = this.personalizeContent(stepConfig.subject, leadData);
       const body = this.personalizeContent(stepConfig.body, leadData);
-
       // Make API call to email service
       const response = await axios.post(
         `${BACKEND_URL}/api/email/send`,
@@ -68,7 +56,6 @@ class EmailDispatcher {
           timeout: 30000
         }
       );
-
       if (response.data && response.data.success) {
         return {
           success: true,
@@ -81,11 +68,9 @@ class EmailDispatcher {
         throw new Error(response.data?.message || 'Email send failed');
       }
     } catch (error) {
-      logger.error('[EmailDispatcher] Email send failed', { error: error.message, stack: error.stack });
       throw error;
     }
   }
-
   /**
    * Send followup email
    */
@@ -93,14 +78,11 @@ class EmailDispatcher {
     try {
       const leadData = lead.lead_data || {};
       const email = leadData.email || leadData.email_address;
-
       if (!email) {
         throw new Error('No email address found for lead');
       }
-
       const subject = this.personalizeContent(stepConfig.subject, leadData);
       const body = this.personalizeContent(stepConfig.body, leadData);
-
       // Make API call to email service with followup flag
       const response = await axios.post(
         `${BACKEND_URL}/api/email/send`,
@@ -121,7 +103,6 @@ class EmailDispatcher {
           timeout: 30000
         }
       );
-
       if (response.data && response.data.success) {
         return {
           success: true,
@@ -134,17 +115,14 @@ class EmailDispatcher {
         throw new Error(response.data?.message || 'Followup email send failed');
       }
     } catch (error) {
-      logger.error('[EmailDispatcher] Followup email send failed', { error: error.message, stack: error.stack });
       throw error;
     }
   }
-
   /**
    * Personalize email content with lead data
    */
   personalizeContent(template, leadData) {
     let content = template;
-
     // Replace placeholders
     const replacements = {
       '{{first_name}}': leadData.first_name || '',
@@ -157,13 +135,10 @@ class EmailDispatcher {
       '{{industry}}': leadData.industry || '',
       '{{location}}': leadData.city || leadData.state || leadData.country || '',
     };
-
     for (const [placeholder, value] of Object.entries(replacements)) {
       content = content.replace(new RegExp(placeholder, 'g'), value);
     }
-
     return content;
   }
 }
-
-module.exports = new EmailDispatcher();
+module.exports = new EmailDispatcher();

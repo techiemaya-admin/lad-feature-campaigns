@@ -2,10 +2,7 @@
  * LinkedIn Checkpoint Service
  * Handles checkpoint detection and processing for LinkedIn OAuth
  */
-
 const { extractCheckpointInfo } = require('./LinkedInProfileHelper');
-const logger = require('../../../core/utils/logger');
-
 /**
  * Handle checkpoint response from Unipile SDK
  */
@@ -13,23 +10,16 @@ async function handleCheckpointResponse(account, unipile, email = null) {
   if (!account || account.object !== 'Checkpoint' || !account.checkpoint) {
     return null;
   }
-  
   // Extract account ID from checkpoint response
   const accountId = account.account_id || account.id || account._id;
-  
   if (!accountId) {
     throw new Error('LinkedIn requires verification, but no account ID was returned.');
   }
-  
-  logger.info('[LinkedIn Checkpoint] Checkpoint required', { checkpointType: account.checkpoint.type });
-  
   // Extract checkpoint information
   const checkpointInfo = await extractCheckpointInfo(account, unipile, accountId);
-  
   if (!checkpointInfo) {
     throw new Error('Failed to extract checkpoint information');
   }
-  
   // Add email and profileName if provided
   if (email) {
     checkpointInfo.email = email;
@@ -38,10 +28,8 @@ async function handleCheckpointResponse(account, unipile, email = null) {
     checkpointInfo.profileName = account.profile_name;
     checkpointInfo.email = account.email || null;
   }
-  
   return checkpointInfo;
 }
-
 module.exports = {
   handleCheckpointResponse
-};
+};

@@ -6,7 +6,6 @@
 const { pool } = require('../utils/dbConnection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const logger = require('../../../core/utils/logger');
-
 class CampaignRepository {
   /**
    * Create a new campaign
@@ -18,7 +17,6 @@ class CampaignRepository {
       createdBy,
       config = {}
     } = campaignData;
-
     const schema = getSchema(req);
     const query = `
       INSERT INTO ${schema}.campaigns (
@@ -27,7 +25,6 @@ class CampaignRepository {
       VALUES ($1, $2, $3, $4, $5::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       RETURNING *
     `;
-
     const values = [
       tenantId,
       name,
@@ -35,15 +32,12 @@ class CampaignRepository {
       createdBy,
       JSON.stringify(config)
     ];
-
     try {
       const result = await pool.query(query, values);
       return result.rows[0];
     } catch (error) {
       const errorMsg = error.message?.toLowerCase() || '';
-      
       if (errorMsg.includes('created_by_user_id') && errorMsg.includes('does not exist')) {
-        logger.warn('[CampaignRepository] created_by_user_id column not found, trying created_by:', error.message);
         try {
           const fallbackQuery = `
             INSERT INTO ${schema}.campaigns (
@@ -56,7 +50,6 @@ class CampaignRepository {
           return result.rows[0];
         } catch (fallbackError) {
           if (fallbackError.message && (fallbackError.message.includes('column "config"') || fallbackError.message.includes('jsonb'))) {
-            logger.warn('[CampaignRepository] Config column also not found, trying without config:', fallbackError.message);
             const simpleQuery = `
               INSERT INTO ${schema}.campaigns (
                 tenant_id, name, status, created_by, created_at, updated_at
@@ -71,9 +64,7 @@ class CampaignRepository {
           throw fallbackError;
         }
       }
-      
       if (errorMsg.includes('column "config"') || errorMsg.includes('jsonb')) {
-        logger.warn('[CampaignRepository] Config column issue, trying insert without config:', error.message);
         const fallbackQuery = `
           INSERT INTO ${schema}.campaigns (
             tenant_id, name, status, created_by_user_id, created_at, updated_at
@@ -103,7 +94,6 @@ class CampaignRepository {
       throw error;
     }
   }
-
   /**
    * Get campaign by ID
    */
@@ -113,18 +103,15 @@ class CampaignRepository {
       SELECT * FROM ${schema}.campaigns
       WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
     `;
-
     const result = await pool.query(query, [campaignId, tenantId]);
     return result.rows[0];
   }
-
   /**
    * List all campaigns for a tenant
    */
   static async list(tenantId, filters = {}, req = null) {
     const { status, search, limit = 50, offset = 0 } = filters;
     const schema = getSchema(req);
-
     let query = `
       SELECT 
         c.*,
@@ -140,30 +127,24 @@ class CampaignRepository {
       LEFT JOIN ${schema}.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id AND cla.tenant_id = $1 AND COALESCE(cla.is_deleted, FALSE) = FALSE
       WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
     `;
-
     const params = [tenantId];
     let paramIndex = 2;
-
     if (status && status !== 'all') {
       query += ` AND c.status = $${paramIndex++}`;
       params.push(status);
     }
-
     if (search) {
       query += ` AND c.name ILIKE $${paramIndex++}`;
       params.push(`%${search}%`);
     }
-
     query += ` GROUP BY c.id ORDER BY c.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
     params.push(limit, offset);
-
     try {
       const result = await pool.query(query, params);
       return result.rows;
     } catch (error) {
       const errorMsg = error.message?.toLowerCase() || '';
       if (errorMsg.includes('campaign_lead_activities') || errorMsg.includes('does not exist') || errorMsg.includes('relation') || errorMsg.includes('undefined table')) {
-        logger.warn('[CampaignRepository] Activities table not available, using simplified query:', error.message);
         let fallbackQuery = `
           SELECT 
             c.*,
@@ -178,30 +159,24 @@ class CampaignRepository {
           LEFT JOIN ${schema}.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1 AND COALESCE(cl.is_deleted, FALSE) = FALSE
           WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
         `;
-        
         const fallbackParams = [tenantId];
         let fallbackParamIndex = 2;
-        
         if (status && status !== 'all') {
           fallbackQuery += ` AND c.status = $${fallbackParamIndex++}`;
           fallbackParams.push(status);
         }
-        
         if (search) {
           fallbackQuery += ` AND c.name ILIKE $${fallbackParamIndex++}`;
           fallbackParams.push(`%${search}%`);
         }
-        
         fallbackQuery += ` GROUP BY c.id ORDER BY c.created_at DESC LIMIT $${fallbackParamIndex++} OFFSET $${fallbackParamIndex++}`;
         fallbackParams.push(limit, offset);
-        
         try {
           const result = await pool.query(fallbackQuery, fallbackParams);
           return result.rows;
         } catch (fallbackError) {
           const fallbackErrorMsg = fallbackError.message?.toLowerCase() || '';
           if (fallbackErrorMsg.includes('is_deleted') || fallbackErrorMsg.includes('column') && fallbackErrorMsg.includes('does not exist')) {
-            logger.warn('[CampaignRepository] Column issue in fallback query, trying without is_deleted:', fallbackError.message);
             let simpleQuery = `
               SELECT 
                 c.*,
@@ -217,20 +192,16 @@ class CampaignRepository {
             `;
             const simpleParams = [tenantId];
             let simpleParamIndex = 2;
-            
             if (status && status !== 'all') {
               simpleQuery += ` AND c.status = $${simpleParamIndex++}`;
               simpleParams.push(status);
             }
-            
             if (search) {
               simpleQuery += ` AND c.name ILIKE $${simpleParamIndex++}`;
               simpleParams.push(`%${search}%`);
             }
-            
             simpleQuery += ` ORDER BY c.created_at DESC LIMIT $${simpleParamIndex++} OFFSET $${simpleParamIndex++}`;
             simpleParams.push(limit, offset);
-            
             const result = await pool.query(simpleQuery, simpleParams);
             return result.rows;
           }
@@ -240,7 +211,6 @@ class CampaignRepository {
       throw error;
     }
   }
-
   /**
    * Update campaign
    */
@@ -250,7 +220,6 @@ class CampaignRepository {
     const setClause = [];
     const values = [campaignId, tenantId];
     let paramIndex = 3;
-
     for (const [key, value] of Object.entries(updates)) {
       if (allowedFields.includes(key)) {
         if (key === 'config') {
@@ -269,24 +238,19 @@ class CampaignRepository {
         }
       }
     }
-
     if (setClause.length === 0) {
       throw new Error('No valid fields to update');
     }
-
     setClause.push(`updated_at = CURRENT_TIMESTAMP`);
-
     const query = `
       UPDATE ${schema}.campaigns
       SET ${setClause.join(', ')}
       WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
       RETURNING *
     `;
-
     const result = await pool.query(query, values);
     return result.rows[0];
   }
-
   /**
    * Update campaign execution state (internal use, no tenant check)
    */
@@ -296,10 +260,8 @@ class CampaignRepository {
     const setClause = [];
     const values = [campaignId];
     let paramIndex = 2;
-
     setClause.push(`execution_state = $${paramIndex++}`);
     values.push(executionState);
-
     if (lastLeadCheckAt !== undefined) {
       if (lastLeadCheckAt === null) {
         setClause.push(`last_lead_check_at = NULL`);
@@ -308,7 +270,6 @@ class CampaignRepository {
         values.push(lastLeadCheckAt);
       }
     }
-
     if (nextRunAt !== undefined) {
       if (nextRunAt === null) {
         setClause.push(`next_run_at = NULL`);
@@ -317,34 +278,28 @@ class CampaignRepository {
         values.push(nextRunAt);
       }
     }
-
     if (lastExecutionReason !== undefined) {
       setClause.push(`last_execution_reason = $${paramIndex++}`);
       values.push(lastExecutionReason);
     }
-
     setClause.push(`updated_at = CURRENT_TIMESTAMP`);
-
     const query = `
       UPDATE ${schema}.campaigns
       SET ${setClause.join(', ')}
       WHERE id = $1
       RETURNING id, execution_state, last_lead_check_at, next_run_at, last_execution_reason
     `;
-
     try {
       const result = await pool.query(query, values);
       return result.rows[0];
     } catch (error) {
       const errorMsg = error.message?.toLowerCase() || '';
       if (errorMsg.includes('execution_state') || errorMsg.includes('does not exist')) {
-        logger.warn('[CampaignRepository] Execution state columns not found, skipping update:', error.message);
         return null;
       }
       throw error;
     }
   }
-
   /**
    * Soft delete campaign
    */
@@ -356,11 +311,9 @@ class CampaignRepository {
       WHERE id = $1 AND tenant_id = $2
       RETURNING id
     `;
-
     const result = await pool.query(query, [campaignId, tenantId]);
     return result.rows[0];
   }
-
   /**
    * Get campaign statistics
    */
@@ -380,14 +333,12 @@ class CampaignRepository {
       LEFT JOIN ${schema}.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id AND cla.tenant_id = $1
       WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
     `;
-
     try {
       const result = await pool.query(query, [tenantId]);
       return result.rows[0];
     } catch (error) {
       const errorMsg = error.message?.toLowerCase() || '';
       if (errorMsg.includes('campaign_lead_activities') || errorMsg.includes('does not exist') || errorMsg.includes('relation') || errorMsg.includes('undefined table')) {
-        logger.warn('[CampaignRepository] Activities table not available for stats, using simplified query:', error.message);
         const fallbackQuery = `
           SELECT
             COUNT(DISTINCT c.id) as total_campaigns,
@@ -407,7 +358,6 @@ class CampaignRepository {
       throw error;
     }
   }
-
   /**
    * Get running campaigns
    */
@@ -418,11 +368,8 @@ class CampaignRepository {
       WHERE tenant_id = $1 AND status = 'running' AND is_deleted = FALSE
       ORDER BY created_at DESC
     `;
-
     const result = await pool.query(query, [tenantId]);
     return result.rows;
   }
 }
-
 module.exports = CampaignRepository;
-
