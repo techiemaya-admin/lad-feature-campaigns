@@ -371,5 +371,132 @@ class CampaignRepository {
     const result = await pool.query(query, [tenantId]);
     return result.rows;
   }
+
+  /**
+   * Get campaign config by ID
+   * @param {string} campaignId - Campaign ID
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} req - Request object (optional)
+   * @returns {Object|null} Campaign config object or null
+   */
+  static async getConfigById(campaignId, tenantId, req = null) {
+    const schema = getSchema(req);
+    const query = `
+      SELECT config 
+      FROM ${schema}.campaigns 
+      WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
+    `;
+    
+    try {
+      const result = await pool.query(query, [campaignId, tenantId]);
+      if (result.rows.length === 0) return null;
+      
+      const config = result.rows[0].config;
+      return typeof config === 'string' ? JSON.parse(config) : (config || {});
+    } catch (error) {
+      const logger = require('../../../core/utils/logger');
+      logger.error('[CampaignRepository.getConfigById] Error', {
+        campaignId,
+        tenantId,
+        error: error.message
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Get campaign search source and config by ID
+   * @param {string} campaignId - Campaign ID
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} req - Request object (optional)
+   * @returns {Object|null} Object with search_source and config
+   */
+  static async getSearchSourceById(campaignId, tenantId, req = null) {
+    const schema = getSchema(req);
+    const query = `
+      SELECT config, search_source 
+      FROM ${schema}.campaigns 
+      WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
+    `;
+    
+    try {
+      const result = await pool.query(query, [campaignId, tenantId]);
+      if (result.rows.length === 0) return null;
+      
+      const row = result.rows[0];
+      const config = typeof row.config === 'string' ? JSON.parse(row.config) : (row.config || {});
+      
+      return {
+        search_source: row.search_source,
+        config: config
+      };
+    } catch (error) {
+      const logger = require('../../../core/utils/logger');
+      logger.error('[CampaignRepository.getSearchSourceById] Error', {
+        campaignId,
+        tenantId,
+        error: error.message
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Verify campaign belongs to tenant
+   * @param {string} campaignId - Campaign ID
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} req - Request object (optional)
+   * @returns {boolean} True if campaign belongs to tenant
+   */
+  static async verifyTenantOwnership(campaignId, tenantId, req = null) {
+    const schema = getSchema(req);
+    const query = `
+      SELECT id 
+      FROM ${schema}.campaigns 
+      WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE
+    `;
+    
+    try {
+      const result = await pool.query(query, [campaignId, tenantId]);
+      return result.rows.length > 0;
+    } catch (error) {
+      const logger = require('../../../core/utils/logger');
+      logger.error('[CampaignRepository.verifyTenantOwnership] Error', {
+        campaignId,
+        tenantId,
+        error: error.message
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Touch updated_at timestamp
+   * @param {string} campaignId - Campaign ID
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} req - Request object (optional)
+   * @returns {boolean} Success status
+   */
+  static async touchUpdatedAt(campaignId, tenantId, req = null) {
+    const schema = getSchema(req);
+    const query = `
+      UPDATE ${schema}.campaigns 
+      SET updated_at = CURRENT_TIMESTAMP 
+      WHERE id = $1 AND tenant_id = $2
+    `;
+    
+    try {
+      await pool.query(query, [campaignId, tenantId]);
+      return true;
+    } catch (error) {
+      const logger = require('../../../core/utils/logger');
+      logger.error('[CampaignRepository.touchUpdatedAt] Error', {
+        campaignId,
+        tenantId,
+        error: error.message
+      });
+      return false;
+    }
+  }
 }
 module.exports = CampaignRepository;

@@ -259,5 +259,70 @@ class CampaignLeadRepository {
     const result = await pool.query(query, values);
     return result.rows;
   }
+
+  /**
+   * Get all existing Apollo person IDs for a tenant
+   * Used for duplicate prevention across all campaigns
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} req - Request object (optional)
+   * @returns {Set<string>} Set of existing apollo_person_ids
+   */
+  static async getExistingLeadIdsByTenant(tenantId, req = null) {
+    const schema = getSchema(req);
+    const query = `
+      SELECT DISTINCT 
+        lead_data->>'apollo_person_id' as apollo_person_id,
+        lead_data->>'id' as lead_id
+      FROM ${schema}.campaign_leads 
+      WHERE tenant_id = $1 AND is_deleted = FALSE
+        AND (lead_data->>'apollo_person_id' IS NOT NULL 
+             OR lead_data->>'id' IS NOT NULL)
+    `;
+    
+    try {
+      const result = await pool.query(query, [tenantId]);
+      const existingIds = new Set();
+      for (const row of result.rows) {
+        if (row.apollo_person_id) existingIds.add(row.apollo_person_id);
+        if (row.lead_id) existingIds.add(row.lead_id);
+      }
+      return existingIds;
+    } catch (error) {
+      const logger = require('../../../core/utils/logger');
+      logger.error('[CampaignLeadRepository.getExistingLeadIdsByTenant] Error', {
+        tenantId,
+        error: error.message
+      });
+      // Return empty set on error to prevent breaking lead generation
+      return new Set();
+    }
+  }
+
+  /**
+   * Get lead info by ID for activity tracking
+   * @param {string} leadId - Lead ID
+   * @param {Object} req - Request object (optional)
+   * @returns {Object|null} Lead info with tenant_id and campaign_id
+   */
+  static async getLeadInfoById(leadId, req = null) {
+    const schema = getSchema(req);
+    const query = `
+      SELECT tenant_id, campaign_id 
+      FROM ${schema}.campaign_leads 
+      WHERE id = $1
+    `;
+    
+    try {
+      const result = await pool.query(query, [leadId]);
+      return result.rows[0] || null;
+    } catch (error) {
+      const logger = require('../../../core/utils/logger');
+      logger.error('[CampaignLeadRepository.getLeadInfoById] Error', {
+        leadId,
+        error: error.message
+      });
+      return null;
+    }
+  }
 }
 module.exports = CampaignLeadRepository;

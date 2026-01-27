@@ -7,32 +7,58 @@ const { getSchema } = require('../../../core/utils/schemaHelper');
 const { searchEmployees, searchEmployeesFromDatabase } = require('./LeadSearchService');
 const UnipileApolloAdapterService = require('../../apollo-leads/services/UnipileApolloAdapterService');
 const logger = require('../../../core/utils/logger');
+const CampaignRepository = require('../repositories/CampaignRepository');
+const CampaignLeadRepository = require('../repositories/CampaignLeadRepository');
+
+// TODO: ARCHITECTURE EXCEPTION - Direct cross-feature import
+// This creates tight coupling between campaigns and apollo-leads features.
+// RECOMMENDATION: Refactor to HTTP API endpoint (e.g., POST /api/apollo-leads/bulk-enrich)
+// to maintain proper microservice boundaries. Current implementation kept for
+// performance reasons (enrichment is time-sensitive and needs low latency).
+// Estimated refactoring effort: 4-6 hours
+let ApolloRevealService;
+try {
+  const ApolloRevealServiceClass = require('../../apollo-leads/services/ApolloRevealService');
+  ApolloRevealService = new ApolloRevealServiceClass();
+} catch (err) {
+  logger.warn('[LeadGeneration] ApolloRevealService not available - enrichment disabled', { error: err.message });
+}
+
+/**
+ * Get tenant-aware schema with proper fallback
+ * For background processes without req, resolve schema from tenant context
+ * @param {Object} req - Request object (optional)
+ * @param {string} tenantId - Tenant ID for fallback resolution
+ * @returns {string} Schema name
+ */
+function getTenantSchema(req, tenantId) {
+  // Try to get schema from request first
+  if (req) {
+    return getSchema(req);
+  }
+  
+  // In background processes, use environment default but log tenant context
+  // This ensures we never silently use wrong schema
+  const schema = getSchema(null);
+  
+  logger.info('[LeadGeneration] Schema resolved for background process', {
+    schema,
+    tenantId,
+    source: 'environment_default'
+  });
+  
+  return schema;
+}
 /**
  * Get list of apollo_person_ids already used by this tenant across all campaigns
  * This prevents sending duplicate leads to the same user
  * @param {string} tenantId - Tenant ID
+ * @param {Object} req - Request object (optional)
  * @returns {Set<string>} Set of already-used apollo_person_ids
  */
-async function getExistingLeadIds(tenantId) {
-  try {
-    const schema = getSchema();
-    const result = await pool.query(
-      `SELECT DISTINCT lead_data->>'apollo_person_id' as apollo_person_id,
-              lead_data->>'id' as lead_id
-       FROM ${schema}.campaign_leads 
-       WHERE tenant_id = $1 AND is_deleted = FALSE
-         AND (lead_data->>'apollo_person_id' IS NOT NULL OR lead_data->>'id' IS NOT NULL)`,
-      [tenantId]
-    );
-    const existingIds = new Set();
-    for (const row of result.rows) {
-      if (row.apollo_person_id) existingIds.add(row.apollo_person_id);
-      if (row.lead_id) existingIds.add(row.lead_id);
-    }
-    return existingIds;
-  } catch (err) {
-    return new Set(); // Return empty set on error - will allow duplicates but won't break
-  }
+async function getExistingLeadIds(tenantId, req = null) {
+  // Use repository method for data access (LAD architecture compliance)
+  return await CampaignLeadRepository.getExistingLeadIdsByTenant(tenantId, req);
 }
 const {
   updateCampaignConfig,
@@ -56,25 +82,16 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     if (typeof stepConfig === 'string') {
       stepConfig = JSON.parse(stepConfig);
     }
-    // LAD Architecture: Use dynamic schema resolution
-    const schema = getSchema(null); // No req available in background process, will use default
+    // LAD Architecture: Use tenant-aware schema resolution for background processes
+    const schema = getTenantSchema(null, tenantId);
+    
     // Get campaign to access config (leads_per_day, lead_gen_offset)
-    // First try to get config from campaigns table (if config column exists)
-    let campaignConfig = {};
-    let configColumnExists = false;
-    try {
-      const campaignResult = await pool.query(
-        `SELECT config FROM ${schema}.campaigns WHERE id = $1 AND tenant_id = $2`,
-        [campaignId, tenantId]
-      );
-      if (campaignResult.rows[0]?.config) {
-        campaignConfig = typeof campaignResult.rows[0].config === 'string' 
-          ? JSON.parse(campaignResult.rows[0].config) 
-          : campaignResult.rows[0].config;
-        configColumnExists = true;
-      }
-    } catch (err) {
-      // Config column might not exist, try reading from step config instead
+    // Use repository method for data access (LAD architecture compliance)
+    let campaignConfig = await CampaignRepository.getConfigById(campaignId, tenantId, null);
+    let configColumnExists = campaignConfig !== null;
+    
+    if (!campaignConfig) {
+      campaignConfig = {};
     }
     // If config column doesn't exist, try to read from step config
     if (!configColumnExists && stepConfig) {
@@ -133,7 +150,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     // Offset tracks total leads processed across all days
     // CRITICAL: Get existing lead IDs to prevent duplicate leads across days/campaigns
     // This ensures we never send the same lead twice to a user
-    const existingLeadIds = await getExistingLeadIds(tenantId);
+    const existingLeadIds = await getExistingLeadIds(tenantId, null);
     // Parse lead generation config
     let filters = {};
     
@@ -281,12 +298,8 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     
     // PRODUCTION-GRADE: Check search source preference (Unipile, Apollo, or Auto)
     // Get campaign configuration for source preference
-    const campaignQuery = await pool.query(
-      `SELECT config, search_source FROM ${schema}.campaigns 
-       WHERE id = $1 AND is_deleted = FALSE`,
-      [campaignId]
-    );
-    const campaign = campaignQuery.rows[0];
+    // Use repository method for data access (LAD architecture compliance)
+    const campaign = await CampaignRepository.getSearchSourceById(campaignId, tenantId, null);
     const searchSource = campaign?.search_source || process.env.SEARCH_SOURCE_DEFAULT || 'apollo_io';
     const unipileAccountId = campaign?.config?.unipile_account_id || process.env.UNIPILE_ACCOUNT_ID;
     
@@ -389,7 +402,90 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       });
       const filteredOut = originalCount - employees.length;
       if (filteredOut > 0) {
+        logger.info('[executeLeadGeneration] Filtered duplicates', {
+          campaignId,
+          originalCount,
+          filteredOut,
+          remaining: employees.length
+        });
       }
+    }
+    
+    // NEW: If all leads are duplicates, fetch next page from Apollo
+    // Keep fetching until we have enough unique leads or run out of results
+    let currentPage = page;
+    const maxPagesToFetch = 10; // Safety limit: don't fetch more than 10 pages
+    
+    while (employees.length < dailyLimit && currentPage < (page + maxPagesToFetch) && !searchError && !accessDenied) {
+      // Only continue if we got results but they were all duplicates
+      if (filteredOut === 0 || currentPage === page) {
+        // Either no duplicates were filtered, or this is the first page - don't fetch more
+        break;
+      }
+      
+      logger.info('[executeLeadGeneration] All leads were duplicates, fetching next page', {
+        campaignId,
+        currentPage: currentPage + 1,
+        neededLeads: dailyLimit - employees.length
+      });
+      
+      // Fetch next page (next 100 results)
+      currentPage++;
+      
+      try {
+        const nextPageResult = await searchEmployees(searchParams, currentPage, 0, 100, authToken, tenantId);
+        const nextPageEmployees = nextPageResult.employees || [];
+        
+        if (nextPageEmployees.length === 0) {
+          logger.info('[executeLeadGeneration] No more results available from Apollo', {
+            campaignId,
+            currentPage
+          });
+          break; // No more results
+        }
+        
+        // Filter duplicates from next page
+        const uniqueFromNextPage = nextPageEmployees.filter(emp => {
+          const empId = emp.id || emp.apollo_person_id;
+          return empId && !existingLeadIds.has(empId);
+        });
+        
+        logger.info('[executeLeadGeneration] Next page results', {
+          campaignId,
+          page: currentPage,
+          totalResults: nextPageEmployees.length,
+          uniqueResults: uniqueFromNextPage.length,
+          duplicatesFiltered: nextPageEmployees.length - uniqueFromNextPage.length
+        });
+        
+        // Add unique leads from next page
+        employees = [...employees, ...uniqueFromNextPage].slice(0, dailyLimit);
+        
+        // Update offset to reflect we moved to next page
+        if (employees.length >= dailyLimit) {
+          // We have enough leads now
+          currentOffset = (currentPage - 1) * 100 + employees.length;
+          break;
+        }
+      } catch (nextPageErr) {
+        logger.error('[executeLeadGeneration] Error fetching next page', {
+          error: nextPageErr.message,
+          page: currentPage
+        });
+        break; // Stop trying
+      }
+    }
+    
+    // Log final results after pagination
+    if (currentPage > page) {
+      logger.info('[executeLeadGeneration] Pagination complete', {
+        campaignId,
+        startPage: page,
+        endPage: currentPage,
+        totalPagesChecked: currentPage - page + 1,
+        finalLeadCount: employees.length,
+        dailyLimit: dailyLimit
+      });
     }
     
     // Handle access denied (403) - this is NOT an error, just no access to Apollo/database
@@ -459,24 +555,149 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     }
     const employeesList = employees || [];
     
-    logger.info('[executeLeadGeneration] Preparing to save leads', {
+    logger.info('[executeLeadGeneration] Leads found from search', {
       campaignId,
       employeesCount: employeesList.length,
       dailyLimit,
       fromSource
     });
+
+    // STEP 2: Automatic enrichment of search results
+    // Apollo search returns obfuscated data (no emails, no LinkedIn URLs)
+    // We must enrich each lead to get full contact details
+    let enrichedEmployees = employeesList;
+    let enrichmentStats = {
+      attempted: 0,
+      succeeded: 0,
+      failed: 0,
+      skipped: 0
+    };
+
+    if (ApolloRevealService && fromSource !== 'database' && employeesList.length > 0) {
+      logger.info('[executeLeadGeneration] Starting automatic enrichment', {
+        campaignId,
+        leadsToEnrich: employeesList.length,
+        source: fromSource
+      });
+
+      enrichedEmployees = [];
+      
+      for (const employee of employeesList) {
+        const personId = employee.id || employee.apollo_person_id;
+        
+        // Skip if already has email (already enriched)
+        if (employee.email || employee.personal_emails?.[0]) {
+          enrichmentStats.skipped++;
+          enrichedEmployees.push(employee);
+          continue;
+        }
+
+        // Skip if no person ID
+        if (!personId) {
+          logger.warn('[executeLeadGeneration] No person ID for enrichment', { employee });
+          enrichmentStats.skipped++;
+          enrichedEmployees.push(employee);
+          continue;
+        }
+
+        enrichmentStats.attempted++;
+
+        try {
+          // Call enrichment API (costs credits: 1 for email, 8 for phone)
+          const enrichResult = await ApolloRevealService.revealPersonEmail(personId);
+          
+          if (enrichResult.success && enrichResult.person) {
+            // Merge enriched data with search data
+            const enrichedEmployee = {
+              ...employee,
+              // Full name (not obfuscated)
+              name: enrichResult.person.name || employee.name,
+              first_name: enrichResult.person.first_name || employee.first_name,
+              last_name: enrichResult.person.last_name || employee.last_name,
+              // Contact details
+              email: enrichResult.person.email || enrichResult.person.personal_emails?.[0],
+              personal_emails: enrichResult.person.personal_emails || [],
+              linkedin_url: enrichResult.person.linkedin_url,
+              // Employment history
+              employment_history: enrichResult.person.employment_history || employee.employment_history,
+              // Phone (if available)
+              phone_numbers: enrichResult.person.phone_numbers || employee.phone_numbers,
+              // Mark as enriched
+              is_enriched: true,
+              enriched_at: new Date().toISOString()
+            };
+            
+            enrichedEmployees.push(enrichedEmployee);
+            enrichmentStats.succeeded++;
+            
+            logger.debug('[executeLeadGeneration] Enriched lead', {
+              personId,
+              hasEmail: !!enrichedEmployee.email,
+              hasLinkedIn: !!enrichedEmployee.linkedin_url
+            });
+          } else {
+            // Enrichment failed but keep the search result
+            enrichmentStats.failed++;
+            enrichedEmployees.push({
+              ...employee,
+              is_enriched: false,
+              enrichment_error: enrichResult.error || 'Enrichment failed'
+            });
+            
+            logger.warn('[executeLeadGeneration] Enrichment failed for lead', {
+              personId,
+              error: enrichResult.error
+            });
+          }
+        } catch (enrichError) {
+          // Keep the search result even if enrichment crashes
+          enrichmentStats.failed++;
+          enrichedEmployees.push({
+            ...employee,
+            is_enriched: false,
+            enrichment_error: enrichError.message
+          });
+          
+          logger.error('[executeLeadGeneration] Enrichment exception for lead', {
+            personId,
+            error: enrichError.message,
+            stack: enrichError.stack
+          });
+        }
+
+        // Rate limiting: small delay between enrichment calls to avoid API throttling
+        // Configurable via environment variable (default: 200ms)
+        if (enrichmentStats.attempted < employeesList.length) {
+          const enrichmentDelayMs = parseInt(process.env.APOLLO_ENRICHMENT_DELAY_MS || '200', 10);
+          await new Promise(resolve => setTimeout(resolve, enrichmentDelayMs));
+        }
+      }
+
+      logger.info('[executeLeadGeneration] Enrichment completed', {
+        campaignId,
+        stats: enrichmentStats,
+        finalLeadsCount: enrichedEmployees.length
+      });
+    } else if (!ApolloRevealService) {
+      logger.warn('[executeLeadGeneration] Enrichment skipped - ApolloRevealService not available');
+    }
+    
+    logger.info('[executeLeadGeneration] Preparing to save leads', {
+      campaignId,
+      employeesCount: enrichedEmployees.length,
+      dailyLimit,
+      fromSource,
+      enrichmentStats
+    });
     
     // Verify tenant_id from campaign matches the provided tenantId
-    // Campaign data already fetched at line 254, so we have the campaign object
+    // Use repository method for data access (LAD architecture compliance)
     if (!campaign) {
       throw new Error(`Campaign ${campaignId} not found`);
     }
     // Double-check campaign exists in this tenant
-    const campaignCheckQuery = await pool.query(
-      `SELECT id FROM ${schema}.campaigns WHERE id = $1 AND tenant_id = $2 AND is_deleted = FALSE`,
-      [campaignId, tenantId]
-    );
-    if (campaignCheckQuery.rows.length === 0) {
+    const isValidTenant = await CampaignRepository.verifyTenantOwnership(campaignId, tenantId, null);
+    if (!isValidTenant) {
       throw new Error(`Campaign ${campaignId} not found for tenant ${tenantId}`);
     }
     
@@ -486,11 +707,11 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       leadsCount: employeesList.length
     });
     
-    // Save leads to campaign_leads table (only the daily limit)
+    // Save enriched leads to campaign_leads table (only the daily limit)
     const { savedCount, firstGeneratedLeadId } = await saveLeadsToCampaign(
       campaignId,
       tenantId,
-      employeesList
+      enrichedEmployees
     );
     
     logger.info('[executeLeadGeneration] Leads saved', {
@@ -498,8 +719,23 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       savedCount,
       firstGeneratedLeadId
     });
+    
     // Update campaign config with new offset and date
-    const newOffset = currentOffset + savedCount;
+    // If we fetched from multiple pages, update offset to reflect the last page position
+    let newOffset;
+    if (currentPage > page) {
+      // We paginated to next pages - calculate offset based on last page
+      newOffset = (currentPage - 1) * 100 + savedCount;
+      logger.info('[executeLeadGeneration] Updated offset after pagination', {
+        campaignId,
+        oldOffset: currentOffset,
+        newOffset: newOffset,
+        pagesChecked: currentPage - page + 1
+      });
+    } else {
+      // Single page - normal offset increment
+      newOffset = currentOffset + savedCount;
+    }
     const updatedConfig = {
       ...campaignConfig,
       leads_per_day: leadsPerDay,
@@ -523,15 +759,8 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       } catch (stepUpdateErr) {
       }
       // Also update campaign updated_at timestamp
-      try {
-        // Per TDD: Use lad_dev schema
-        await pool.query(
-          `UPDATE ${schema}.campaigns SET updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND tenant_id = $2`,
-          [campaignId, tenantId]
-        );
-      } catch (err) {
-        // Ignore - not critical
-      }
+      // Use repository method for data access (LAD architecture compliance)
+      await CampaignRepository.touchUpdatedAt(campaignId, tenantId, null);
     }
     // PRODUCTION-GRADE: Handle daily limit and execution state
     // IMPORTANT: Don't set to sleep here - let the campaign processor handle it AFTER processing existing leads
@@ -553,13 +782,10 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     if (savedCount > 0 && firstGeneratedLeadId && step) {
       try {
         // Get tenant_id and campaign_id from the lead
-        const leadInfo = await pool.query(
-          `SELECT tenant_id, campaign_id FROM ${schema}.campaign_leads WHERE id = $1`,
-          [firstGeneratedLeadId]
-        );
-        const { tenant_id, campaign_id } = leadInfo.rows[0] || {};
-        if (tenant_id && campaign_id) {
-          await createLeadGenerationActivity(tenant_id, campaign_id, firstGeneratedLeadId, step.id);
+        // Use repository method for data access (LAD architecture compliance)
+        const leadInfo = await CampaignLeadRepository.getLeadInfoById(firstGeneratedLeadId, null);
+        if (leadInfo && leadInfo.tenant_id && leadInfo.campaign_id) {
+          await createLeadGenerationActivity(leadInfo.tenant_id, leadInfo.campaign_id, firstGeneratedLeadId, step.id);
         }
       } catch (activityErr) {
         // Don't fail the whole process if activity creation fails
@@ -569,6 +795,8 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       success: true, 
       leadsFound: employeesList.length,
       leadsSaved: savedCount,
+      leadsEnriched: enrichmentStats.succeeded,
+      enrichmentStats: enrichmentStats,
       dailyLimit: dailyLimit,
       currentOffset: newOffset,
       source: fromSource,
