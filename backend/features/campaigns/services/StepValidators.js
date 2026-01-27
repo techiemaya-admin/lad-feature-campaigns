@@ -98,62 +98,75 @@ function validateStepConfig(stepType, stepConfig) {
         filters = {};
       }
     }
-    // Check if filters object has at least one valid field (roles, industries, or location)
+    
+    // Check if filters object has at least one valid field
+    // Support both old format (roles, industries, location) and Apollo API format
     let hasValidFilters = false;
     const missingFilterFields = [];
-    if (filters && typeof filters === 'object') {
-      // Check for roles (array of strings)
+    
+    // Also check for Apollo API format filters directly in stepConfig
+    const hasApolloFilters = 
+      (stepConfig.q_organization_keyword_tags && Array.isArray(stepConfig.q_organization_keyword_tags) && stepConfig.q_organization_keyword_tags.length > 0) ||
+      (stepConfig.organization_num_employees_ranges && Array.isArray(stepConfig.organization_num_employees_ranges) && stepConfig.organization_num_employees_ranges.length > 0) ||
+      (stepConfig.person_titles && Array.isArray(stepConfig.person_titles) && stepConfig.person_titles.length > 0) ||
+      (stepConfig.organization_locations && Array.isArray(stepConfig.organization_locations) && stepConfig.organization_locations.length > 0) ||
+      (stepConfig.organization_industries && Array.isArray(stepConfig.organization_industries) && stepConfig.organization_industries.length > 0);
+    
+    if (hasApolloFilters) {
+      hasValidFilters = true;
+    } else if (filters && typeof filters === 'object') {
+      // Check for old format filters in leadGenerationFilters
+      // Check for roles (person_titles in new format)
       if (filters.roles && Array.isArray(filters.roles) && filters.roles.length > 0) {
         const validRoles = filters.roles.filter(r => r && typeof r === 'string' && r.trim().length > 0);
         if (validRoles.length > 0) {
           hasValidFilters = true;
-        } else {
-          missingFilterFields.push('roles');
         }
-      } else {
-        missingFilterFields.push('roles');
       }
-      // Check for industries (array of strings)
-      if (filters.industries && Array.isArray(filters.industries) && filters.industries.length > 0) {
+      
+      // Check for person_titles (Apollo format within filters)
+      if (!hasValidFilters && filters.person_titles && Array.isArray(filters.person_titles) && filters.person_titles.length > 0) {
+        hasValidFilters = true;
+      }
+      
+      // Check for industries (organization_industries in new format)
+      if (!hasValidFilters && filters.industries && Array.isArray(filters.industries) && filters.industries.length > 0) {
         const validIndustries = filters.industries.filter(i => i && typeof i === 'string' && i.trim().length >= 2);
         if (validIndustries.length > 0) {
           hasValidFilters = true;
-        } else {
-          if (!missingFilterFields.includes('industries')) missingFilterFields.push('industries');
         }
-      } else {
-        if (!missingFilterFields.includes('industries')) missingFilterFields.push('industries');
       }
-      // Check for location (string or array)
-      if (filters.location) {
+      
+      // Check for organization_industries (Apollo format within filters)
+      if (!hasValidFilters && filters.organization_industries && Array.isArray(filters.organization_industries) && filters.organization_industries.length > 0) {
+        hasValidFilters = true;
+      }
+      
+      // Check for location (organization_locations in new format)
+      if (!hasValidFilters && filters.location) {
         if (typeof filters.location === 'string' && filters.location.trim().length > 0) {
           hasValidFilters = true;
         } else if (Array.isArray(filters.location) && filters.location.length > 0) {
           const validLocations = filters.location.filter(l => l && typeof l === 'string' && l.trim().length > 0);
           if (validLocations.length > 0) {
             hasValidFilters = true;
-          } else {
-            missingFilterFields.push('location');
           }
-        } else {
-          missingFilterFields.push('location');
         }
-      } else {
-        missingFilterFields.push('location');
+      }
+      
+      // Check for organization_locations (Apollo format within filters)
+      if (!hasValidFilters && filters.organization_locations && Array.isArray(filters.organization_locations) && filters.organization_locations.length > 0) {
+        hasValidFilters = true;
       }
     }
     // Also check for leadGenerationLimit or leads_per_day as fallback
     const hasLimit = isFieldValid(stepConfig.leadGenerationLimit) || isFieldValid(stepConfig.leads_per_day);
     // Lead generation requires at least one of: valid filters OR limit
     if (!hasValidFilters && !hasLimit) {
-      const missingFields = ['leadGenerationFilters'];
-      if (!hasLimit) {
-        missingFields.push('leadGenerationLimit');
-      }
       return {
         valid: false,
-        error: 'Lead generation step requires at least one filter criteria (roles, industries, or location) in leadGenerationFilters, or a leadGenerationLimit to be configured',
-        missingFields: missingFields
+        error: 'Lead generation filter not configured. Please set at least one of: roles, location, or industries',
+        missingFields: ['leadGenerationFilters']
       };
     }
     // Lead generation validation passed, skip other field checks
@@ -204,4 +217,4 @@ module.exports = {
   isDelayValid,
   validateStepConfig,
   getChannelForStepType
-};
+};

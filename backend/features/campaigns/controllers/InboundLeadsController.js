@@ -3,13 +3,14 @@
  * Handles saving uploaded leads to the leads table
  */
 const { pool } = require('../../../shared/database/connection');
-const { randomUUID } = require('crypto');
 const logger = require('../../../core/utils/logger');
-const { getSchema } = require('../../../core/utils/schemaHelper');
 const InboundLeadsRepository = require('../repositories/InboundLeadsRepository');
+const InboundLeadsService = require('../services/InboundLeadsService');
+const InboundLeadsValidator = require('../validators/inboundLeadsValidator');
 
-// Initialize repository
+// Initialize repository and service
 const inboundLeadsRepository = new InboundLeadsRepository(pool);
+const inboundLeadsService = new InboundLeadsService(inboundLeadsRepository);
 
 class InboundLeadsController {
   /**
@@ -19,86 +20,57 @@ class InboundLeadsController {
   static async saveInboundLeads(req, res) {
     try {
       const tenantId = req.user.tenantId || req.user.tenant_id;
-      // Validate tenant_id is a valid UUID
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (!tenantId || !uuidRegex.test(tenantId)) {
+      
+      // Validate tenant_id
+      if (!tenantId || !InboundLeadsValidator.validateTenantId(tenantId)) {
         return res.status(400).json({
           success: false,
           error: 'Invalid tenant_id. Must be a valid UUID.'
         });
       }
-      const { leads } = req.body; // Array of lead objects
-      if (!leads || !Array.isArray(leads) || leads.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: 'No leads provided'
+      
+      const { leads, skipDuplicates = false } = req.body;
+      
+      // Save leads using service (which handles duplicate detection)
+      const result = await inboundLeadsService.saveBulkLeads(req, tenantId, leads, { skipDuplicates });
+      
+      // If duplicates found and not skipping, return for user review
+      if (result.duplicatesFound) {
+        return res.json({
+          success: true,
+          duplicatesFound: true,
+          data: {
+            duplicates: result.duplicates,
+            duplicateCount: result.duplicateCount,
+            newLeadsCount: result.newLeadsCount,
+            totalUploaded: result.totalUploaded
+          },
+          message: `Found ${result.duplicateCount} duplicate lead(s). Please review and choose an action.`
         });
       }
-
-      const savedLeads = [];
-      const errors = [];
-
-      for (const leadData of leads) {
-        try {
-          // Use firstName and lastName if provided, otherwise parse from name or companyName
-          let firstName = leadData.firstName || '';
-          let lastName = leadData.lastName || '';
-          // Fallback: Parse name if firstName/lastName not provided
-          if (!firstName && !lastName) {
-            const name = leadData.name || '';
-            if (name) {
-              const nameParts = name.split(' ');
-              firstName = nameParts[0] || '';
-              lastName = nameParts.slice(1).join(' ') || '';
-            }
-          }
-
-          // Use repository to create lead
-          const result = await inboundLeadsRepository.createLead(req, {
-            tenantId,
-            source: 'inbound_upload',
-            sourceId: randomUUID(),
-            firstName: firstName || null,
-            lastName: lastName || null,
-            email: leadData.email || null,
-            phone: leadData.phone || leadData.whatsapp || null,
-            companyName: leadData.companyName || null,
-            title: leadData.title || null,
-            linkedinUrl: leadData.linkedinProfile || null,
-            customFields: JSON.stringify({
-              whatsapp: leadData.whatsapp,
-              website: leadData.website,
-              notes: leadData.notes
-            }),
-            rawData: JSON.stringify(leadData)
-          });
-
-          savedLeads.push({
-            id: result.id,
-            ...leadData
-          });
-
-        } catch (leadError) {
-          logger.error('Failed to save individual lead:', leadError);
-          errors.push({
-            lead: leadData.companyName || leadData.email,
-            error: leadError.message
-          });
-        }
-      }
+      
+      // Return success response
       res.json({
         success: true,
+        duplicatesFound: false,
         data: {
-          saved: savedLeads.length,
-          total: leads.length,
-          leads: savedLeads,
-          leadIds: savedLeads.map(lead => lead.id), // Extract just the IDs for easy reference
-          errors: errors.length > 0 ? errors : undefined
+          saved: result.saved,
+          total: result.total,
+          skippedDuplicates: result.skippedDuplicates,
+          leads: result.leads,
+          leadIds: result.leadIds,
+          errors: result.errors
         },
-        message: `Successfully saved ${savedLeads.length} of ${leads.length} leads`
+        message: skipDuplicates 
+          ? `Successfully saved ${result.saved} new leads. Skipped ${result.skippedDuplicates} duplicate(s).`
+          : `Successfully saved ${result.saved} of ${result.total} leads`
       });
+      
     } catch (error) {
-      logger.error('Failed to save inbound leads:', error);
+      logger.error('[InboundLeadsController] Failed to save inbound leads:', {
+        error: error.message,
+        stack: error.stack
+      });
       res.status(500).json({
         success: false,
         error: 'Failed to save inbound leads',
@@ -112,15 +84,23 @@ class InboundLeadsController {
    */
   static async getInboundLeads(req, res) {
     try {
-      const tenantId = req.user.tenantId;
+      const tenantId = req.user.tenantId || req.user.tenant_id;
+      
+      // Validate tenant_id
+      if (!tenantId || !InboundLeadsValidator.validateTenantId(tenantId)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid tenant_id. Must be a valid UUID.'
+        });
+      }
+      
       const { limit = 50, offset = 0, search } = req.query;
 
-      // Use repository to get leads
-      const leads = await inboundLeadsRepository.searchLeads(req, {
-        tenantId,
+      // Use service to get leads
+      const leads = await inboundLeadsService.searchLeads(req, tenantId, {
         search,
-        limit,
-        offset
+        limit: parseInt(limit),
+        offset: parseInt(offset)
       });
 
       res.json({
@@ -128,13 +108,71 @@ class InboundLeadsController {
         data: leads,
         total: leads.length
       });
+      
     } catch (error) {
-      logger.error('Failed to fetch inbound leads:', error);
+      logger.error('[InboundLeadsController] Failed to fetch inbound leads:', {
+        error: error.message,
+        stack: error.stack
+      });
       res.status(500).json({
         success: false,
         error: 'Failed to fetch inbound leads'
       });
     }
   }
+
+  /**
+   * Cancel bookings for leads to re-nurture them
+   * POST /api/inbound-leads/cancel-bookings
+   */
+  static async cancelBookingsForReNurturing(req, res) {
+    try {
+      const tenantId = req.user.tenantId || req.user.tenant_id;
+      
+      // Validate tenant_id
+      if (!tenantId || !InboundLeadsValidator.validateTenantId(tenantId)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid tenant_id. Must be a valid UUID.'
+        });
+      }
+      
+      const { leadIds } = req.body;
+      
+      if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'leadIds array is required'
+        });
+      }
+      
+      // Cancel bookings using service
+      const result = await inboundLeadsService.cancelLeadBookingsForReNurturing(
+        req,
+        tenantId,
+        leadIds
+      );
+      
+      res.json({
+        success: true,
+        data: {
+          cancelledBookings: result.cancelledCount,
+          leadIds: result.leadIds
+        },
+        message: `Cancelled ${result.cancelledCount} scheduled follow-up(s) for ${leadIds.length} lead(s). They will be re-nurtured as new leads.`
+      });
+      
+    } catch (error) {
+      logger.error('[InboundLeadsController] Failed to cancel bookings:', {
+        error: error.message,
+        stack: error.stack
+      });
+      res.status(500).json({
+        success: false,
+        error: 'Failed to cancel bookings'
+      });
+    }
+  }
 }
+
 module.exports = InboundLeadsController;

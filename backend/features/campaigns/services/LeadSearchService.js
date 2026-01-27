@@ -74,10 +74,6 @@ async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dai
           const empId = emp.id || emp.apollo_person_id;
           return empId && !excludeSet.has(empId);
         });
-          before: beforeFilter, 
-          after: dbEmployees.length, 
-          filtered: beforeFilter - dbEmployees.length 
-        });
       }
       // Apply offset within this page and take daily limit
       const availableFromDb = dbEmployees.slice(offsetInPage, offsetInPage + dailyLimit);
@@ -165,10 +161,6 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
           const empId = emp.id || emp.apollo_person_id;
           return empId && !excludeSet.has(empId);
         });
-          before: beforeFilter, 
-          after: apolloEmployees.length, 
-          filtered: beforeFilter - apolloEmployees.length 
-        });
       }
       // Apply offset within Apollo page and take what we need
       return apolloEmployees.slice(offsetInPage, offsetInPage + neededCount);
@@ -220,4 +212,4 @@ module.exports = {
   searchEmployeesFromDatabase,
   searchEmployeesFromApollo,
   searchEmployees
-};
+};

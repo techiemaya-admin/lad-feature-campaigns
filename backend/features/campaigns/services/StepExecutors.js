@@ -95,21 +95,12 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
             title: leadRecord.title,
             phone: leadRecord.phone
           };
-            campaignLeadId, 
-            leadId: row.lead_id,
-            hasLinkedInUrl: !!leadData.linkedin_url,
-            hasName: !!leadData.name,
-            hasEmail: !!leadData.email
-          });
         } else {
           // Fallback to campaign_leads data if exists
           leadData = row.lead_data || row.snapshot || {};
           leadData = typeof leadData === 'string' ? JSON.parse(leadData) : leadData;
         }
       } catch (leadsFetchError) {
-          error: leadsFetchError.message,
-          leadId: row.lead_id
-        });
         // Fallback to campaign_leads data
         leadData = row.lead_data || row.snapshot || {};
         leadData = typeof leadData === 'string' ? JSON.parse(leadData) : leadData;
@@ -118,17 +109,8 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
       // Outbound campaign: Lead data is in campaign_leads table
       leadData = row.lead_data || row.snapshot || {};
       leadData = typeof leadData === 'string' ? JSON.parse(leadData) : leadData;
-        campaignLeadId,
-        hasData: !!row.lead_data,
-        hasSnapshot: !!row.snapshot
-      });
     } else {
       // No data found in either location
-        campaignLeadId,
-        hasLeadId: !!row.lead_id,
-        hasLeadData: !!row.lead_data,
-        hasSnapshot: !!row.snapshot
-      });
       return null;
     }
     return leadData;

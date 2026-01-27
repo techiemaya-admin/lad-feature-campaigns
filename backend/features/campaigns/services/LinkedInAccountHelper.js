@@ -268,12 +268,7 @@ async function sendConnectionRequestWithFallback(
     }
   }
   // All accounts and strategies exhausted - determine root cause
-    totalAccounts: accountsToTry.length,
-    actualRateLimitErrors,
-    credentialErrors,
-    otherErrors,
-    accountErrors
-  });
+  
   // Determine the most accurate error message based on what we encountered
   let errorMessage = '';
   let errorType = '';
@@ -333,9 +328,6 @@ async function verifyAccountReadyForCampaign(unipileAccountId) {
       if (result.rows.length > 0) {
         const account = result.rows[0];
         if (account.status === 'expired' || account.status === 'revoked' || account.status === 'error') {
-            unipileAccountId,
-            status: account.status
-          });
           return {
             valid: false,
             reason: 'Account is marked as inactive or expired',
@@ -343,10 +335,6 @@ async function verifyAccountReadyForCampaign(unipileAccountId) {
             requiresReconnection: true
           };
         }
-          unipileAccountId,
-          is_active: account.is_active,
-          status: account.status
-        });
         return { valid: true, reason: 'OK', canRetry: false };
       }
     } catch (error) {
@@ -354,9 +342,6 @@ async function verifyAccountReadyForCampaign(unipileAccountId) {
     // Fallback check
     return { valid: true, reason: 'OK', canRetry: false };
   } catch (error) {
-      error: error.message,
-      unipileAccountId
-    });
     // If we can't reach database, assume account might still be valid
     // (network issue, not account issue)
     return {

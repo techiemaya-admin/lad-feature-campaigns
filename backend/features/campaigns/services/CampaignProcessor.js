@@ -26,11 +26,34 @@ const CampaignModel = require('../models/CampaignModel');
 async function executeStepForLead(campaignId, step, campaignLead, userId, tenantId, authToken = null) {
   // Declare activityId outside try block so it's accessible in catch
   let activityId = null;
+  
+  logger.info('[executeStepForLead] Starting step execution', {
+    campaignId,
+    stepType: step.step_type || step.type,
+    hasAuthToken: !!authToken
+  });
+  
   try {
     const stepType = step.step_type || step.type;
     const stepConfig = typeof step.config === 'string' ? JSON.parse(step.config) : step.config;
+    
+    logger.info('[executeStepForLead] Step config parsed', {
+      campaignId,
+      stepType,
+      configKeys: Object.keys(stepConfig || {})
+    });
+    
     // VALIDATE: Check if all required fields are filled before executing
     const validation = validateStepConfig(stepType, stepConfig);
+    
+    logger.info('[executeStepForLead] Validation result', {
+      campaignId,
+      stepType,
+      valid: validation.valid,
+      error: validation.error,
+      missingFields: validation.missingFields
+    });
+    
     if (!validation.valid) {
       return {
         success: false,
@@ -57,7 +80,19 @@ async function executeStepForLead(campaignId, step, campaignLead, userId, tenant
     let result = { success: false, error: 'Unknown step type' };
     // Handle all step types dynamically based on step type
     if (stepType === 'lead_generation') {
+      logger.info('[executeStepForLead] Calling executeLeadGeneration', {
+        campaignId,
+        userId,
+        tenantId,
+        hasAuthToken: !!authToken
+      });
       result = await executeLeadGeneration(campaignId, step, stepConfig, userId, tenantId, authToken);
+      logger.info('[executeStepForLead] executeLeadGeneration returned', {
+        campaignId,
+        success: result.success,
+        leadCount: result.leadCount || 0,
+        error: result.error
+      });
     } else if (stepType && stepType.startsWith('linkedin_')) {
       // All LinkedIn steps: connect, message, follow, visit, scrape_profile, company_search, employee_list, autopost, comment_reply
       result = await executeLinkedInStep(stepType, stepConfig, campaignLead, userId, tenantId);
@@ -97,13 +132,26 @@ async function executeStepForLead(campaignId, step, campaignLead, userId, tenant
   }
 }
 async function processCampaign(campaignId, tenantId, authToken = null) {
+  const logger = require('../../../core/utils/logger');
+  
+  logger.info('[CampaignProcessor] processCampaign called', { 
+    campaignId, 
+    tenantId,
+    hasAuthToken: !!authToken 
+  });
+  
   try {
     // Test database connection first
     try {
       const testResult = await pool.query('SELECT NOW() as now');
+      logger.info('[CampaignProcessor] Database connection test passed');
     } catch (dbError) {
+      logger.error('[CampaignProcessor] Database connection test failed', { error: dbError.message });
       throw new Error(`Database connection failed: ${dbError.message}`);
     }
+    
+    logger.info('[CampaignProcessor] Starting campaign query', { campaignId, tenantId });
+    
     // Get campaign - don't filter by tenantId here, use the campaign's own tenant_id from DB
     // This allows scheduled service to process all running campaigns regardless of tenantId passed
     // Per TDD: Use dynamic schema resolution based on tenantId
@@ -129,7 +177,15 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
         throw error;
       }
     }
+    
+    logger.info('[CampaignProcessor] Campaign query result', { 
+      campaignId, 
+      found: campaignResult.rows.length > 0,
+      schema 
+    });
+    
     if (campaignResult.rows.length === 0) {
+      logger.warn('[CampaignProcessor] Campaign not found or not running', { campaignId, tenantId, schema });
       return { success: false, skipped: true, reason: 'Campaign not found or not running', campaignId, leadCount: 0 };
     }
     const campaign = campaignResult.rows[0];
@@ -138,10 +194,20 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
     const executionState = campaign.execution_state || 'active';
     const nextRunAt = campaign.next_run_at;
     const lastLeadCheckAt = campaign.last_lead_check_at;
+    
+    logger.info('[CampaignProcessor] Campaign details', {
+      campaignId,
+      executionState,
+      nextRunAt,
+      lastLeadCheckAt,
+      status: campaign.status
+    });
+    
     // PRODUCTION-GRADE: Check execution state before processing
     // This prevents unnecessary retries and wasted compute
     const now = new Date();
     if (executionState === 'waiting_for_leads') {
+      logger.info('[CampaignProcessor] Campaign in waiting_for_leads state', { campaignId });
       // Check if retry time has been reached
       const retryIntervalHours = process.env.LEAD_RETRY_INTERVAL_HOURS || 6; // Default 6 hours
       const retryIntervalMs = retryIntervalHours * 60 * 60 * 1000;
@@ -176,6 +242,7 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       });
     }
     if (executionState === 'sleeping_until_next_day') {
+      logger.info('[CampaignProcessor] Campaign sleeping until next day', { campaignId, nextRunAt });
       if (nextRunAt) {
         const nextRunTime = new Date(nextRunAt);
         if (now < nextRunTime) {
@@ -194,9 +261,15 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       });
     }
     if (executionState === 'error') {
+      logger.warn('[CampaignProcessor] Campaign in error state, skipping', { campaignId });
       // Error state - log but don't process (user should investigate)
       return { success: false, skipped: true, reason: 'Campaign in error state', campaignId, leadCount: 0 }; // Skip execution
     }
+    
+    logger.info('[CampaignProcessor] Execution state checks passed, proceeding with processing', { 
+      campaignId, 
+      executionState 
+    });
     // Get campaign steps in order
     // Per TDD: Use lad_dev schema and step_order column (fallback to order if step_order doesn't exist)
     let stepsResult;
@@ -235,6 +308,13 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       }
     }
     const steps = stepsResult.rows;
+    
+    logger.info('[CampaignProcessor] Steps retrieved', { 
+      campaignId, 
+      stepsCount: steps.length,
+      stepTypes: steps.map(s => s.step_type || s.type)
+    });
+    
     if (steps.length === 0) {
       // Debug: Check if steps exist with different tenant_id
       try {
@@ -257,10 +337,18 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
     const isInboundCampaign = campaignConfig.campaign_type === 'inbound';
 
     const leadGenerationStep = steps.find(s => (s.step_type || s.type) === 'lead_generation');
+    
+    logger.info('[CampaignProcessor] Lead generation check', { 
+      campaignId,
+      hasLeadGenStep: !!leadGenerationStep,
+      isInbound: isInboundCampaign
+    });
+    
     // Declare leadGenResult outside the if block so it's accessible later
     let leadGenResult = null;
     // Skip lead generation for inbound campaigns - leads are already uploaded
     if (leadGenerationStep && !isInboundCampaign) {
+      logger.info('[CampaignProcessor] Executing lead generation', { campaignId });
       // Parse step config
       let stepWithParsedConfig = { ...leadGenerationStep };
       if (typeof leadGenerationStep.config === 'string') {
@@ -274,10 +362,63 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       } else {
         stepWithParsedConfig.config = {};
       }
+      
+      // Parse leadGenerationFilters if it's a JSON string (UI double-encoding issue)
+      if (stepWithParsedConfig.config.leadGenerationFilters && 
+          typeof stepWithParsedConfig.config.leadGenerationFilters === 'string') {
+        try {
+          stepWithParsedConfig.config.leadGenerationFilters = JSON.parse(stepWithParsedConfig.config.leadGenerationFilters);
+          logger.info('[CampaignProcessor] Parsed leadGenerationFilters from string', {
+            campaignId,
+            parsedFilters: stepWithParsedConfig.config.leadGenerationFilters
+          });
+        } catch (parseErr) {
+          logger.error('[CampaignProcessor] Failed to parse leadGenerationFilters', {
+            campaignId,
+            error: parseErr.message,
+            filterValue: stepWithParsedConfig.config.leadGenerationFilters
+          });
+          stepWithParsedConfig.config.leadGenerationFilters = {};
+        }
+      }
+      
+      // Merge campaign-level config into step config for lead generation
+      // This allows search_filters, apollo_api_key, and daily_lead_limit from campaign config
+      if (campaignConfig) {
+        logger.info('[CampaignProcessor] Campaign config for lead gen', {
+          campaignId,
+          configKeys: Object.keys(campaignConfig),
+          hasSearchFilters: !!campaignConfig.search_filters,
+          campaignConfig: campaignConfig
+        });
+        
+        // If campaign has search_filters, spread them directly (Apollo API format)
+        const campaignSearchFilters = campaignConfig.search_filters || {};
+        
+        stepWithParsedConfig.config = {
+          ...stepWithParsedConfig.config,
+          // Spread all search filter fields directly (q_organization_keyword_tags, organization_num_employees_ranges, etc.)
+          ...campaignSearchFilters,
+          // Only override leadGenerationFilters if campaign has actual search_filters (not empty object)
+          ...(Object.keys(campaignSearchFilters).length > 0 && { leadGenerationFilters: campaignSearchFilters }),
+          // Add daily_lead_limit from campaign config if not in step config
+          ...(campaignConfig.daily_lead_limit && { leadGenerationLimit: campaignConfig.daily_lead_limit }),
+          // Add apollo_api_key from campaign config if not in step config
+          ...(campaignConfig.apollo_api_key && !stepWithParsedConfig.config.apollo_api_key && { apollo_api_key: campaignConfig.apollo_api_key })
+        };
+      }
+      
       // Create a dummy lead object for the initial call to executeStepForLead
       // The actual leads will be generated and saved by executeLeadGeneration
       const dummyLead = { id: null, campaign_id: campaignId }; 
       leadGenResult = await executeStepForLead(campaignId, stepWithParsedConfig, dummyLead, userIdFromCampaign, tenantIdFromCampaign, authToken);
+      
+      logger.info('[CampaignProcessor] Lead generation completed', { 
+        campaignId,
+        success: leadGenResult?.success,
+        leadCount: leadGenResult?.leadCount || 0
+      });
+      
       if (!leadGenResult.success) {
         // Don't return here - continue processing existing leads even if generation failed
       }
@@ -399,6 +540,12 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
     // Return success to signal completion to caller
     return { success: true, campaignId, leadCount: leads.length };
   } catch (error) {
+    logger.error('[CampaignProcessor] processCampaign failed', { 
+      campaignId, 
+      tenantId,
+      error: error.message,
+      stack: error.stack
+    });
     throw error; // Re-throw to properly reject the promise
   }
 }

@@ -119,13 +119,8 @@ class UnipileBaseService {
             }
             return providerId;
         } catch (error) {
-                error: error.message, 
-                status: error.response?.status,
-                responseData: error.response?.data,
-                stack: error.stack 
-            });
             throw error;
         }
     }
 }
-module.exports = UnipileBaseService;
+module.exports = UnipileBaseService;

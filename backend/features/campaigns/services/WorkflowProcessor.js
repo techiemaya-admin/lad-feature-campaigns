@@ -149,18 +149,11 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     // CRITICAL FIX: After executing a step, continue to the next step if successful
     // This ensures the workflow continues through all steps instead of stopping after the first one
     if (stepResult && stepResult.success) {
-        stepId: nextStep.id, 
-        stepType: nextStepType, 
-        leadId: campaignLead.id 
-      });
       // Find the index of the current step
       const currentStepIndex = steps.findIndex(s => s.id === nextStep.id);
       // If there are more steps, recursively process them
       if (currentStepIndex >= 0 && currentStepIndex < steps.length - 1) {
         const remainingSteps = steps.slice(currentStepIndex + 1);
-          remainingCount: remainingSteps.length, 
-          nextStepType: remainingSteps[0]?.step_type || remainingSteps[0]?.type 
-        });
         // Recursively process remaining steps
         await processLeadThroughWorkflow(campaign, remainingSteps, campaignLead, userId, tenantId, authToken);
       } else {
@@ -172,11 +165,6 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
       }
     } else {
       // Step failed - log error but don't stop workflow (some steps might fail but workflow should continue)
-        stepId: nextStep.id, 
-        stepType: nextStepType, 
-        error: stepResult?.error,
-        leadId: campaignLead.id 
-      });
       // Even if step fails, try to continue to next step (user can retry failed steps later)
       const currentStepIndex = steps.findIndex(s => s.id === nextStep.id);
       if (currentStepIndex >= 0 && currentStepIndex < steps.length - 1) {
