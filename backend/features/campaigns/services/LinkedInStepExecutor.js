@@ -96,9 +96,6 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
           })
           .first();
         if (!connectionCheck) {
-            leadName: employee.fullname,
-            leadId: campaignLead.lead_id || campaignLead.id 
-          });
           // Track as skipped (not failed, just waiting for acceptance)
           await campaignStatsTracker.trackAction(campaignLead.campaign_id, 'MESSAGE_SKIPPED', {
             leadId: campaignLead.lead_id || campaignLead.id,
@@ -240,4 +237,4 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
 }
 module.exports = {
   executeLinkedInStep
-};
+};

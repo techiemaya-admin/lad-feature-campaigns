@@ -3,7 +3,7 @@
  * Atomically updates campaign stats and emits real-time events
  * WITHOUT modifying database schema
  */
-const { db } = require('../../../shared/database/connection');
+const { pool } = require('../../../shared/database/connection');
 const { campaignEventsService } = require('./campaignEventsService');
 class CampaignStatsTracker {
   /**
@@ -164,17 +164,22 @@ class CampaignStatsTracker {
   async getStats(campaignId) {
     try {
       // Get total leads count from campaign_leads table
-      const leadsResult = await db('campaign_leads')
-        .where({ campaign_id: campaignId })
-        .count('* as count');
-      const totalLeads = parseInt(leadsResult[0]?.count || 0);
+      const leadsResult = await pool.query(
+        'SELECT COUNT(*) as count FROM campaign_leads WHERE campaign_id = $1',
+        [campaignId]
+      );
+      const totalLeads = parseInt(leadsResult.rows[0]?.count || 0);
+      
       // Get stats from campaign_analytics with platform breakdown
       // ✅ Only count successful actions (status = 'success')
-      const analyticsStats = await db('campaign_analytics')
-        .select('action_type', 'platform')
-        .count('* as count')
-        .where({ campaign_id: campaignId, status: 'success' })
-        .groupBy('action_type', 'platform');
+      const analyticsResult = await pool.query(
+        `SELECT action_type, platform, COUNT(*) as count 
+         FROM campaign_analytics 
+         WHERE campaign_id = $1 AND status = $2 
+         GROUP BY action_type, platform`,
+        [campaignId, 'success']
+      );
+      const analyticsStats = analyticsResult.rows;
       // Build platform metrics
       const platformMetrics = {
         linkedin: { sent: 0, connected: 0, replied: 0, profile_views: 0 },

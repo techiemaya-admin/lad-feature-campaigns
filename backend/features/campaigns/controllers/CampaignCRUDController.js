@@ -209,10 +209,51 @@ class CampaignCRUDController {
         config: campaignConfig,
         inbound_lead_ids  // Pass inbound lead IDs to model
       }, tenantId);
+      
+      logger.info('[CampaignCreate] Campaign created', { 
+        campaignId: campaign.id, 
+        tenantId,
+        hasSteps: !!(steps && Array.isArray(steps) && steps.length > 0),
+        stepsCount: steps?.length || 0
+      });
+      
       // Create steps if provided
       let createdSteps = [];
       if (steps && Array.isArray(steps) && steps.length > 0) {
-        createdSteps = await CampaignStepModel.bulkCreate(campaign.id, tenantId, steps);
+        try {
+          // Map step_type to type and step_order to order for database compatibility
+          const mappedSteps = steps.map(step => ({
+            ...step,
+            type: step.step_type || step.type,
+            order: step.step_order ?? step.order ?? 0
+          }));
+          
+          logger.debug('[CampaignCreate] Creating campaign steps', { 
+            campaignId: campaign.id,
+            stepCount: mappedSteps.length,
+            stepTypes: mappedSteps.map(s => s.type)
+          });
+          createdSteps = await CampaignStepModel.bulkCreate(campaign.id, tenantId, mappedSteps);
+          logger.info('[CampaignCreate] Steps created successfully', { 
+            campaignId: campaign.id,
+            createdCount: createdSteps.length 
+          });
+        } catch (stepError) {
+          logger.error('[CampaignCreate] Failed to create campaign steps', {
+            error: stepError.message,
+            stack: stepError.stack,
+            campaignId: campaign.id,
+            stepCount: steps.length
+          });
+          // Continue anyway - campaign is created, just without steps
+        }
+      } else {
+        logger.warn('[CampaignCreate] No steps provided or steps array is empty', {
+          campaignId: campaign.id,
+          stepsType: typeof steps,
+          isArray: Array.isArray(steps),
+          stepsLength: steps?.length
+        });
       }
       // NOTE: Inbound leads are already linked by CampaignModel.create() when inbound_lead_ids is passed
       // No need to link them again here to avoid duplicates
@@ -247,6 +288,12 @@ class CampaignCRUDController {
             }
           })
           .catch(err => {
+            logger.error('[CampaignCreate] Campaign processing failed', { 
+              campaignId: campaign.id,
+              tenantId,
+              error: err.message,
+              stack: err.stack
+            });
 
             // Even on error, try to emit SSE so UI shows current state
             campaignStatsTracker.getStats(campaign.id)

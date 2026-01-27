@@ -60,10 +60,7 @@ class UnipileAccountReconnectionService {
                 { headers, timeout: 10000 }
             );
             const accountData = response.data?.data || response.data || {};
-                accountId, 
-                hasCheckpoint: !!accountData.checkpoint,
-                state: accountData.state || accountData.status 
-            });
+            
             return {
                 valid: true,
                 hasCheckpoint: !!accountData.checkpoint,
@@ -77,10 +74,6 @@ class UnipileAccountReconnectionService {
             if (error.response?.status === 404) {
                 return { valid: false, reason: 'not_found' };
             }
-                accountId, 
-                error: error.message,
-                statusCode: error.response?.status 
-            });
             return { valid: false, reason: 'error', error: error.message };
         }
     }
@@ -92,15 +85,9 @@ class UnipileAccountReconnectionService {
     async attemptReconnect(accountId) {
         const attemptNumber = this.incrementAttemptCounter(accountId);
         if (!this.canAttemptReconnect(accountId)) {
-                accountId, 
-                maxAttempts: this.MAX_RECONNECTION_ATTEMPTS 
-            });
             return { success: false, reason: 'max_attempts_exceeded' };
         }
-            accountId, 
-            attemptNumber, 
-            maxAttempts: this.MAX_RECONNECTION_ATTEMPTS 
-        });
+        
         try {
             // Check if account is still valid in Unipile
             const status = await this.getAccountStatus(accountId);
@@ -123,15 +110,8 @@ class UnipileAccountReconnectionService {
                 return { success: false, reason: 'account_not_found', markedExpired: true };
             }
             // For other errors, just log and allow retry
-                accountId, 
-                attemptNumber 
-            });
             return { success: false, reason: 'retry_needed', attemptNumber };
         } catch (error) {
-                accountId, 
-                attemptNumber, 
-                error: error.message 
-            });
             return { success: false, reason: 'error', error: error.message, attemptNumber };
         }
     }
@@ -151,15 +131,9 @@ class UnipileAccountReconnectionService {
                 [accountId]
             );
             if (result.rowCount > 0) {
-                    accountId, 
-                    updatedRows: result.rowCount 
-                });
             } else {
             }
         } catch (error) {
-                accountId, 
-                error: error.message 
-            });
         }
     }
     /**
@@ -192,10 +166,6 @@ class UnipileAccountReconnectionService {
      * @returns {Object} - Reconnection result
      */
     async handle401Error(accountId, originalError, retryFn = null) {
-            accountId,
-            errorMessage: originalError?.message,
-            hasRetryFunction: !!retryFn
-        });
         // Attempt reconnection
         const reconnectResult = await this.attemptReconnect(accountId);
         if (reconnectResult.success || reconnectResult.reason === 'account_valid') {
@@ -205,9 +175,6 @@ class UnipileAccountReconnectionService {
                     const retryResult = await retryFn();
                     return { success: true, retried: true, result: retryResult };
                 } catch (retryError) {
-                        accountId, 
-                        error: retryError.message 
-                    });
                     return { success: false, retried: true, reason: 'retry_failed', error: retryError.message };
                 }
             }
@@ -229,9 +196,6 @@ class UnipileAccountReconnectionService {
             };
         }
         // Retry logic: on transient errors, don't fail immediately
-            accountId, 
-            attemptNumber: reconnectResult.attemptNumber 
-        });
         return { 
             success: false, 
             reason: 'transient_error',

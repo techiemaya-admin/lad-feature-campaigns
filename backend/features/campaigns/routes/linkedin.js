@@ -14,11 +14,6 @@ router.get('/status', jwtAuth, async (req, res) => {
     const tenantId = req.user.tenantId || req.user.userId;
     const accounts = await linkedInIntegrationService.getUserLinkedInAccounts(tenantId);
     if (accounts.length > 0) {
-        id: accounts[0].id,
-        unipileAccountId: accounts[0].unipileAccountId,
-        isActive: accounts[0].isActive,
-        accountName: accounts[0].accountName
-      });
     }
     // Build connections array for frontend (matching pluto_campaigns format)
     // Frontend expects: { connections: [...], connected: boolean, status: string }
@@ -46,24 +41,7 @@ router.get('/status', jwtAuth, async (req, res) => {
     });
     const hasConnected = connections.some(conn => conn.connected);
     const primaryStatus = connections.length > 0 ? connections[0].status : 'disconnected';
-      connected: hasConnected,
-      status: primaryStatus,
-      totalConnections: connections.length,
-      connections: connections.map(c => ({ 
-        id: c.id, 
-        unipileAccountId: c.unipileAccountId, 
-        status: c.status, 
-        connected: c.connected,
-        profileName: c.profileName
-      }))
-    });
-      accounts: accounts.map(a => ({
-        id: a.id,
-        unipileAccountId: a.unipileAccountId,
-        isActive: a.isActive,
-        accountName: a.accountName
-      }))
-    });
+    
     // Return format matching frontend expectations (like pluto_campaigns)
     res.json({
       connected: hasConnected,
@@ -156,11 +134,6 @@ router.post('/disconnect', jwtAuth, async (req, res) => {
     const connectionId = req.body.connection_id || req.query.connection_id || req.body.connectionId || req.query.connectionId;
     const unipileAccountId = req.body.unipileAccountId || req.query.unipileAccountId || req.body.unipile_account_id || req.headers['x-unipile-account-id'];
     const accountId = req.body.accountId || req.query.accountId || req.headers['x-account-id'];
-      connectionId,
-      unipileAccountId,
-      accountId,
-      tenantId
-    });
     // If connection_id is provided (database UUID), look up the unipile_account_id
     let targetUnipileAccountId = unipileAccountId || accountId;
     if (connectionId && !targetUnipileAccountId) {

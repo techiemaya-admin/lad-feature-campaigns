@@ -64,12 +64,7 @@ function extractLinkedInProfileUrl(unipileResponse) {
       return constructedUrl;
     }
   }
-    responseKeys: Object.keys(unipileResponse),
-    profileKeys: unipileResponse.profile ? Object.keys(unipileResponse.profile) : null,
-    connectionParamsKeys: unipileResponse.connection_params ? Object.keys(unipileResponse.connection_params) : null,
-    imKeys: unipileResponse.connection_params?.im ? Object.keys(unipileResponse.connection_params.im) : null,
-    publicIdentifier: unipileResponse.connection_params?.im?.publicIdentifier
-  });
+  
   return null;
 }
 /**
@@ -140,4 +135,4 @@ module.exports = {
   extractLinkedInProfileUrl,
   detectCheckpoint,
   extractCheckpointInfo
-};
+};

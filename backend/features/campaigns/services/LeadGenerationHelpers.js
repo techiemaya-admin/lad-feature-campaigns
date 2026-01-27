@@ -5,6 +5,7 @@
 
 const { pool } = require('../../../shared/database/connection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
+const logger = require('../../../core/utils/logger');
 /**
  * Check if lead already exists in campaign
  */
@@ -56,6 +57,29 @@ function createSnapshot(fields) {
  */
 async function saveLeadToCampaign(campaignId, tenantId, leadId, snapshot, leadData, req = null) {
   const schema = getSchema(null);
+  
+  // Verify lead exists before trying to insert campaign_lead
+  const verifyResult = await pool.query(
+    `SELECT id FROM ${schema}.leads WHERE tenant_id = $1 AND id = $2`,
+    [tenantId, leadId]
+  );
+  
+  if (verifyResult.rows.length === 0) {
+    const error = new Error(`Lead ${leadId} not found in leads table for tenant ${tenantId}`);
+    logger.error('[saveLeadToCampaign] Lead verification failed', {
+      tenantId,
+      leadId,
+      campaignId
+    });
+    throw error;
+  }
+  
+  logger.info('[saveLeadToCampaign] Lead verified, inserting campaign_lead', {
+    tenantId,
+    leadId,
+    campaignId
+  });
+  
   const insertResult = await pool.query(
     `INSERT INTO ${schema}.campaign_leads 
      (tenant_id, campaign_id, lead_id, status, snapshot, lead_data, created_at)

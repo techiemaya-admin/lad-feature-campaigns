@@ -221,10 +221,6 @@ class UnipileProfileService {
             const profileData = response.data;
             // Debug: Log contact_info structure
             if (profileData.contact_info) {
-                    keys: Object.keys(profileData.contact_info),
-                    phonesLength: profileData.contact_info.phones?.length || 0,
-                    phoneNumbersLength: profileData.contact_info.phone_numbers?.length || 0
-                });
             }
             // Extract contact information from profile
             const emails = profileData.contact_info?.emails || [];
@@ -278,10 +274,6 @@ class UnipileProfileService {
                 }
             };
         } catch (error) {
-                error: error.message, 
-                status: error.response?.status, 
-                responseData: error.response?.data 
-            });
             // Return failure so caller can fallback to other methods (e.g., Apollo)
             return {
                 success: false,
@@ -292,4 +284,4 @@ class UnipileProfileService {
         }
     }
 }
-module.exports = UnipileProfileService;
+module.exports = UnipileProfileService;

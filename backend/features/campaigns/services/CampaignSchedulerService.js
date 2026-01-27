@@ -54,8 +54,6 @@ class CampaignSchedulerService {
       `;
             const result = await pool.query(query);
             if (result.rows.length > 0) {
-                    campaigns: result.rows.map(c => c.id)
-                });
                 for (const campaign of result.rows) {
                     // Process each campaign
                     // Serial execution to prevent overwhelming the database
@@ -68,14 +66,7 @@ class CampaignSchedulerService {
                         try {
                             const stats = await campaignStatsTracker.getStats(campaign.id);
                             await campaignEventsService.publishCampaignListUpdate(campaign.id, stats);
-                                campaignId: campaign.id, 
-                                leads: stats.leads_count, 
-                                sent: stats.sent_count 
-                            });
                         } catch (sseError) {
-                                campaignId: campaign.id, 
-                                error: sseError.message 
-                            });
                         }
                     } catch (err) {
                     }
