@@ -12,6 +12,10 @@ const {
 } = require('./LinkedInAccountHelper');
 const { generateAndSaveProfileSummary } = require('./LinkedInProfileSummaryService');
 const { campaignStatsTracker } = require('./campaignStatsTracker');
+const ApolloRevealService = require('../../apollo-leads/services/ApolloRevealService');
+const CampaignLeadRepository = require('../repositories/CampaignLeadRepository');
+const logger = require('../../../core/utils/logger');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 /**
  * Execute LinkedIn step
  */
@@ -22,15 +26,114 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
     if (!leadData) {
       return { success: false, error: 'Lead not found' };
     }
-    const linkedinUrl = leadData.linkedin_url 
+    let linkedinUrl = leadData.linkedin_url 
       || leadData.employee_linkedin_url
       || (leadData.employee_data && typeof leadData.employee_data === 'string' 
           ? JSON.parse(leadData.employee_data).linkedin_url 
           : leadData.employee_data?.linkedin_url)
       || (leadData.employee_data && leadData.employee_data.linkedin)
       || (leadData.employee_data && leadData.employee_data.profile_url);
-    if (!linkedinUrl) {
-      return { success: false, error: 'LinkedIn URL not found for lead' };
+
+    // ===== ENRICHMENT: MOVED BEFORE LINKEDIN URL CHECK =====
+    // Automatically enrich lead BEFORE checking for LinkedIn URL
+    // This ensures we have email and LinkedIn URL available
+    let enrichedEmail = null;
+    let enrichedLinkedInUrl = linkedinUrl;
+    
+    // Extract apollo_person_id from leadData (stored as 'id' in lead_data JSONB from Apollo)
+    const apolloPersonId = leadData.id  // Apollo person ID is stored as 'id' in lead_data
+      || leadData.apollo_person_id 
+      || (leadData.employee_data && typeof leadData.employee_data === 'string' 
+          ? JSON.parse(leadData.employee_data).id || JSON.parse(leadData.employee_data).apollo_person_id
+          : (leadData.employee_data?.id || leadData.employee_data?.apollo_person_id))
+      || (leadData.lead_data && typeof leadData.lead_data === 'string'
+          ? JSON.parse(leadData.lead_data).id || JSON.parse(leadData.lead_data).apollo_person_id
+          : (leadData.lead_data?.id || leadData.lead_data?.apollo_person_id));
+    
+    logger.info('[LinkedInStepExecutor] Enrichment check - leadData content', {
+      campaignLeadId: campaignLead.id,
+      leadDataKeys: Object.keys(leadData),
+      leadDataId: leadData.id,
+      leadDataApolloPersonId: leadData.apollo_person_id,
+      apolloPersonId,
+      hasApolloApiKey: !!process.env.APOLLO_API_KEY
+    });
+
+    if (apolloPersonId && process.env.APOLLO_API_KEY) {
+      try {
+        logger.info('[LinkedInStepExecutor] Starting automatic enrichment before visit profile', {
+          campaignLeadId: campaignLead.id,
+          personId: apolloPersonId,
+          employeeName: leadData.name || leadData.employee_name
+        });
+
+        const revealService = new ApolloRevealService(process.env.APOLLO_API_KEY, 'https://api.apollo.io/v1');
+        const enrichResult = await revealService.revealEmail(apolloPersonId, leadData.name || leadData.employee_name, null, tenantId);
+
+        logger.info('[LinkedInStepExecutor] Enrichment API response', {
+          campaignLeadId: campaignLead.id,
+          hasEmail: !!enrichResult.email,
+          hasLinkedIn: !!enrichResult.linkedin_url,
+          email: enrichResult.email,
+          creditsUsed: enrichResult.credits_used,
+          fullResponse: enrichResult
+        });
+
+        if (enrichResult.email || enrichResult.linkedin_url) {
+          logger.info('[LinkedInStepExecutor] Lead enriched successfully before visit profile', {
+            campaignLeadId: campaignLead.id,
+            hasEmail: !!enrichResult.email,
+            hasLinkedIn: !!enrichResult.linkedin_url,
+            creditsUsed: enrichResult.credits_used
+          });
+
+          enrichedEmail = enrichResult.email;
+          if (enrichResult.linkedin_url) {
+            enrichedLinkedInUrl = enrichResult.linkedin_url;
+            linkedinUrl = enrichedLinkedInUrl;  // Update linkedinUrl so it passes the check below
+          }
+
+          // Update the campaign lead with enriched data via repository
+          const updateResult = await CampaignLeadRepository.updateEnrichedData(
+            campaignLead.id,
+            enrichedEmail,
+            enrichedLinkedInUrl,
+            tenantId,
+            getSchema(null)
+          );
+          
+          logger.info('[LinkedInStepExecutor] Updated enriched data in database', {
+            campaignLeadId: campaignLead.id,
+            rowsUpdated: updateResult,
+            email: enrichedEmail,
+            linkedinUrl: enrichedLinkedInUrl
+          });
+        } else {
+          logger.warn('[LinkedInStepExecutor] No enrichment data returned', {
+            campaignLeadId: campaignLead.id,
+            apolloPersonId
+          });
+        }
+      } catch (enrichErr) {
+        logger.error('[LinkedInStepExecutor] Error enriching lead before visit profile', {
+          campaignLeadId: campaignLead.id,
+          apolloPersonId,
+          error: enrichErr.message,
+          stack: enrichErr.stack
+        });
+        // Continue with original LinkedIn URL if enrichment fails
+      }
+    } else {
+      logger.warn('[LinkedInStepExecutor] Enrichment skipped - missing apolloPersonId or APOLLO_API_KEY', {
+        campaignLeadId: campaignLead.id,
+        apolloPersonId,
+        hasApolloApiKey: !!process.env.APOLLO_API_KEY
+      });
+    }
+    // ===== END OF ENRICHMENT CODE =====
+
+    if (!linkedinUrl && !enrichedLinkedInUrl) {
+      return { success: false, error: 'LinkedIn URL not found for lead and could not be revealed by enrichment' };
     }
     // Get LinkedIn account with Unipile account ID (using helper)
     const linkedinAccountId = await getLinkedInAccountForExecution(tenantId, userId);
@@ -141,9 +244,12 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
       } catch (trackErr) {
       }
     } else if (stepType === 'linkedin_visit') {
+      // Enrichment already happened at the top of this function
+      // enrichedLinkedInUrl and enrichedEmail variables contain the results
+      
       // Validate inputs before making API call
-      if (!linkedinUrl) {
-        result = { success: false, error: 'LinkedIn URL is required' };
+      if (!enrichedLinkedInUrl) {
+        result = { success: false, error: 'LinkedIn URL is required and could not be revealed by enrichment' };
         return result;
       }
       if (!linkedinAccountId) {
@@ -156,9 +262,10 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
         return result;
       }
       // Use Unipile profile lookup as a real "visit" and to hydrate contact info
+      // Use enrichedLinkedInUrl which may have been updated by enrichment
       try {
         const startTime = Date.now();
-        const profileResult = await unipileService.getLinkedInContactDetails(linkedinUrl, linkedinAccountId);
+        const profileResult = await unipileService.getLinkedInContactDetails(enrichedLinkedInUrl, linkedinAccountId);
         const duration = Date.now() - startTime;
         // Check if account credentials expired or requires user intervention
         if (profileResult && (profileResult.accountExpired || profileResult.statusCode === 401)) {
@@ -206,6 +313,14 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
           // After successfully visiting profile, generate summary automatically
           const profileData = profileResult.profile || profileResult;
           await generateAndSaveProfileSummary(campaignLead.id, leadData, profileData, employee);
+          
+          // Include enriched data in response if available
+          if (enrichedEmail || enrichedLinkedInUrl !== linkedinUrl) {
+            result.enrichment = {
+              email: enrichedEmail,
+              linkedin_url: enrichedLinkedInUrl
+            };
+          }
         } else {
           result = {
             success: false,

@@ -37,6 +37,7 @@ router.get('/:id/leads/:leadId/summary', jwtAuth, validateUuidParam('id'), valid
 router.post('/:id/leads/:leadId/summary', jwtAuth, validateUuidParam('id'), validateUuidParam('leadId'), CampaignLeadsSummaryController.generateLeadSummary);
 router.post('/:id/leads/:leadId/reveal-email', jwtAuth, validateUuidParam('id'), validateUuidParam('leadId'), CampaignLeadsRevealController.revealLeadEmail);
 router.post('/:id/leads/:leadId/reveal-phone', jwtAuth, validateUuidParam('id'), validateUuidParam('leadId'), CampaignLeadsRevealController.revealLeadPhone);
+router.post('/:id/leads/:leadId/reveal-linkedin', jwtAuth, validateUuidParam('id'), validateUuidParam('leadId'), CampaignLeadsRevealController.revealLeadLinkedIn);
 // Campaign analytics (new campaign_analytics table)
 router.get('/:id/analytics', jwtAuth, validateUuidParam('id'), CampaignAnalyticsController.getCampaignAnalytics);
 router.get('/:id/analytics/summary', jwtAuth, validateUuidParam('id'), CampaignAnalyticsController.getCampaignAnalyticsSummary);

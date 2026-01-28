@@ -4,7 +4,7 @@
  */
 
 const { getSchema } = require('../../../core/utils/schemaHelper');
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../../../config/database');
 class CampaignLeadActivityRepository {
   /**
    * Create a new activity

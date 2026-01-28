@@ -103,6 +103,9 @@ class CampaignLeadsController {
               : (leadData.photo_url || leadData.employee_photo_url || leadData.avatar || snapshot.photo_url || null),
             profile_summary: profileSummary,
             apollo_person_id: apolloPersonId, // Include apollo_person_id for reveal functionality (only outbound)
+            // Include enriched fields for checking if email/linkedin is already revealed
+            enriched_email: row.enriched_email || null,
+            enriched_linkedin_url: row.enriched_linkedin_url || null,
             created_at: row.created_at,
             updated_at: row.updated_at
           };

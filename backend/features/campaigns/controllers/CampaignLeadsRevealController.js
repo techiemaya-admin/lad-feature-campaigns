@@ -92,12 +92,34 @@ class CampaignLeadsRevealController {
   /**
    * POST /api/campaigns/:id/leads/:leadId/reveal-email
    * Reveal email for a campaign lead using Apollo API
+   * OPTIMIZATION: Check campaign_leads.enriched_email first to avoid unnecessary API calls and credit deductions
    */
   static async revealLeadEmail(req, res) {
     try {
       const tenantId = req.user.tenantId;
       const { id: campaignId, leadId } = req.params;
       const { apollo_person_id } = req.body;
+      const schema = getSchema(req);
+
+      // STEP 1: Check if email is already enriched in campaign_leads table
+      const lead = await CampaignLeadModel.getLeadById(leadId, campaignId, tenantId, schema);
+      if (lead && lead.enriched_email) {
+        logger.info('[Campaign Reveal] Email already enriched in database - no credits deducted', {
+          leadId,
+          campaignId,
+          tenantId
+        });
+        
+        return res.json({
+          success: true,
+          email: lead.enriched_email,
+          from_cache: true,
+          from_database: true,
+          credits_used: 0
+        });
+      }
+
+      // STEP 2: Email not in database, proceed with Apollo API
       if (!apollo_person_id) {
         return res.status(400).json({
           success: false,
@@ -132,6 +154,7 @@ class CampaignLeadsRevealController {
         success: true,
         email: email,
         from_cache: from_cache,
+        from_database: false,
         credits_used: credits_used
       });
     } catch (error) {
@@ -195,6 +218,85 @@ class CampaignLeadsRevealController {
       res.status(500).json({
         success: false,
         error: 'Failed to reveal phone',
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * POST /api/campaigns/:id/leads/:leadId/reveal-linkedin
+   * Reveal LinkedIn URL for a campaign lead
+   * OPTIMIZATION: Check campaign_leads.enriched_linkedin_url first to avoid unnecessary API calls
+   */
+  static async revealLeadLinkedIn(req, res) {
+    try {
+      const tenantId = req.user.tenantId;
+      const { id: campaignId, leadId } = req.params;
+      const schema = getSchema(req);
+
+      // STEP 1: Check if LinkedIn URL is already enriched in campaign_leads table
+      const lead = await CampaignLeadModel.getLeadById(leadId, campaignId, tenantId, schema);
+      if (lead && lead.enriched_linkedin_url) {
+        logger.info('[Campaign Reveal] LinkedIn URL already enriched in database - no credits deducted', {
+          leadId,
+          campaignId,
+          tenantId
+        });
+        
+        return res.json({
+          success: true,
+          linkedin_url: lead.enriched_linkedin_url,
+          from_cache: true,
+          from_database: true,
+          credits_used: 0
+        });
+      }
+
+      // STEP 2: Check lead_data for LinkedIn URL (might be in snapshot/lead_data but not in enriched_linkedin_url)
+      if (lead) {
+        let leadData = {};
+        let snapshot = {};
+        try {
+          leadData = typeof lead.lead_data === 'string' ? JSON.parse(lead.lead_data || '{}') : (lead.lead_data || {});
+          snapshot = typeof lead.snapshot === 'string' ? JSON.parse(lead.snapshot || '{}') : (lead.snapshot || {});
+        } catch (e) {
+          // Continue if parsing fails
+        }
+
+        const linkedinUrl = snapshot.linkedin_url || leadData.linkedin_url || leadData.employee_linkedin_url || leadData.linkedin || null;
+        if (linkedinUrl) {
+          logger.info('[Campaign Reveal] LinkedIn URL found in lead_data - no credits deducted', {
+            leadId,
+            campaignId,
+            tenantId
+          });
+          
+          return res.json({
+            success: true,
+            linkedin_url: linkedinUrl,
+            from_cache: true,
+            from_lead_data: true,
+            credits_used: 0
+          });
+        }
+      }
+
+      // STEP 3: LinkedIn URL not found in database
+      return res.json({
+        success: false,
+        error: 'LinkedIn URL not available for this lead',
+        credits_used: 0
+      });
+    } catch (error) {
+      logger.error('[Campaign Reveal] Failed to reveal LinkedIn URL', {
+        error: error.message,
+        leadId: req.params.leadId,
+        campaignId: req.params.id
+      });
+      
+      res.status(500).json({
+        success: false,
+        error: 'Failed to reveal LinkedIn URL',
         message: error.message
       });
     }
