@@ -3,7 +3,7 @@
  * SQL queries only - no business logic
  */
 
-const { pool } = require('../../../config/database');
+const { pool } = require('../utils/dbConnection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const { randomUUID } = require('crypto');
 class CampaignLeadRepository {
@@ -322,41 +322,6 @@ class CampaignLeadRepository {
         error: error.message
       });
       return null;
-    }
-  }
-
-  /**
-   * Update enrichment data for a campaign lead
-   * @param {string} campaignLeadId - Campaign lead ID
-   * @param {string} enrichedEmail - Email from Apollo enrichment
-   * @param {string} enrichedLinkedInUrl - LinkedIn URL from Apollo enrichment
-   * @param {string} tenantId - Tenant ID
-   * @param {string} schema - Database schema (optional)
-   * @returns {number} Number of rows affected
-   */
-  static async updateEnrichedData(campaignLeadId, enrichedEmail, enrichedLinkedInUrl, tenantId, schema = 'lad_dev') {
-    const query = `
-      UPDATE ${schema}.campaign_leads 
-      SET enriched_email = $1, enriched_linkedin_url = $2, enriched_at = NOW()
-      WHERE id = $3 AND tenant_id = $4
-    `;
-    
-    try {
-      const result = await pool.query(query, [
-        enrichedEmail,
-        enrichedLinkedInUrl,
-        campaignLeadId,
-        tenantId
-      ]);
-      return result.rowCount;
-    } catch (error) {
-      const logger = require('../../../core/utils/logger');
-      logger.error('[CampaignLeadRepository.updateEnrichedData] Error', {
-        campaignLeadId,
-        tenantId,
-        error: error.message
-      });
-      throw error;
     }
   }
 }

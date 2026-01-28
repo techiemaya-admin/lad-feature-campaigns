@@ -19,8 +19,8 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
   try {
     // Find the last successfully completed step for this lead
     // This ensures we don't re-execute steps that were already completed
-    // LAD Architecture: Get schema from tenant context - use default schema since req is not available
-    const schema = 'lad_dev';
+    // LAD Architecture: Get schema from tenant context
+    const schema = getSchema(req);
     const lastSuccessfulActivityResult = await pool.query(
       `SELECT step_id, status, created_at FROM ${schema}.campaign_lead_activities 
        WHERE campaign_lead_id = $1 
@@ -173,14 +173,6 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
       }
     }
   } catch (error) {
-    const logger = require('../../../core/utils/logger');
-    logger.error('[WorkflowProcessor] Error processing lead through workflow', {
-      campaignId: campaign?.id,
-      campaignLeadId: campaignLead?.id,
-      error: error.message,
-      stack: error.stack
-    });
-    // Don't re-throw - allow the workflow to continue for other leads
   }
 }
 module.exports = {

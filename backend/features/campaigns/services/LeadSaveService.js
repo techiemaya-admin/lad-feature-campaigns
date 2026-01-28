@@ -65,17 +65,16 @@ async function saveLeadsToCampaign(campaignId, tenantId, employees) {
         // Create clean leadData object with only necessary fields
         // Support both Unipile and Apollo field names
         // For Apollo leads, linkedin_url might be nested in employee_data
-        let linkedinUrlValue = employee.linkedin_url || employee.linkedin_profile_url || employee.profile_url || employee.linkedin || employee.public_profile_url;
+        let linkedinUrlValue = employee.linkedin_url || employee.linkedin || employee.profile_url || employee.public_profile_url;
         // If not found at top level, check in employee_data (Apollo structure)
         if (!linkedinUrlValue && employee.employee_data) {
           const employeeDataObj = typeof employee.employee_data === 'string' 
             ? JSON.parse(employee.employee_data) 
             : employee.employee_data;
-          linkedinUrlValue = employeeDataObj.linkedin_url || employeeDataObj.linkedin_profile_url || employeeDataObj.profile_url || employeeDataObj.linkedin;
+          linkedinUrlValue = employeeDataObj.linkedin_url || employeeDataObj.linkedin || employeeDataObj.profile_url;
         }
         const leadData = {
-          id: sourceId,  // Explicitly set id to the source person ID (Apollo ID)
-          apollo_person_id: sourceId, // Also set apollo_person_id for enrichment lookups
+          id: sourceId,  // Explicitly set id to the source person ID
           name: employee.name || employee.employee_name,
           first_name: employee.first_name,
           last_name: employee.last_name,

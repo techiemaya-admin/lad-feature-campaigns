@@ -3,7 +3,7 @@
  * SQL queries only - no business logic
  */
 
-const { pool } = require('../../../config/database');
+const { pool } = require('../utils/dbConnection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const logger = require('../../../core/utils/logger');
 class CampaignRepository {

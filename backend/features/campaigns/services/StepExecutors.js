@@ -4,7 +4,6 @@
  */
 const { pool } = require('../../../shared/database/connection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
-const CampaignLeadDataRepository = require('../repositories/CampaignLeadDataRepository');
 const axios = require('axios');
 const BACKEND_URL = process.env.BACKEND_INTERNAL_URL || process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL;
 if (!BACKEND_URL) {
@@ -17,44 +16,75 @@ if (!BACKEND_URL) {
 // Per TDD: Use dynamic schema
 async function getLeadData(campaignLeadId, req = null, tenantId = null) {
   try {
-    const schema = req ? getSchema(req) : 'lad_dev';
+    const schema = getSchema(req);
     // Get tenant_id from req or parameter
     const actualTenantId = tenantId || req?.user?.tenant_id || req?.user?.tenantId;
-    
-    // LAD Architecture: Use repository for data access
-    let row;
+    let leadDataResult;
+    // If we have tenantId, use it for tenant-scoped query
     if (actualTenantId) {
-      row = await CampaignLeadDataRepository.getLeadDataById(campaignLeadId, actualTenantId, req);
+      try {
+        // First try to get campaign_lead with lead_id
+        leadDataResult = await pool.query(
+          `SELECT cl.lead_data, cl.snapshot, cl.tenant_id, cl.lead_id
+           FROM ${schema}.campaign_leads cl
+           WHERE cl.id = $1 AND cl.tenant_id = $2 AND cl.is_deleted = FALSE`,
+          [campaignLeadId, actualTenantId]
+        );
+      } catch (err) {
+        // If is_deleted column doesn't exist, try without it
+        if (err.message && err.message.includes('is_deleted')) {
+          leadDataResult = await pool.query(
+            `SELECT cl.lead_data, cl.snapshot, cl.tenant_id, cl.lead_id
+             FROM ${schema}.campaign_leads cl
+             WHERE cl.id = $1 AND cl.tenant_id = $2`,
+            [campaignLeadId, actualTenantId]
+          );
+        } else {
+          throw err;
+        }
+      }
     } else {
-      // Legacy fallback (less secure)
-      row = await CampaignLeadDataRepository.getLeadDataByIdLegacy(campaignLeadId, req);
+      // No tenantId provided - try to get lead by ID only (less secure, but allows backward compatibility)
+      // This should only happen in legacy code paths
+      try {
+        leadDataResult = await pool.query(
+          `SELECT cl.lead_data, cl.snapshot, cl.tenant_id, cl.lead_id
+           FROM ${schema}.campaign_leads cl
+           WHERE cl.id = $1 AND cl.is_deleted = FALSE`,
+          [campaignLeadId]
+        );
+      } catch (err) {
+        if (err.message && err.message.includes('is_deleted')) {
+          leadDataResult = await pool.query(
+            `SELECT cl.lead_data, cl.snapshot, cl.tenant_id, cl.lead_id
+             FROM ${schema}.campaign_leads cl
+             WHERE cl.id = $1`,
+            [campaignLeadId]
+          );
+        } else {
+          throw err;
+        }
+      }
     }
-    
-    if (!row) {
+    if (leadDataResult.rows.length === 0) {
       return null;
     }
+    const row = leadDataResult.rows[0];
     // PRIORITY: For inbound campaigns, fetch data from leads table using lead_id
     // For outbound campaigns (Apollo scraping), use lead_data from campaign_leads
     let leadData;
     if (row.lead_id) {
-      // Inbound campaign: Try to fetch lead data from leads table using repository
+      // Inbound campaign: Try to fetch lead data from leads table
       try {
-        const leadRecord = await CampaignLeadDataRepository.getLeadFromLeadsTable(
-          row.lead_id,
-          row.tenant_id,
-          req
+        const leadsTableResult = await pool.query(
+          `SELECT first_name, last_name, email, linkedin_url, company_name, title, phone 
+           FROM ${schema}.leads 
+           WHERE id = $1 AND tenant_id = $2`,
+          [row.lead_id, row.tenant_id]
         );
-        
-        if (leadRecord) {
-          // Get base lead_data from campaign_leads (which may have id/apollo_person_id)
-          const baseLeadData = row.lead_data || row.snapshot || {};
-          const baseLeadDataParsed = typeof baseLeadData === 'string' ? JSON.parse(baseLeadData) : baseLeadData;
-          
+        if (leadsTableResult.rows.length > 0) {
+          const leadRecord = leadsTableResult.rows[0];
           leadData = {
-            // Preserve enrichment fields from campaign_leads
-            id: baseLeadDataParsed.id || leadRecord.id,
-            apollo_person_id: baseLeadDataParsed.apollo_person_id,
-            // Fields from leads table
             linkedin_url: leadRecord.linkedin_url,
             name: [leadRecord.first_name, leadRecord.last_name].filter(Boolean).join(' '),
             first_name: leadRecord.first_name,
@@ -206,8 +236,8 @@ async function executeDelayStep(stepConfig) {
  */
 async function executeConditionStep(stepConfig, campaignLead) {
   const conditionType = stepConfig.condition || stepConfig.conditionType;
-  // Per TDD: Use dynamic schema (default to lad_dev since req not available)
-  const schema = 'lad_dev';
+  // Per TDD: Use dynamic schema
+  const schema = getSchema(req);
   const activitiesResult = await pool.query(
     `SELECT status FROM ${schema}.campaign_lead_activities 
      WHERE campaign_lead_id = $1 AND is_deleted = FALSE

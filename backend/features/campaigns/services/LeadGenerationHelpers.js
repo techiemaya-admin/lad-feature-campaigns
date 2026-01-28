@@ -32,7 +32,7 @@ function extractLeadFields(employee) {
     firstName: nameParts[0] || employee.first_name || null,
     lastName: nameParts.slice(1).join(' ') || employee.last_name || null,
     email: employee.email || employee.employee_email || employee.work_email || null,
-    linkedinUrl: employee.linkedin_url || employee.employee_linkedin_url || employee.linkedin_profile_url || employee.profile_url || employee.linkedin || null,
+    linkedinUrl: employee.linkedin_url || employee.employee_linkedin_url || employee.linkedin || null,
     companyName: employee.company_name || employee.organization?.name || employee.company?.name || null,
     title: employee.title || employee.job_title || employee.employee_title || employee.headline || null,
     phone: employee.phone || employee.employee_phone || employee.phone_number || null

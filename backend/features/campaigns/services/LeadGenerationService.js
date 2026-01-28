@@ -16,18 +16,12 @@ const CampaignLeadRepository = require('../repositories/CampaignLeadRepository')
 // to maintain proper microservice boundaries. Current implementation kept for
 // performance reasons (enrichment is time-sensitive and needs low latency).
 // Estimated refactoring effort: 4-6 hours
-let createApolloRevealService;
+let ApolloRevealService;
 try {
   const ApolloRevealServiceClass = require('../../apollo-leads/services/ApolloRevealService');
-  // Factory function to create instances with proper API key and base URL
-  createApolloRevealService = () => {
-    const apiKey = process.env.APOLLO_API_KEY || process.env.APOLLO_IO_API_KEY;
-    const baseURL = process.env.APOLLO_API_BASE_URL || 'https://api.apollo.io/v1';
-    return new ApolloRevealServiceClass(apiKey, baseURL);
-  };
+  ApolloRevealService = new ApolloRevealServiceClass();
 } catch (err) {
   logger.warn('[LeadGeneration] ApolloRevealService not available - enrichment disabled', { error: err.message });
-  createApolloRevealService = null;
 }
 
 /**
@@ -400,14 +394,13 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     }
     // CRITICAL: Filter out any leads that already exist in the tenant's campaigns
     // This is a safety check in case the search service couldn't exclude them at query level
-    let filteredOut = 0;
     if (employees.length > 0 && existingLeadIds.size > 0) {
       const originalCount = employees.length;
       employees = employees.filter(emp => {
         const empId = emp.id || emp.apollo_person_id;
         return empId && !existingLeadIds.has(empId);
       });
-      filteredOut = originalCount - employees.length;
+      const filteredOut = originalCount - employees.length;
       if (filteredOut > 0) {
         logger.info('[executeLeadGeneration] Filtered duplicates', {
           campaignId,
@@ -570,17 +563,8 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     });
 
     // STEP 2: Automatic enrichment of search results
-    // Apollo mixed_people API returns obfuscated/incomplete data:
-    // - No emails (obfuscated)
-    // - No real LinkedIn URLs (not provided)
-    // - Possibly truncated names
-    // 
-    // CORRECT PROCESS:
-    // 1. First call: mixed_people search API (gets basic person IDs)
-    // 2. Then call: enrichment API for each person (gets full contact details)
-    // 
-    // NEVER construct fake LinkedIn URLs from names - this creates incorrect URLs
-    // like "linkedin.com/in/john-doe" instead of the person's actual profile
+    // Apollo search returns obfuscated data (no emails, no LinkedIn URLs)
+    // We must enrich each lead to get full contact details
     let enrichedEmployees = employeesList;
     let enrichmentStats = {
       attempted: 0,
@@ -589,38 +573,121 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       skipped: 0
     };
 
-    // Log first employee structure for debugging
-    if (employeesList.length > 0) {
-      logger.info('[executeLeadGeneration] First employee object structure', {
+    if (ApolloRevealService && fromSource !== 'database' && employeesList.length > 0) {
+      logger.info('[executeLeadGeneration] Starting automatic enrichment', {
         campaignId,
-        keys: Object.keys(employeesList[0]),
-        id: employeesList[0].id,
-        apollo_person_id: employeesList[0].apollo_person_id,
-        name: employeesList[0].name,
-        email: employeesList[0].email
+        leadsToEnrich: employeesList.length,
+        source: fromSource
       });
+
+      enrichedEmployees = [];
+      
+      for (const employee of employeesList) {
+        const personId = employee.id || employee.apollo_person_id;
+        
+        // Skip if already has email (already enriched)
+        if (employee.email || employee.personal_emails?.[0]) {
+          enrichmentStats.skipped++;
+          enrichedEmployees.push(employee);
+          continue;
+        }
+
+        // Skip if no person ID
+        if (!personId) {
+          logger.warn('[executeLeadGeneration] No person ID for enrichment', { employee });
+          enrichmentStats.skipped++;
+          enrichedEmployees.push(employee);
+          continue;
+        }
+
+        enrichmentStats.attempted++;
+
+        try {
+          // Call enrichment API (costs credits: 1 for email, 8 for phone)
+          const enrichResult = await ApolloRevealService.revealPersonEmail(personId);
+          
+          if (enrichResult.success && enrichResult.person) {
+            // Merge enriched data with search data
+            const enrichedEmployee = {
+              ...employee,
+              // Full name (not obfuscated)
+              name: enrichResult.person.name || employee.name,
+              first_name: enrichResult.person.first_name || employee.first_name,
+              last_name: enrichResult.person.last_name || employee.last_name,
+              // Contact details
+              email: enrichResult.person.email || enrichResult.person.personal_emails?.[0],
+              personal_emails: enrichResult.person.personal_emails || [],
+              linkedin_url: enrichResult.person.linkedin_url,
+              // Employment history
+              employment_history: enrichResult.person.employment_history || employee.employment_history,
+              // Phone (if available)
+              phone_numbers: enrichResult.person.phone_numbers || employee.phone_numbers,
+              // Mark as enriched
+              is_enriched: true,
+              enriched_at: new Date().toISOString()
+            };
+            
+            enrichedEmployees.push(enrichedEmployee);
+            enrichmentStats.succeeded++;
+            
+            logger.debug('[executeLeadGeneration] Enriched lead', {
+              personId,
+              hasEmail: !!enrichedEmployee.email,
+              hasLinkedIn: !!enrichedEmployee.linkedin_url
+            });
+          } else {
+            // Enrichment failed but keep the search result
+            enrichmentStats.failed++;
+            enrichedEmployees.push({
+              ...employee,
+              is_enriched: false,
+              enrichment_error: enrichResult.error || 'Enrichment failed'
+            });
+            
+            logger.warn('[executeLeadGeneration] Enrichment failed for lead', {
+              personId,
+              error: enrichResult.error
+            });
+          }
+        } catch (enrichError) {
+          // Keep the search result even if enrichment crashes
+          enrichmentStats.failed++;
+          enrichedEmployees.push({
+            ...employee,
+            is_enriched: false,
+            enrichment_error: enrichError.message
+          });
+          
+          logger.error('[executeLeadGeneration] Enrichment exception for lead', {
+            personId,
+            error: enrichError.message,
+            stack: enrichError.stack
+          });
+        }
+
+        // Rate limiting: small delay between enrichment calls to avoid API throttling
+        // Configurable via environment variable (default: 200ms)
+        if (enrichmentStats.attempted < employeesList.length) {
+          const enrichmentDelayMs = parseInt(process.env.APOLLO_ENRICHMENT_DELAY_MS || '200', 10);
+          await new Promise(resolve => setTimeout(resolve, enrichmentDelayMs));
+        }
+      }
+
+      logger.info('[executeLeadGeneration] Enrichment completed', {
+        campaignId,
+        stats: enrichmentStats,
+        finalLeadsCount: enrichedEmployees.length
+      });
+    } else if (!ApolloRevealService) {
+      logger.warn('[executeLeadGeneration] Enrichment skipped - ApolloRevealService not available');
     }
-
-    // CHANGE: Don't automatically enrich anymore
-    // Instead, save leads immediately with mixed_people results
-    // Enrichment will be triggered on-demand when user clicks on email/LinkedIn or visits profile
-    // This allows leads to appear in the campaign immediately without waiting for enrichment API calls
-    
-    logger.info('[executeLeadGeneration] Skipping automatic enrichment', {
-      campaignId,
-      leadsCount: employeesList.length,
-      note: 'Leads will be enriched on-demand when user interacts with them'
-    });
-
-    // Use the search results as-is (no enrichment preprocessing)
-    enrichedEmployees = employeesList;
     
     logger.info('[executeLeadGeneration] Preparing to save leads', {
       campaignId,
       employeesCount: enrichedEmployees.length,
       dailyLimit,
       fromSource,
-      note: 'Leads saved without enrichment - enrichment will be on-demand'
+      enrichmentStats
     });
     
     // Verify tenant_id from campaign matches the provided tenantId
@@ -637,7 +704,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     logger.info('[executeLeadGeneration] Calling saveLeadsToCampaign', {
       campaignId,
       tenantId,
-      leadsCount: enrichedEmployees.length
+      leadsCount: employeesList.length
     });
     
     // Save enriched leads to campaign_leads table (only the daily limit)
