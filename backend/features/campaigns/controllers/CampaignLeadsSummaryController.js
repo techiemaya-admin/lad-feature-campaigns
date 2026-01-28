@@ -144,16 +144,30 @@ class CampaignLeadsSummaryController {
       // Build comprehensive profile information for Gemini, prioritizing Unipile data
       const profileInfo = buildProfileInfo(lead, unipileProfile, unipilePosts);
       // Create prompt for Gemini
-      const prompt = `Analyze the following LinkedIn profile information and recent posts to create a concise, professional summary that highlights:
-1. Professional background, expertise, and current role
-2. Key accomplishments and notable projects
-3. Industry context and role significance
-4. Recent professional activities and engagement (based on posts)
-5. Potential value and relevance to professional networks
-Keep the summary professional, insightful, and concise (2-3 paragraphs maximum). Reference specific insights from their recent activities and professional engagement.
-Profile Information:
-${profileInfo}
-Summary:`;
+      const prompt = `Analyze the following LinkedIn profile information and create a comprehensive professional summary that CLEARLY includes:
+
+    1. CURRENT POSITION: Explicitly state their current job title and company they work for NOW
+    2. PAST COMPANIES: List previous employers and roles in chronological order
+    3. PROFESSIONAL BACKGROUND: Years of experience, industry expertise, and specializations
+    4. KEY ACCOMPLISHMENTS: Notable projects, achievements, and career milestones
+    5. RECENT ACTIVITIES: Insights from their recent posts and professional engagement
+    6. SKILLS & EXPERTISE: Technical skills, certifications, and areas of specialization
+
+    Format the summary in clear sections with these headings:
+    - Current Role
+    - Employment History (with past companies clearly listed)
+    - Professional Background
+    - Recent Activities & Engagement
+
+    Keep the summary professional, detailed, and factual. Make sure to EXPLICITLY mention:
+    - Current company name and title
+    - All previous companies they worked at (from employment history)
+    - Duration at each company if available
+
+    Profile Information:
+    ${profileInfo}
+
+    Professional Summary:`;
       const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
       const result = await model.generateContent(prompt);
       const response = await result.response;
@@ -204,24 +218,73 @@ LinkedIn: ${profile.linkedin_url || baseProfile.linkedin_url || 'Not available'}
   if (profile.bio || profile.summary || profile.about) {
     profileInfo += `\nBio/About: ${profile.bio || profile.summary || profile.about}`;
   }
-  if (profile.experience || profile.experiences) {
-    const experiences = profile.experience || profile.experiences || [];
-    if (Array.isArray(experiences) && experiences.length > 0) {
-      profileInfo += '\n\nRecent Experience:';
-      experiences.slice(0, 3).forEach((exp, idx) => {
-        profileInfo += `\n${idx + 1}. ${exp.title || exp.position || 'Position'} at ${exp.company || 'Company'}`;
-        if (exp.duration) profileInfo += ` (${exp.duration})`;
-      });
-    }
+  // Employment History - Include all past companies
+  const employmentHistory = profile.employment_history || profile.experience || profile.experiences || [];
+  if (Array.isArray(employmentHistory) && employmentHistory.length > 0) {
+    profileInfo += '\n\nEmployment History:';
+    employmentHistory.forEach((exp, idx) => {
+      const company = exp.organization_name || exp.company_name || exp.company || 'Unknown Company';
+      const title = exp.title || exp.position || exp.role || 'Position';
+      const startDate = exp.start_date || exp.start_year || exp.from_date || '';
+      const endDate = exp.end_date || exp.end_year || exp.to_date || exp.current ? 'Present' : '';
+      const duration = exp.duration || (startDate && endDate ? `${startDate} - ${endDate}` : '');
+      const isCurrent = exp.current || exp.is_current || endDate === 'Present';
+      
+      profileInfo += `\n${idx + 1}. ${title} at ${company}`;
+      if (duration) {
+        profileInfo += ` (${duration})`;
+      } else if (startDate) {
+        profileInfo += ` (Since ${startDate})`;
+      }
+      if (isCurrent) {
+        profileInfo += ' - CURRENT POSITION';
+      }
+      
+      // Add description if available
+      if (exp.description && exp.description.length > 0) {
+        profileInfo += `\n   ${exp.description.substring(0, 200)}${exp.description.length > 200 ? '...' : ''}`;
+      }
+    });
+  } else if (baseProfile.company || baseProfile.company_name) {
+    // Fallback: If no employment history array, use current company from base profile
+    profileInfo += '\n\nCurrent Employment:';
+    profileInfo += `\n1. ${baseProfile.title || 'Position'} at ${baseProfile.company || baseProfile.company_name} - CURRENT POSITION`;
   }
-  if (profile.education || profile.educations) {
-    const education = profile.education || profile.educations || [];
-    if (Array.isArray(education) && education.length > 0) {
-      profileInfo += '\n\nEducation:';
-      education.slice(0, 2).forEach((edu, idx) => {
-        profileInfo += `\n${idx + 1}. ${edu.school || edu.institution || 'School'} - ${edu.degree || 'Degree'}`;
-      });
-    }
+  // Education
+  const education = profile.education || profile.educations || [];
+  if (Array.isArray(education) && education.length > 0) {
+    profileInfo += '\n\nEducation:';
+    education.forEach((edu, idx) => {
+      const school = edu.school || edu.institution || edu.school_name || 'School';
+      const degree = edu.degree || edu.degree_name || edu.field_of_study || 'Degree';
+      const year = edu.graduation_year || edu.end_year || edu.year || '';
+      
+      profileInfo += `\n${idx + 1}. ${school} - ${degree}`;
+      if (year) profileInfo += ` (${year})`;
+    });
+  }
+
+  // Skills & Expertise
+  const skills = profile.skills || [];
+  if (Array.isArray(skills) && skills.length > 0) {
+    profileInfo += '\n\nSkills & Expertise:';
+    profileInfo += `\n${skills.slice(0, 15).map(s => typeof s === 'string' ? s : s.name).join(', ')}`;
+  }
+
+  // Certifications
+  const certifications = profile.certifications || [];
+  if (Array.isArray(certifications) && certifications.length > 0) {
+    profileInfo += '\n\nCertifications:';
+    certifications.slice(0, 5).forEach((cert, idx) => {
+      profileInfo += `\n${idx + 1}. ${cert.name || cert.title || cert}`;
+    });
+  }
+
+  // Languages
+  const languages = profile.languages || [];
+  if (Array.isArray(languages) && languages.length > 0) {
+    profileInfo += '\n\nLanguages:';
+    profileInfo += `\n${languages.map(l => typeof l === 'string' ? l : l.name).join(', ')}`;
   }
   if (posts && Array.isArray(posts) && posts.length > 0) {
     profileInfo += '\n\nRecent Posts & Activities:';
