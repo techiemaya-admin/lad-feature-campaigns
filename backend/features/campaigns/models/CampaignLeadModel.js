@@ -69,10 +69,13 @@ class CampaignLeadModel {
   }
   /**
    * Get leads by campaign ID
+   * Filters leads based on campaign type:
+   * - For inbound campaigns: only returns leads with lead_id and no lead_data/snapshot
+   * - For outbound campaigns: only returns leads with lead_data or snapshot (blocks inbound leads)
    */
   static async getByCampaignId(campaignId, tenantId, filters = {}, req = null) {
     const schema = getSchema(req);
-    const { status, limit = 100, offset = 0 } = filters;
+    const { status, limit = 100, offset = 0, campaignType } = filters;
     // Per TDD: Use lad_dev schema
     // LEFT JOIN with leads table to get inbound lead data when lead_id is present
     let query = `
@@ -91,6 +94,21 @@ class CampaignLeadModel {
     `;
     const params = [campaignId, tenantId];
     let paramIndex = 3;
+    
+    // Filter by campaign type to prevent mixing inbound and outbound leads
+    if (campaignType === 'inbound') {
+      // For inbound campaigns: only return leads that have lead_id and NO lead_data/snapshot
+      // This ensures we only get uploaded inbound leads, not outbound leads
+      query += ` AND cl.lead_id IS NOT NULL 
+                 AND (cl.lead_data IS NULL OR cl.lead_data = '{}'::jsonb OR cl.lead_data::text = 'null')
+                 AND (cl.snapshot IS NULL OR cl.snapshot = '{}'::jsonb OR cl.snapshot::text = 'null')`;
+    } else if (campaignType === 'outbound') {
+      // For outbound campaigns: only return leads that have lead_data or snapshot
+      // This blocks inbound leads (which only have lead_id)
+      query += ` AND (cl.lead_data IS NOT NULL AND cl.lead_data != '{}'::jsonb AND cl.lead_data::text != 'null'
+                 OR cl.snapshot IS NOT NULL AND cl.snapshot != '{}'::jsonb AND cl.snapshot::text != 'null')`;
+    }
+    
     if (status && status !== 'all') {
       query += ` AND cl.status = $${paramIndex++}`;
       params.push(status);

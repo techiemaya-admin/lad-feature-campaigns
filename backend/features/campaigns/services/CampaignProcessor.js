@@ -445,37 +445,69 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
     try {
       // Try with all columns first
       // Include both 'pending' and 'active' status for inbound campaigns
-      leadsResult = await pool.query(
-        `SELECT id, campaign_id, lead_id, status, snapshot, lead_data 
-         FROM ${schema}.campaign_leads 
-         WHERE campaign_id = $1 
-         AND status IN ('pending', 'active') 
-         AND is_deleted = FALSE`,
-        [campaignId]
-      );
+      // Filter leads based on campaign type to prevent mixing inbound and outbound
+      let leadsQuery = `
+        SELECT id, campaign_id, lead_id, status, snapshot, lead_data 
+        FROM ${schema}.campaign_leads 
+        WHERE campaign_id = $1 
+        AND status IN ('pending', 'active') 
+        AND is_deleted = FALSE
+      `;
+      
+      // Add campaign type filter to block wrong type of leads
+      if (isInboundCampaign) {
+        // For inbound campaigns: only process leads with lead_id and NO lead_data/snapshot
+        leadsQuery += ` AND lead_id IS NOT NULL 
+                        AND (lead_data IS NULL OR lead_data = '{}'::jsonb OR lead_data::text = 'null')
+                        AND (snapshot IS NULL OR snapshot = '{}'::jsonb OR snapshot::text = 'null')`;
+      } else {
+        // For outbound campaigns: only process leads with lead_data or snapshot (blocks inbound leads)
+        leadsQuery += ` AND (lead_data IS NOT NULL AND lead_data != '{}'::jsonb AND lead_data::text != 'null'
+                        OR snapshot IS NOT NULL AND snapshot != '{}'::jsonb AND snapshot::text != 'null')`;
+      }
+      
+      leadsResult = await pool.query(leadsQuery, [campaignId]);
     } catch (error) {
       const errorMsg = error.message?.toLowerCase() || '';
       // If snapshot column doesn't exist, try without it
       if (errorMsg.includes('snapshot') || errorMsg.includes('column') && errorMsg.includes('does not exist')) {
         try {
-          leadsResult = await pool.query(
-            `SELECT id, campaign_id, lead_id, status, lead_data 
-             FROM ${schema}.campaign_leads 
-             WHERE campaign_id = $1 
-             AND status IN ('pending', 'active') 
-             AND is_deleted = FALSE`,
-            [campaignId]
-          );
+          let leadsQuery = `
+            SELECT id, campaign_id, lead_id, status, lead_data 
+            FROM ${schema}.campaign_leads 
+            WHERE campaign_id = $1 
+            AND status IN ('pending', 'active') 
+            AND is_deleted = FALSE
+          `;
+          
+          // Add campaign type filter
+          if (isInboundCampaign) {
+            leadsQuery += ` AND lead_id IS NOT NULL 
+                            AND (lead_data IS NULL OR lead_data = '{}'::jsonb OR lead_data::text = 'null')`;
+          } else {
+            leadsQuery += ` AND (lead_data IS NOT NULL AND lead_data != '{}'::jsonb AND lead_data::text != 'null')`;
+          }
+          
+          leadsResult = await pool.query(leadsQuery, [campaignId]);
         } catch (error2) {
           // If is_deleted column also doesn't exist, try without both
           if (error2.message && error2.message.includes('is_deleted')) {
-            leadsResult = await pool.query(
-              `SELECT id, campaign_id, lead_id, status, lead_data 
-               FROM ${schema}.campaign_leads 
-               WHERE campaign_id = $1 
-               AND status IN ('pending', 'active')`,
-              [campaignId]
-            );
+            let leadsQuery = `
+              SELECT id, campaign_id, lead_id, status, lead_data 
+              FROM ${schema}.campaign_leads 
+              WHERE campaign_id = $1 
+              AND status IN ('pending', 'active')
+            `;
+            
+            // Add campaign type filter
+            if (isInboundCampaign) {
+              leadsQuery += ` AND lead_id IS NOT NULL 
+                              AND (lead_data IS NULL OR lead_data = '{}'::jsonb OR lead_data::text = 'null')`;
+            } else {
+              leadsQuery += ` AND (lead_data IS NOT NULL AND lead_data != '{}'::jsonb AND lead_data::text != 'null')`;
+            }
+            
+            leadsResult = await pool.query(leadsQuery, [campaignId]);
           } else {
             throw error2;
           }
@@ -483,23 +515,43 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       } else if (errorMsg.includes('is_deleted')) {
         // If only is_deleted is missing, try without it but keep snapshot
         try {
-          leadsResult = await pool.query(
-            `SELECT id, campaign_id, lead_id, status, snapshot, lead_data 
-             FROM ${schema}.campaign_leads 
-             WHERE campaign_id = $1 
-             AND status IN ('pending', 'active')`,
-            [campaignId]
-          );
+          let leadsQuery = `
+            SELECT id, campaign_id, lead_id, status, snapshot, lead_data 
+            FROM ${schema}.campaign_leads 
+            WHERE campaign_id = $1 
+            AND status IN ('pending', 'active')
+          `;
+          
+          // Add campaign type filter
+          if (isInboundCampaign) {
+            leadsQuery += ` AND lead_id IS NOT NULL 
+                            AND (lead_data IS NULL OR lead_data = '{}'::jsonb OR lead_data::text = 'null')
+                            AND (snapshot IS NULL OR snapshot = '{}'::jsonb OR snapshot::text = 'null')`;
+          } else {
+            leadsQuery += ` AND (lead_data IS NOT NULL AND lead_data != '{}'::jsonb AND lead_data::text != 'null'
+                            OR snapshot IS NOT NULL AND snapshot != '{}'::jsonb AND snapshot::text != 'null')`;
+          }
+          
+          leadsResult = await pool.query(leadsQuery, [campaignId]);
         } catch (error2) {
           // If snapshot also doesn't exist, try without both
           if (error2.message && error2.message.includes('snapshot')) {
-            leadsResult = await pool.query(
-              `SELECT id, campaign_id, lead_id, status, lead_data 
-               FROM ${schema}.campaign_leads 
-               WHERE campaign_id = $1 
-               AND status IN ('pending', 'active')`,
-              [campaignId]
-            );
+            let leadsQuery = `
+              SELECT id, campaign_id, lead_id, status, lead_data 
+              FROM ${schema}.campaign_leads 
+              WHERE campaign_id = $1 
+              AND status IN ('pending', 'active')
+            `;
+            
+            // Add campaign type filter
+            if (isInboundCampaign) {
+              leadsQuery += ` AND lead_id IS NOT NULL 
+                              AND (lead_data IS NULL OR lead_data = '{}'::jsonb OR lead_data::text = 'null')`;
+            } else {
+              leadsQuery += ` AND (lead_data IS NOT NULL AND lead_data != '{}'::jsonb AND lead_data::text != 'null')`;
+            }
+            
+            leadsResult = await pool.query(leadsQuery, [campaignId]);
           } else {
             throw error2;
           }

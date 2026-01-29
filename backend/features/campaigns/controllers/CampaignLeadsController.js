@@ -6,6 +6,7 @@
 
 const CampaignLeadModel = require('../models/CampaignLeadModel');
 const CampaignLeadActivityModel = require('../models/CampaignLeadActivityModel');
+const CampaignModel = require('../models/CampaignModel');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const logger = require('../../../core/utils/logger');
 
@@ -21,10 +22,30 @@ class CampaignLeadsController {
       const { status, limit, offset } = req.query;
       // LAD Architecture: Use model layer instead of direct SQL in controller
       const schema = getSchema(req);
+      
+      // Get campaign to check campaign type
+      const campaign = await CampaignModel.getById(id, tenantId, req);
+      if (!campaign) {
+        return res.status(404).json({
+          success: false,
+          error: 'Campaign not found'
+        });
+      }
+      
+      // Parse campaign config to determine campaign type
+      let campaignConfig = {};
+      if (campaign.config) {
+        campaignConfig = typeof campaign.config === 'string' 
+          ? JSON.parse(campaign.config) 
+          : campaign.config;
+      }
+      const isInboundCampaign = campaignConfig.campaign_type === 'inbound';
+      
       const leads = await CampaignLeadModel.getByCampaignId(id, tenantId, {
         status,
         limit: parseInt(limit) || 100,
-        offset: parseInt(offset) || 0
+        offset: parseInt(offset) || 0,
+        campaignType: isInboundCampaign ? 'inbound' : 'outbound'
       }, req);
       // Format leads for frontend
       const formattedLeads = leads.map(row => {
