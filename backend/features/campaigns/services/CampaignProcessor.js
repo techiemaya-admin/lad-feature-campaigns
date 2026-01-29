@@ -95,7 +95,20 @@ async function executeStepForLead(campaignId, step, campaignLead, userId, tenant
       });
     } else if (stepType && stepType.startsWith('linkedin_')) {
       // All LinkedIn steps: connect, message, follow, visit, scrape_profile, company_search, employee_list, autopost, comment_reply
+      logger.info('[executeStepForLead] Calling executeLinkedInStep', {
+        campaignId,
+        stepType,
+        userId,
+        tenantId,
+        campaignLeadId: campaignLead?.id
+      });
       result = await executeLinkedInStep(stepType, stepConfig, campaignLead, userId, tenantId);
+      logger.info('[executeStepForLead] executeLinkedInStep returned', {
+        campaignId,
+        stepType,
+        success: result?.success,
+        error: result?.error
+      });
     } else if (stepType && stepType.startsWith('email_')) {
       // All email steps: send, followup
       result = await executeEmailStep(stepType, stepConfig, campaignLead, userId, tenantId);

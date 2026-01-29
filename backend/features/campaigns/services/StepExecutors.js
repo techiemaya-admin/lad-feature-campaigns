@@ -23,9 +23,11 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
     // If we have tenantId, use it for tenant-scoped query
     if (actualTenantId) {
       try {
-        // First try to get campaign_lead with lead_id
+        // First try to get campaign_lead with lead_id and individual columns
         leadDataResult = await pool.query(
-          `SELECT cl.lead_data, cl.snapshot, cl.tenant_id, cl.lead_id
+          `SELECT cl.lead_data, cl.snapshot, cl.tenant_id, cl.lead_id,
+                  cl.email, cl.linkedin_url, cl.first_name, cl.last_name, 
+                  cl.company_name, cl.title, cl.phone
            FROM ${schema}.campaign_leads cl
            WHERE cl.id = $1 AND cl.tenant_id = $2 AND cl.is_deleted = FALSE`,
           [campaignLeadId, actualTenantId]
@@ -34,7 +36,9 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
         // If is_deleted column doesn't exist, try without it
         if (err.message && err.message.includes('is_deleted')) {
           leadDataResult = await pool.query(
-            `SELECT cl.lead_data, cl.snapshot, cl.tenant_id, cl.lead_id
+            `SELECT cl.lead_data, cl.snapshot, cl.tenant_id, cl.lead_id,
+                    cl.email, cl.linkedin_url, cl.first_name, cl.last_name, 
+                    cl.company_name, cl.title, cl.phone
              FROM ${schema}.campaign_leads cl
              WHERE cl.id = $1 AND cl.tenant_id = $2`,
             [campaignLeadId, actualTenantId]
@@ -48,7 +52,9 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
       // This should only happen in legacy code paths
       try {
         leadDataResult = await pool.query(
-          `SELECT cl.lead_data, cl.snapshot, cl.tenant_id, cl.lead_id
+          `SELECT cl.lead_data, cl.snapshot, cl.tenant_id, cl.lead_id,
+                  cl.email, cl.linkedin_url, cl.first_name, cl.last_name, 
+                  cl.company_name, cl.title, cl.phone
            FROM ${schema}.campaign_leads cl
            WHERE cl.id = $1 AND cl.is_deleted = FALSE`,
           [campaignLeadId]
@@ -56,7 +62,9 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
       } catch (err) {
         if (err.message && err.message.includes('is_deleted')) {
           leadDataResult = await pool.query(
-            `SELECT cl.lead_data, cl.snapshot, cl.tenant_id, cl.lead_id
+            `SELECT cl.lead_data, cl.snapshot, cl.tenant_id, cl.lead_id,
+                    cl.email, cl.linkedin_url, cl.first_name, cl.last_name, 
+                    cl.company_name, cl.title, cl.phone
              FROM ${schema}.campaign_leads cl
              WHERE cl.id = $1`,
             [campaignLeadId]
@@ -67,14 +75,35 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
       }
     }
     if (leadDataResult.rows.length === 0) {
+      console.log('[getLeadData] No rows found for campaignLeadId:', campaignLeadId);
       return null;
     }
     const row = leadDataResult.rows[0];
-    // PRIORITY: For inbound campaigns, fetch data from leads table using lead_id
-    // For outbound campaigns (Apollo scraping), use lead_data from campaign_leads
+    console.log('[getLeadData] Raw row data:', {
+      campaignLeadId,
+      hasLeadData: !!row.lead_data,
+      hasSnapshot: !!row.snapshot,
+      hasLeadId: !!row.lead_id,
+      linkedin_url: row.linkedin_url,
+      email: row.email,
+      first_name: row.first_name,
+      last_name: row.last_name
+    });
+    // PRIORITY: Determine campaign type
+    // - Outbound campaigns (Apollo): Have lead_data or snapshot in campaign_leads
+    // - Inbound campaigns: Have lead_id but NO lead_data/snapshot
     let leadData;
-    if (row.lead_id) {
-      // Inbound campaign: Try to fetch lead data from leads table
+    
+    // Check if this is an outbound campaign (has Apollo/scraped data)
+    const isOutbound = !!(row.lead_data || row.snapshot);
+    
+    if (row.lead_id && !isOutbound) {
+      console.log('[getLeadData] Has lead_id and NO lead_data - trying inbound path:', {
+        campaignLeadId,
+        lead_id: row.lead_id,
+        has_linkedin_url_in_row: !!row.linkedin_url
+      });
+      // Inbound campaign: Fetch lead data from leads table
       try {
         const leadsTableResult = await pool.query(
           `SELECT first_name, last_name, email, linkedin_url, company_name, title, phone 
@@ -82,8 +111,20 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
            WHERE id = $1 AND tenant_id = $2`,
           [row.lead_id, row.tenant_id]
         );
+        console.log('[getLeadData] Leads table query result:', {
+          campaignLeadId,
+          rowsFound: leadsTableResult.rows.length
+        });
+        console.log('[getLeadData] Leads table query result:', {
+          campaignLeadId,
+          rowsFound: leadsTableResult.rows.length
+        });
         if (leadsTableResult.rows.length > 0) {
           const leadRecord = leadsTableResult.rows[0];
+          console.log('[getLeadData] Found lead in leads table:', {
+            campaignLeadId,
+            has_linkedin_url: !!leadRecord.linkedin_url
+          });
           leadData = {
             linkedin_url: leadRecord.linkedin_url,
             name: [leadRecord.first_name, leadRecord.last_name].filter(Boolean).join(' '),
@@ -96,19 +137,76 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
             phone: leadRecord.phone
           };
         } else {
+          console.log('[getLeadData] No lead found in leads table - using campaign_leads fallback with merge');
           // Fallback to campaign_leads data if exists
           leadData = row.lead_data || row.snapshot || {};
           leadData = typeof leadData === 'string' ? JSON.parse(leadData) : leadData;
+          
+          // Merge in individual columns from campaign_leads
+          if (row.linkedin_url) leadData.linkedin_url = row.linkedin_url;
+          if (row.email) leadData.email = row.email;
+          if (row.first_name) leadData.first_name = row.first_name;
+          if (row.last_name) leadData.last_name = row.last_name;
+          if (row.company_name) leadData.company_name = row.company_name;
+          if (row.title) leadData.title = row.title;
+          if (row.phone) leadData.phone = row.phone;
+          
+          // Update name field if first_name or last_name is available
+          if (row.first_name || row.last_name) {
+            leadData.name = [row.first_name, row.last_name].filter(Boolean).join(' ');
+          }
         }
       } catch (leadsFetchError) {
         // Fallback to campaign_leads data
         leadData = row.lead_data || row.snapshot || {};
         leadData = typeof leadData === 'string' ? JSON.parse(leadData) : leadData;
+        
+        // Merge in individual columns from campaign_leads
+        if (row.linkedin_url) leadData.linkedin_url = row.linkedin_url;
+        if (row.email) leadData.email = row.email;
+        if (row.first_name) leadData.first_name = row.first_name;
+        if (row.last_name) leadData.last_name = row.last_name;
+        if (row.company_name) leadData.company_name = row.company_name;
+        if (row.title) leadData.title = row.title;
+        if (row.phone) leadData.phone = row.phone;
+        
+        // Update name field if first_name or last_name is available
+        if (row.first_name || row.last_name) {
+          leadData.name = [row.first_name, row.last_name].filter(Boolean).join(' ');
+        }
       }
-    } else if (row.lead_data || row.snapshot) {
-      // Outbound campaign: Lead data is in campaign_leads table
+    } else if (isOutbound) {
+      console.log('[getLeadData] Outbound campaign path - using lead_data/snapshot with merge:', {
+        campaignLeadId,
+        has_lead_id: !!row.lead_id,
+        has_linkedin_url_in_row: !!row.linkedin_url
+      });
+      // Outbound campaign: Lead data is in campaign_leads table (Apollo/scraped data)
       leadData = row.lead_data || row.snapshot || {};
       leadData = typeof leadData === 'string' ? JSON.parse(leadData) : leadData;
+      
+      // Merge in individual columns (these may have been populated from enrichment)
+      // Individual columns take precedence over JSON data
+      if (row.linkedin_url) leadData.linkedin_url = row.linkedin_url;
+      if (row.email) leadData.email = row.email;
+      if (row.first_name) leadData.first_name = row.first_name;
+      if (row.last_name) leadData.last_name = row.last_name;
+      if (row.company_name) leadData.company_name = row.company_name;
+      if (row.title) leadData.title = row.title;
+      if (row.phone) leadData.phone = row.phone;
+      
+      // Update name field if first_name or last_name is available
+      if (row.first_name || row.last_name) {
+        leadData.name = [row.first_name, row.last_name].filter(Boolean).join(' ');
+      }
+      
+      console.log('[getLeadData] Final leadData for outbound campaign:', {
+        campaignLeadId,
+        hasLinkedinUrl: !!leadData.linkedin_url,
+        hasEmail: !!leadData.email,
+        linkedin_url: leadData.linkedin_url,
+        email: leadData.email
+      });
     } else {
       // No data found in either location
       return null;

@@ -13,7 +13,7 @@ async function getAllLinkedInAccountsForTenant(tenantId, userId) {
   try {
     // Use tenantId directly (LAD standard - no organization_id conversion needed)
     const resolvedTenantId = tenantId || userId;
-    const schema = getSchema(req);
+    const schema = getSchema({ user: { tenant_id: resolvedTenantId } });
     // Try social_linkedin_accounts table first
     try {
       const query = `
@@ -110,7 +110,7 @@ async function verifyAccountHealth(unipileAccountId) {
  */
 async function getLinkedInAccountForExecution(tenantId, userId) {
   let accountResult = { rows: [] };  // Initialize with empty result to prevent undefined errors
-  const schema = getSchema(req);
+  const schema = getSchema({ user: { tenant_id: tenantId || userId } });
   // Strategy 1: Try social_linkedin_accounts table by tenant_id
   try {
     accountResult = await pool.query(
@@ -317,7 +317,8 @@ async function sendConnectionRequestWithFallback(
 async function verifyAccountReadyForCampaign(unipileAccountId) {
   try {
     // Try to get account status from database first
-    const schema = getSchema(req);
+    // Use default schema since tenantId is not available in this function
+    const schema = getSchema();
     // Check TDD schema
     try {
       const result = await pool.query(

@@ -394,13 +394,14 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     }
     // CRITICAL: Filter out any leads that already exist in the tenant's campaigns
     // This is a safety check in case the search service couldn't exclude them at query level
+    let filteredOut = 0; // Initialize outside the if block
     if (employees.length > 0 && existingLeadIds.size > 0) {
       const originalCount = employees.length;
       employees = employees.filter(emp => {
         const empId = emp.id || emp.apollo_person_id;
         return empId && !existingLeadIds.has(empId);
       });
-      const filteredOut = originalCount - employees.length;
+      filteredOut = originalCount - employees.length;
       if (filteredOut > 0) {
         logger.info('[executeLeadGeneration] Filtered duplicates', {
           campaignId,

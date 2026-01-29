@@ -20,7 +20,7 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     // Find the last successfully completed step for this lead
     // This ensures we don't re-execute steps that were already completed
     // LAD Architecture: Get schema from tenant context
-    const schema = getSchema(req);
+    const schema = getSchema({ user: { tenant_id: tenantId } });
     const lastSuccessfulActivityResult = await pool.query(
       `SELECT step_id, status, created_at FROM ${schema}.campaign_lead_activities 
        WHERE campaign_lead_id = $1 

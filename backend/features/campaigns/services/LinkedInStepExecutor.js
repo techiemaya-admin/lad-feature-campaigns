@@ -17,8 +17,20 @@ const { campaignStatsTracker } = require('./campaignStatsTracker');
  */
 async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, tenantId) {
   try {
+    const logger = require('../../../core/utils/logger');
+    
     // Get lead data - CRITICAL: Pass tenantId for proper tenant scoping
     const leadData = await getLeadData(campaignLead.id, null, tenantId);
+    
+    logger.info('[LinkedInStepExecutor] Got leadData', {
+      campaignLeadId: campaignLead.id,
+      hasLeadData: !!leadData,
+      leadDataKeys: leadData ? Object.keys(leadData) : [],
+      linkedin_url: leadData?.linkedin_url,
+      employee_linkedin_url: leadData?.employee_linkedin_url,
+      hasEmployeeData: !!leadData?.employee_data
+    });
+    
     if (!leadData) {
       return { success: false, error: 'Lead not found' };
     }
@@ -34,13 +46,29 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
     }
     // Get LinkedIn account with Unipile account ID (using helper)
     const linkedinAccountId = await getLinkedInAccountForExecution(tenantId, userId);
+    
+    logger.info('[LinkedInStepExecutor] LinkedIn account check', {
+      stepType,
+      tenantId,
+      userId,
+      hasLinkedInAccountId: !!linkedinAccountId,
+      linkedinAccountId
+    });
+    
     if (!linkedinAccountId) {
+      logger.warn('[LinkedInStepExecutor] No LinkedIn account found', {
+        stepType,
+        tenantId,
+        userId,
+        error: 'No active LinkedIn account connected'
+      });
       return { 
         success: false, 
         error: 'No active LinkedIn account connected with Unipile. Please connect a LinkedIn account in Settings → LinkedIn Integration to enable LinkedIn campaign steps.',
         userAction: 'Connect LinkedIn account in Settings'
       };
     }
+    
     // Format employee for Unipile
     const employee = {
       profile_url: linkedinUrl,

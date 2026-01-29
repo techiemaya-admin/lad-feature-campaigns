@@ -3,7 +3,7 @@
  * SQL queries only - no business logic
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../../../shared/database/connection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const { randomUUID } = require('crypto');
 class CampaignLeadRepository {
