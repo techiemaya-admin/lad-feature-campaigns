@@ -8,14 +8,19 @@ const { getSchema } = require('../../../core/utils/schemaHelper');
 const logger = require('../../../core/utils/logger');
 /**
  * Check if lead already exists in campaign
+ * FIXED: Check both 'id' and 'apollo_person_id' fields in lead_data
+ * because saveLeadsToCampaign stores sourceId as 'id', not 'apollo_person_id'
  */
 async function checkLeadExists(campaignId, apolloPersonId, req = null) {
   try {
     // Per TDD: Use dynamic schema
     const schema = getSchema(req);
+    // Check both 'id' and 'apollo_person_id' fields since different code paths use different names
     const existingLead = await pool.query(
       `SELECT id FROM ${schema}.campaign_leads 
-       WHERE campaign_id = $1 AND lead_data->>'apollo_person_id' = $2 AND is_deleted = FALSE`,
+       WHERE campaign_id = $1 
+         AND (lead_data->>'id' = $2 OR lead_data->>'apollo_person_id' = $2)
+         AND is_deleted = FALSE`,
       [campaignId, String(apolloPersonId)]
     );
     return existingLead.rows.length > 0 ? existingLead.rows[0] : null;

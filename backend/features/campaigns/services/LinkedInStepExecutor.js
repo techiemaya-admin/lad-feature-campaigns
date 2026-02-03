@@ -2,7 +2,6 @@
  * LinkedIn Step Executor
  * Handles all LinkedIn-related step executions
  */
-const { pool } = require('../../../shared/database/connection');
 const unipileService = require('./unipileService');
 const { getLeadData } = require('./StepExecutors');
 const {
@@ -12,6 +11,151 @@ const {
 } = require('./LinkedInAccountHelper');
 const { generateAndSaveProfileSummary } = require('./LinkedInProfileSummaryService');
 const { campaignStatsTracker } = require('./campaignStatsTracker');
+
+// Import ApolloRevealService for data enrichment
+// TODO: ARCHITECTURE EXCEPTION - Direct cross-feature import
+// This creates tight coupling between campaigns and apollo-leads features.
+let ApolloRevealService;
+try {
+  const ApolloRevealServiceClass = require('../../apollo-leads/services/ApolloRevealService');
+  const { APOLLO_CONFIG } = require('../../apollo-leads/constants/constants');
+  const apiKey = process.env.APOLLO_API_KEY;
+  const baseUrl = APOLLO_CONFIG?.DEFAULT_BASE_URL || 'https://api.apollo.io/v1';
+  ApolloRevealService = new ApolloRevealServiceClass(apiKey, baseUrl);
+} catch (err) {
+  // ApolloRevealService not available - enrichment will be skipped
+  const logger = require('../../../core/utils/logger');
+  logger.warn('[LinkedInStepExecutor] ApolloRevealService not available', { error: err.message });
+}
+
+/**
+ * Enrich lead data with Apollo to reveal email and LinkedIn URL
+ * @param {Object} leadData - Lead data object
+ * @param {string} tenantId - Tenant ID
+ * @param {string} databaseLeadId - The actual UUID lead_id from leads table (not Apollo ID)
+ * @returns {Object} Enriched lead data with email and linkedin_url
+ */
+async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null) {
+  const logger = require('../../../core/utils/logger');
+  
+  if (!ApolloRevealService) {
+    logger.warn('[LinkedInStepExecutor] ApolloRevealService not available - skipping enrichment');
+    return leadData;
+  }
+  
+  // Get Apollo person ID from lead data (for API call)
+  const personId = leadData.apollo_person_id || leadData.source_id || leadData.id;
+  
+  if (!personId) {
+    logger.warn('[LinkedInStepExecutor] No Apollo person ID found for enrichment', {
+      leadId: leadData.id
+    });
+    return leadData;
+  }
+  
+  // Check if already enriched (has both email and linkedin_url)
+  const hasEmail = leadData.email || leadData.personal_emails?.[0];
+  const hasLinkedIn = leadData.linkedin_url || leadData.employee_linkedin_url;
+  
+  if (hasEmail && hasLinkedIn) {
+    logger.info('[LinkedInStepExecutor] Lead already enriched', {
+      leadId: leadData.id,
+      hasEmail: !!hasEmail,
+      hasLinkedIn: !!hasLinkedIn
+    });
+    return leadData;
+  }
+  
+  try {
+    logger.info('[LinkedInStepExecutor] Enriching lead for LinkedIn visit', {
+      leadId: leadData.id,
+      personId,
+      needsEmail: !hasEmail,
+      needsLinkedIn: !hasLinkedIn
+    });
+    
+    const enrichResult = await ApolloRevealService.enrichPersonDetails(personId);
+    
+    if (enrichResult && enrichResult.success && enrichResult.person) {
+      const enrichedPerson = enrichResult.person;
+      
+      // Merge enriched data into leadData
+      if (enrichedPerson.email && !hasEmail) {
+        leadData.email = enrichedPerson.email;
+      }
+      if (enrichedPerson.linkedin_url && !hasLinkedIn) {
+        leadData.linkedin_url = enrichedPerson.linkedin_url;
+        leadData.employee_linkedin_url = enrichedPerson.linkedin_url;
+      }
+      if (enrichedPerson.personal_emails && enrichedPerson.personal_emails.length > 0 && !hasEmail) {
+        leadData.email = enrichedPerson.personal_emails[0];
+      }
+      
+      logger.info('[LinkedInStepExecutor] Lead enriched successfully', {
+        leadId: leadData.id,
+        databaseLeadId,
+        revealedEmail: !!enrichedPerson.email,
+        revealedLinkedIn: !!enrichedPerson.linkedin_url,
+        revealedName: !!enrichedPerson.first_name
+      });
+      
+      // Also update leadData with name from enrichment
+      if (enrichedPerson.first_name) {
+        leadData.first_name = enrichedPerson.first_name;
+      }
+      if (enrichedPerson.last_name) {
+        leadData.last_name = enrichedPerson.last_name;
+      }
+      if (enrichedPerson.name) {
+        leadData.name = enrichedPerson.name;
+      }
+      
+      // Update lead in database with enriched data (using repository - LAD Architecture)
+      // Use databaseLeadId (UUID) for the leads table, not the Apollo person ID
+      if (databaseLeadId) {
+        try {
+          const CampaignLeadRepository = require('../repositories/CampaignLeadRepository');
+          
+          await CampaignLeadRepository.updateLeadEnrichmentData(
+            databaseLeadId,
+            tenantId,
+            {
+              email: enrichedPerson.email || null,
+              linkedin_url: enrichedPerson.linkedin_url || null,
+              first_name: enrichedPerson.first_name || null,
+              last_name: enrichedPerson.last_name || null
+            }
+          );
+          
+          logger.info('[LinkedInStepExecutor] Updated lead in database with enriched data', {
+            leadId: databaseLeadId,
+            firstName: enrichedPerson.first_name
+          });
+        } catch (updateErr) {
+          logger.warn('[LinkedInStepExecutor] Failed to update lead with enriched data', {
+            error: updateErr.message,
+            databaseLeadId
+          });
+        }
+      } else {
+        logger.warn('[LinkedInStepExecutor] No database lead ID provided - skipping database update');
+      }
+    } else {
+      logger.warn('[LinkedInStepExecutor] Enrichment returned no data', {
+        leadId: leadData.id,
+        enrichResult
+      });
+    }
+  } catch (enrichErr) {
+    logger.error('[LinkedInStepExecutor] Enrichment failed', {
+      leadId: leadData.id,
+      error: enrichErr.message
+    });
+  }
+  
+  return leadData;
+}
+
 /**
  * Execute LinkedIn step
  */
@@ -20,7 +164,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
     const logger = require('../../../core/utils/logger');
     
     // Get lead data - CRITICAL: Pass tenantId for proper tenant scoping
-    const leadData = await getLeadData(campaignLead.id, null, tenantId);
+    let leadData = await getLeadData(campaignLead.id, null, tenantId);
     
     logger.info('[LinkedInStepExecutor] Got leadData', {
       campaignLeadId: campaignLead.id,
@@ -34,6 +178,28 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
     if (!leadData) {
       return { success: false, error: 'Lead not found' };
     }
+    
+    // AUTO-ENRICHMENT: For linkedin_visit, linkedin_connect, linkedin_message steps
+    // Automatically enrich lead to reveal email and LinkedIn URL if not available
+    const linkedInStepsNeedingEnrichment = ['linkedin_visit', 'linkedin_connect', 'linkedin_message'];
+    if (linkedInStepsNeedingEnrichment.includes(stepType)) {
+      const hasLinkedIn = leadData.linkedin_url 
+        || leadData.employee_linkedin_url
+        || leadData.employee_data?.linkedin_url
+        || leadData.employee_data?.linkedin
+        || leadData.employee_data?.profile_url;
+      
+      if (!hasLinkedIn) {
+        logger.info('[LinkedInStepExecutor] LinkedIn URL not found - triggering auto-enrichment', {
+          stepType,
+          campaignLeadId: campaignLead.id,
+          databaseLeadId: campaignLead.lead_id
+        });
+        // Pass the actual database lead_id (UUID) for updating the leads table
+        leadData = await enrichLeadForLinkedIn(leadData, tenantId, campaignLead.lead_id);
+      }
+    }
+    
     const linkedinUrl = leadData.linkedin_url 
       || leadData.employee_linkedin_url
       || (leadData.employee_data && typeof leadData.employee_data === 'string' 
@@ -95,6 +261,16 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
         linkedinAccountId,
         allAccounts
       );
+      
+      logger.info('[LinkedInStepExecutor] Connection request result', {
+        stepType,
+        success: result.success,
+        accountUsed: result.accountUsed,
+        strategy: result.strategy,
+        error: result.error,
+        employeeName: employee.fullname
+      });
+      
       // Track connection request in campaign_analytics for Live Activity Feed
       try {
         await campaignStatsTracker.trackAction(campaignLead.campaign_id, 'CONNECTION_SENT', {
@@ -183,11 +359,25 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
         result = { success: false, error: 'Unipile service is not configured' };
         return result;
       }
+      
+      logger.info('[LinkedInStepExecutor] Executing linkedin_visit step', {
+        linkedinUrl,
+        linkedinAccountId,
+        employeeName: employee.fullname
+      });
+      
       // Use Unipile profile lookup as a real "visit" and to hydrate contact info
       try {
         const startTime = Date.now();
         const profileResult = await unipileService.getLinkedInContactDetails(linkedinUrl, linkedinAccountId);
         const duration = Date.now() - startTime;
+        
+        logger.info('[LinkedInStepExecutor] linkedin_visit profile result', {
+          success: profileResult?.success !== false,
+          accountExpired: profileResult?.accountExpired,
+          hasProfile: !!profileResult?.profile,
+          duration
+        });
         // Check if account credentials expired or requires user intervention
         if (profileResult && (profileResult.accountExpired || profileResult.statusCode === 401)) {
           // Try to get another active account

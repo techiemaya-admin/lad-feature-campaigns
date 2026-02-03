@@ -24,10 +24,12 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
     if (actualTenantId) {
       try {
         // First try to get campaign_lead with lead_id and individual columns
+        // Include enriched_email and enriched_linkedin_url for auto-enrichment data
         leadDataResult = await pool.query(
           `SELECT cl.lead_data, cl.snapshot, cl.tenant_id, cl.lead_id,
                   cl.email, cl.linkedin_url, cl.first_name, cl.last_name, 
-                  cl.company_name, cl.title, cl.phone
+                  cl.company_name, cl.title, cl.phone,
+                  cl.enriched_email, cl.enriched_linkedin_url
            FROM ${schema}.campaign_leads cl
            WHERE cl.id = $1 AND cl.tenant_id = $2 AND cl.is_deleted = FALSE`,
           [campaignLeadId, actualTenantId]
@@ -38,7 +40,8 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
           leadDataResult = await pool.query(
             `SELECT cl.lead_data, cl.snapshot, cl.tenant_id, cl.lead_id,
                     cl.email, cl.linkedin_url, cl.first_name, cl.last_name, 
-                    cl.company_name, cl.title, cl.phone
+                    cl.company_name, cl.title, cl.phone,
+                    cl.enriched_email, cl.enriched_linkedin_url
              FROM ${schema}.campaign_leads cl
              WHERE cl.id = $1 AND cl.tenant_id = $2`,
             [campaignLeadId, actualTenantId]
@@ -54,7 +57,8 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
         leadDataResult = await pool.query(
           `SELECT cl.lead_data, cl.snapshot, cl.tenant_id, cl.lead_id,
                   cl.email, cl.linkedin_url, cl.first_name, cl.last_name, 
-                  cl.company_name, cl.title, cl.phone
+                  cl.company_name, cl.title, cl.phone,
+                  cl.enriched_email, cl.enriched_linkedin_url
            FROM ${schema}.campaign_leads cl
            WHERE cl.id = $1 AND cl.is_deleted = FALSE`,
           [campaignLeadId]
@@ -64,7 +68,8 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
           leadDataResult = await pool.query(
             `SELECT cl.lead_data, cl.snapshot, cl.tenant_id, cl.lead_id,
                     cl.email, cl.linkedin_url, cl.first_name, cl.last_name, 
-                    cl.company_name, cl.title, cl.phone
+                    cl.company_name, cl.title, cl.phone,
+                    cl.enriched_email, cl.enriched_linkedin_url
              FROM ${schema}.campaign_leads cl
              WHERE cl.id = $1`,
             [campaignLeadId]
@@ -195,6 +200,11 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
       if (row.title) leadData.title = row.title;
       if (row.phone) leadData.phone = row.phone;
       
+      // CRITICAL: Use enriched columns if available (from auto-enrichment)
+      // These take highest precedence
+      if (row.enriched_linkedin_url) leadData.linkedin_url = row.enriched_linkedin_url;
+      if (row.enriched_email) leadData.email = row.enriched_email;
+      
       // Update name field if first_name or last_name is available
       if (row.first_name || row.last_name) {
         leadData.name = [row.first_name, row.last_name].filter(Boolean).join(' ');
@@ -205,7 +215,9 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
         hasLinkedinUrl: !!leadData.linkedin_url,
         hasEmail: !!leadData.email,
         linkedin_url: leadData.linkedin_url,
-        email: leadData.email
+        email: leadData.email,
+        enriched_linkedin_url: row.enriched_linkedin_url,
+        enriched_email: row.enriched_email
       });
     } else {
       // No data found in either location

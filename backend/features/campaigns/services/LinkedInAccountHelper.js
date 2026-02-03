@@ -5,6 +5,7 @@
 const { pool } = require('../../../shared/database/connection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const unipileService = require('./unipileService');
+const logger = require('../../../core/utils/logger');
 /**
  * Get all available LinkedIn accounts for a tenant/user (for account fallback)
  */
@@ -164,6 +165,15 @@ async function sendConnectionRequestWithFallback(
   primaryAccountId,
   allAccounts
 ) {
+  logger.info('[LinkedInAccountHelper] sendConnectionRequestWithFallback called', {
+    employeeUrl: employee.profile_url,
+    employeeName: employee.fullname,
+    hasMessage: !!message,
+    userWantsMessage,
+    primaryAccountId,
+    totalAccounts: allAccounts?.length || 0
+  });
+  
   // Filter out the primary account from fallback list
   const fallbackAccounts = allAccounts.filter(acc => acc.unipile_account_id !== primaryAccountId);
   const accountsToTry = [
@@ -183,8 +193,27 @@ async function sendConnectionRequestWithFallback(
     // Strategy 1: If user wants message, try with message first
     if (userWantsMessage && message && !triedStrategies.has(`${accountId}:with_message`)) {
       triedStrategies.add(`${accountId}:with_message`);
+      
+      logger.info('[LinkedInAccountHelper] Trying connection with message', {
+        accountId,
+        accountName,
+        employeeName: employee.fullname
+      });
+      
       const result = await unipileService.sendConnectionRequest(employee, message, accountId);
+      
+      logger.info('[LinkedInAccountHelper] Connection with message result', {
+        accountId,
+        success: result.success,
+        error: result.error,
+        isRateLimit: result.isRateLimit
+      });
+      
       if (result.success) {
+        logger.info('[LinkedInAccountHelper] Connection request successful with message', {
+          accountName,
+          employeeName: employee.fullname
+        });
         return { ...result, accountUsed: accountName, strategy: 'with_message' };
       }
       // Track the error reason
@@ -222,9 +251,29 @@ async function sendConnectionRequestWithFallback(
     // Strategy 2: Try without message (unlimited)
     if (!triedStrategies.has(`${accountId}:without_message`)) {
       triedStrategies.add(`${accountId}:without_message`);
+      
+      logger.info('[LinkedInAccountHelper] Trying connection without message', {
+        accountId,
+        accountName,
+        employeeName: employee.fullname
+      });
+      
       const result = await unipileService.sendConnectionRequest(employee, null, accountId);
+      
+      logger.info('[LinkedInAccountHelper] Connection without message result', {
+        accountId,
+        success: result.success,
+        error: result.error,
+        isRateLimit: result.isRateLimit
+      });
+      
       if (result.success) {
         const strategy = userWantsMessage ? 'fallback_to_without_message' : 'without_message';
+        logger.info('[LinkedInAccountHelper] Connection request successful without message', {
+          accountName,
+          employeeName: employee.fullname,
+          strategy
+        });
         return { 
           ...result, 
           accountUsed: accountName, 
