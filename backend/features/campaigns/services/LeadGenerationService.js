@@ -67,6 +67,56 @@ const {
 const { saveLeadsToCampaign } = require('./LeadSaveService');
 const { createLeadGenerationActivity } = require('./CampaignActivityService');
 const CampaignModel = require('../models/CampaignModel');
+
+/**
+ * Select leads with company diversity - one lead per company
+ * Ensures daily campaign targets different companies for better outreach
+ * @param {Array} employees - List of employees
+ * @param {number} limit - Maximum leads to select
+ * @returns {Array} Diverse leads (one per company)
+ */
+function selectLeadsWithCompanyDiversity(employees, limit) {
+  if (!employees || employees.length === 0) return [];
+  
+  const selectedLeads = [];
+  const usedCompanyIds = new Set();
+  const usedCompanyDomains = new Set();
+  
+  // First pass: Select one lead per unique company
+  for (const employee of employees) {
+    if (selectedLeads.length >= limit) break;
+    
+    // Get company identifier (prefer company_id, fallback to domain)
+    const companyId = employee.company_id || employee.organization?.id;
+    const companyDomain = employee.company_domain || employee.organization?.primary_domain;
+    const companyName = employee.company_name || employee.organization?.name;
+    
+    // Check if we already have someone from this company
+    let isDuplicate = false;
+    
+    if (companyId && usedCompanyIds.has(companyId)) {
+      isDuplicate = true;
+    } else if (companyDomain && usedCompanyDomains.has(companyDomain.toLowerCase())) {
+      isDuplicate = true;
+    }
+    
+    if (!isDuplicate) {
+      selectedLeads.push(employee);
+      if (companyId) usedCompanyIds.add(companyId);
+      if (companyDomain) usedCompanyDomains.add(companyDomain.toLowerCase());
+    }
+  }
+  
+  logger.info('[executeLeadGeneration] Company diversity selection', {
+    totalEmployees: employees.length,
+    selectedLeads: selectedLeads.length,
+    uniqueCompanies: usedCompanyDomains.size,
+    limit
+  });
+  
+  return selectedLeads;
+}
+
 /**
  * Execute lead generation step with daily limit support
  * @param {string} campaignId - Campaign ID
@@ -394,13 +444,14 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     }
     // CRITICAL: Filter out any leads that already exist in the tenant's campaigns
     // This is a safety check in case the search service couldn't exclude them at query level
+    let filteredOut = 0; // Initialize outside the if block
     if (employees.length > 0 && existingLeadIds.size > 0) {
       const originalCount = employees.length;
       employees = employees.filter(emp => {
         const empId = emp.id || emp.apollo_person_id;
         return empId && !existingLeadIds.has(empId);
       });
-      const filteredOut = originalCount - employees.length;
+      filteredOut = originalCount - employees.length;
       if (filteredOut > 0) {
         logger.info('[executeLeadGeneration] Filtered duplicates', {
           campaignId,
@@ -562,10 +613,14 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       fromSource
     });
 
+    // STEP 1.5: Apply company diversity - select one lead per company
+    // This ensures daily campaigns target different companies for better outreach
+    const diverseEmployees = selectLeadsWithCompanyDiversity(employeesList, dailyLimit);
+
     // STEP 2: Automatic enrichment of search results
     // Apollo search returns obfuscated data (no emails, no LinkedIn URLs)
     // We must enrich each lead to get full contact details
-    let enrichedEmployees = employeesList;
+    let enrichedEmployees = diverseEmployees;
     let enrichmentStats = {
       attempted: 0,
       succeeded: 0,
@@ -573,16 +628,16 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       skipped: 0
     };
 
-    if (ApolloRevealService && fromSource !== 'database' && employeesList.length > 0) {
+    if (ApolloRevealService && fromSource !== 'database' && diverseEmployees.length > 0) {
       logger.info('[executeLeadGeneration] Starting automatic enrichment', {
         campaignId,
-        leadsToEnrich: employeesList.length,
+        leadsToEnrich: diverseEmployees.length,
         source: fromSource
       });
 
       enrichedEmployees = [];
       
-      for (const employee of employeesList) {
+      for (const employee of diverseEmployees) {
         const personId = employee.id || employee.apollo_person_id;
         
         // Skip if already has email (already enriched)
@@ -603,8 +658,9 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
         enrichmentStats.attempted++;
 
         try {
-          // Call enrichment API (costs credits: 1 for email, 8 for phone)
-          const enrichResult = await ApolloRevealService.revealPersonEmail(personId);
+          // Call enrichment API (costs credits: 2 for email, 10 for phone)
+          // Use enrichPersonDetails which returns full person data including name
+          const enrichResult = await ApolloRevealService.enrichPersonDetails(personId);
           
           if (enrichResult.success && enrichResult.person) {
             // Merge enriched data with search data
@@ -667,7 +723,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
 
         // Rate limiting: small delay between enrichment calls to avoid API throttling
         // Configurable via environment variable (default: 200ms)
-        if (enrichmentStats.attempted < employeesList.length) {
+        if (enrichmentStats.attempted < diverseEmployees.length) {
           const enrichmentDelayMs = parseInt(process.env.APOLLO_ENRICHMENT_DELAY_MS || '200', 10);
           await new Promise(resolve => setTimeout(resolve, enrichmentDelayMs));
         }
@@ -704,7 +760,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     logger.info('[executeLeadGeneration] Calling saveLeadsToCampaign', {
       campaignId,
       tenantId,
-      leadsCount: employeesList.length
+      leadsCount: diverseEmployees.length
     });
     
     // Save enriched leads to campaign_leads table (only the daily limit)
@@ -793,7 +849,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     }
     return { 
       success: true, 
-      leadsFound: employeesList.length,
+      leadsFound: diverseEmployees.length,
       leadsSaved: savedCount,
       leadsEnriched: enrichmentStats.succeeded,
       enrichmentStats: enrichmentStats,

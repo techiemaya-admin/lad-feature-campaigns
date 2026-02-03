@@ -8,14 +8,19 @@ const { getSchema } = require('../../../core/utils/schemaHelper');
 const logger = require('../../../core/utils/logger');
 /**
  * Check if lead already exists in campaign
+ * FIXED: Check both 'id' and 'apollo_person_id' fields in lead_data
+ * because saveLeadsToCampaign stores sourceId as 'id', not 'apollo_person_id'
  */
 async function checkLeadExists(campaignId, apolloPersonId, req = null) {
   try {
     // Per TDD: Use dynamic schema
     const schema = getSchema(req);
+    // Check both 'id' and 'apollo_person_id' fields since different code paths use different names
     const existingLead = await pool.query(
       `SELECT id FROM ${schema}.campaign_leads 
-       WHERE campaign_id = $1 AND lead_data->>'apollo_person_id' = $2 AND is_deleted = FALSE`,
+       WHERE campaign_id = $1 
+         AND (lead_data->>'id' = $2 OR lead_data->>'apollo_person_id' = $2)
+         AND is_deleted = FALSE`,
       [campaignId, String(apolloPersonId)]
     );
     return existingLead.rows.length > 0 ? existingLead.rows[0] : null;
@@ -80,12 +85,23 @@ async function saveLeadToCampaign(campaignId, tenantId, leadId, snapshot, leadDa
     campaignId
   });
   
+  // Extract fields from leadData for individual columns
+  const firstName = leadData.first_name || null;
+  const lastName = leadData.last_name || null;
+  const email = leadData.email || null;
+  const linkedinUrl = leadData.linkedin_url || null;
+  const companyName = leadData.company_name || null;
+  const title = leadData.title || null;
+  const phone = leadData.phone || null;
+  
   const insertResult = await pool.query(
     `INSERT INTO ${schema}.campaign_leads 
-     (tenant_id, campaign_id, lead_id, status, snapshot, lead_data, created_at)
-     VALUES ($1, $2, $3, 'active', $4, $5, CURRENT_TIMESTAMP)
+     (tenant_id, campaign_id, lead_id, status, snapshot, lead_data, 
+      first_name, last_name, email, linkedin_url, company_name, title, phone, created_at)
+     VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP)
      RETURNING id`,
-    [tenantId, campaignId, leadId, snapshot, JSON.stringify(leadData)]
+    [tenantId, campaignId, leadId, snapshot, JSON.stringify(leadData),
+     firstName, lastName, email, linkedinUrl, companyName, title, phone]
   );
   return insertResult.rows[0].id;
 }

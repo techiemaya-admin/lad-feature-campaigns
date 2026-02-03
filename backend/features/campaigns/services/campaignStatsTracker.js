@@ -5,6 +5,9 @@
  */
 const { pool } = require('../../../shared/database/connection');
 const { campaignEventsService } = require('./campaignEventsService');
+const { getSchema } = require('../../../core/utils/schemaHelper');
+const logger = require('../../../core/utils/logger');
+
 class CampaignStatsTracker {
   /**
    * Track campaign action and update stats atomically
@@ -24,44 +27,46 @@ class CampaignStatsTracker {
       errorMessage,
       responseData
     } = metadata;
+    
+    const schema = getSchema(null);
+    
     try {
-      // Use transaction for atomic updates
-      await db.transaction(async (trx) => {
-        // 1. Try to update campaign stats based on action type (optional - may not have columns)
-        const updateField = this._getStatsField(actionType);
-        if (updateField) {
-          try {
-            await trx('campaigns')
-              .where({ id: campaignId })
-              .increment(updateField, 1);
-          } catch (updateErr) {
-            // Column may not exist - that's OK, continue with analytics insert
-          }
-        }
-        // 2. Insert into campaign_analytics for real-time tracking (THIS IS THE MAIN PURPOSE)
-        try {
-          await trx('campaign_analytics').insert({
-            campaign_id: campaignId,
-            lead_id: leadId,
-            action_type: actionType,
-            platform: channel,
-            status: status,
-            lead_name: leadName,
-            lead_phone: leadPhone,
-            lead_email: leadEmail,
-            message_content: messageContent,
-            error_message: errorMessage,
-            response_data: responseData ? JSON.stringify(responseData) : null,
-            created_at: new Date()
-          });
-        } catch (error) {
-          throw error; // Re-throw so we know if analytics insert failed
-        }
+      // Insert into campaign_analytics for real-time tracking using pool
+      await pool.query(
+        `INSERT INTO ${schema}.campaign_analytics 
+         (campaign_id, lead_id, action_type, platform, status, lead_name, lead_phone, lead_email, message_content, error_message, response_data, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())`,
+        [
+          campaignId,
+          leadId,
+          actionType,
+          channel,
+          status,
+          leadName,
+          leadPhone,
+          leadEmail,
+          messageContent,
+          errorMessage,
+          responseData ? JSON.stringify(responseData) : null
+        ]
+      );
+      
+      logger.info('[CampaignStatsTracker] Action tracked', {
+        campaignId: campaignId?.substring(0, 8),
+        actionType,
+        status,
+        channel
       });
-      // 3. Fetch updated stats and emit event for SSE
+      
+      // Emit stats update event
       await this._emitStatsUpdate(campaignId);
     } catch (error) {
-      throw error;
+      logger.error('[CampaignStatsTracker] Failed to track action', {
+        campaignId,
+        actionType,
+        error: error.message
+      });
+      // Don't throw - tracking failures shouldn't break the main flow
     }
   }
   /**
@@ -69,6 +74,7 @@ class CampaignStatsTracker {
    * @param {Array} actions - [{ campaignId, actionType, metadata }]
    */
   async trackBatch(actions) {
+    const schema = getSchema(null);
     const groupedByCampaign = actions.reduce((acc, action) => {
       if (!acc[action.campaignId]) {
         acc[action.campaignId] = [];
@@ -76,44 +82,20 @@ class CampaignStatsTracker {
       acc[action.campaignId].push(action);
       return acc;
     }, {});
+    
     for (const [campaignId, campaignActions] of Object.entries(groupedByCampaign)) {
       try {
-        await db.transaction(async (trx) => {
-          // Aggregate increments to avoid multiple updates
-          const increments = {};
-          const activities = [];
-          for (const action of campaignActions) {
-            const field = this._getStatsField(action.actionType);
-            if (field) {
-              increments[field] = (increments[field] || 0) + 1;
-            }
-            activities.push({
-              campaign_id: campaignId,
-              lead_id: action.metadata?.leadId,
-              action_type: action.actionType,
-              channel: action.metadata?.channel || 'linkedin',
-              created_at: new Date()
-            });
-          }
-          // Batch update campaign stats
-          for (const [field, count] of Object.entries(increments)) {
-            await trx('campaigns')
-              .where({ id: campaignId })
-              .increment(field, count);
-          }
-          // Batch insert activities
-          if (activities.length > 0) {
-            try {
-              await trx('campaign_activities').insert(activities);
-            } catch (error) {
-            }
-          }
-        });
+        // Insert each action individually
+        for (const action of campaignActions) {
+          await this.trackAction(campaignId, action.actionType, action.metadata);
+        }
         await this._emitStatsUpdate(campaignId);
       } catch (error) {
+        logger.error('[CampaignStatsTracker] Batch track error', { campaignId, error: error.message });
       }
     }
   }
+  
   /**
    * Handle external async events (like replies from webhooks)
    * Ensures idempotency to prevent duplicate counting
@@ -123,63 +105,108 @@ class CampaignStatsTracker {
    * @param {string} externalId - Unique identifier from external system
    */
   async trackReply(campaignId, leadId, channel, externalId) {
+    const schema = getSchema(null);
+    
     try {
-      await db.transaction(async (trx) => {
-        // Check if this reply was already processed
-        const existing = await trx('campaign_activities')
-          .where({
-            campaign_id: campaignId,
-            lead_id: leadId,
-            action_type: 'REPLY_RECEIVED',
-            external_id: externalId
-          })
-          .first();
-        if (existing) {
-          return;
-        }
-        // Increment replied_count
-        await trx('campaigns')
-          .where({ id: campaignId })
-          .increment('replied_count', 1);
-        // Record activity with external_id for idempotency
-        await trx('campaign_activities').insert({
-          campaign_id: campaignId,
-          lead_id: leadId,
-          action_type: 'REPLY_RECEIVED',
-          channel: channel,
-          external_id: externalId,
-          created_at: new Date()
-        });
+      // Check if this reply was already processed
+      const existing = await pool.query(
+        `SELECT id FROM ${schema}.campaign_analytics 
+         WHERE campaign_id = $1 AND lead_id = $2 AND action_type = $3`,
+        [campaignId, leadId, 'REPLY_RECEIVED']
+      );
+      
+      if (existing.rows.length > 0) {
+        logger.info('[CampaignStatsTracker] Reply already tracked, skipping', { campaignId, leadId });
+        return;
+      }
+      
+      // Track the reply
+      await this.trackAction(campaignId, 'REPLY_RECEIVED', {
+        leadId,
+        channel,
+        status: 'success'
       });
+      
       await this._emitStatsUpdate(campaignId);
     } catch (error) {
-      throw error;
+      logger.error('[CampaignStatsTracker] Failed to track reply', { campaignId, error: error.message });
     }
   }
+  
   /**
    * Get current stats for a campaign with per-platform breakdown
    * @param {string} campaignId 
    * @returns {object} Campaign stats with platform_metrics
    */
   async getStats(campaignId) {
+    const schema = getSchema(null);
+    
     try {
       // Get total leads count from campaign_leads table
       const leadsResult = await pool.query(
-        'SELECT COUNT(*) as count FROM campaign_leads WHERE campaign_id = $1',
+        `SELECT COUNT(*) as count FROM ${schema}.campaign_leads WHERE campaign_id = $1`,
         [campaignId]
       );
       const totalLeads = parseInt(leadsResult.rows[0]?.count || 0);
       
       // Get stats from campaign_analytics with platform breakdown
       // ✅ Only count successful actions (status = 'success')
-      const analyticsResult = await pool.query(
-        `SELECT action_type, platform, COUNT(*) as count 
-         FROM campaign_analytics 
-         WHERE campaign_id = $1 AND status = $2 
-         GROUP BY action_type, platform`,
-        [campaignId, 'success']
-      );
-      const analyticsStats = analyticsResult.rows;
+      let analyticsStats = [];
+      
+      // Try campaign_analytics first
+      try {
+        const analyticsResult = await pool.query(
+          `SELECT action_type, platform, COUNT(*) as count 
+           FROM ${schema}.campaign_analytics 
+           WHERE campaign_id = $1 AND status = $2 
+           GROUP BY action_type, platform`,
+          [campaignId, 'success']
+        );
+        analyticsStats = analyticsResult.rows;
+      } catch (err) {
+        logger.warn('[CampaignStatsTracker] campaign_analytics query failed', { error: err.message });
+      }
+      
+      // If no stats from campaign_analytics, try campaign_lead_activities
+      if (analyticsStats.length === 0) {
+        try {
+          const activitiesResult = await pool.query(
+            `SELECT action_type, channel as platform, COUNT(*) as count 
+             FROM ${schema}.campaign_lead_activities 
+             WHERE campaign_id = $1 AND status = $2 AND is_deleted = false
+             GROUP BY action_type, channel`,
+            [campaignId, 'delivered']
+          );
+          
+          // Map activity types to analytics action types
+          analyticsStats = activitiesResult.rows.map(row => {
+            let mappedActionType = row.action_type;
+            // Map campaign_lead_activities action_type to campaign_analytics action_type
+            const actionTypeMap = {
+              'linkedin_connect': 'CONNECTION_SENT',
+              'linkedin_visit': 'PROFILE_VISITED',
+              'linkedin_message': 'MESSAGE_SENT',
+              'connection_request': 'CONNECTION_SENT',
+              'profile_visit': 'PROFILE_VISITED',
+              'send_message': 'MESSAGE_SENT'
+            };
+            mappedActionType = actionTypeMap[row.action_type] || row.action_type.toUpperCase();
+            
+            return {
+              action_type: mappedActionType,
+              platform: row.platform || 'linkedin',
+              count: row.count
+            };
+          });
+          
+          logger.info('[CampaignStatsTracker] Using campaign_lead_activities fallback', {
+            campaignId: campaignId?.substring(0, 8),
+            statsCount: analyticsStats.length
+          });
+        } catch (activitiesErr) {
+          logger.warn('[CampaignStatsTracker] campaign_lead_activities query failed', { error: activitiesErr.message });
+        }
+      }
       // Build platform metrics
       const platformMetrics = {
         linkedin: { sent: 0, connected: 0, replied: 0, profile_views: 0 },

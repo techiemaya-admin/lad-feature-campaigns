@@ -173,12 +173,28 @@ Generate a concise, professional summary highlighting their role, expertise, and
               // Add summary to lead_data
               currentLeadData.profile_summary = summary;
               currentLeadData.profile_summary_generated_at = new Date().toISOString();
-              // Update campaign_leads with summary
+              
+              // Extract enriched contact details from profileData (from Unipile)
+              const enrichedEmail = profileData.email || null;
+              const enrichedPhone = profileData.phone || null;
+              
+              // If we got enriched data, add it to lead_data
+              if (enrichedEmail) {
+                currentLeadData.email = enrichedEmail;
+              }
+              if (enrichedPhone) {
+                currentLeadData.phone = enrichedPhone;
+              }
+              
+              // Update campaign_leads with summary AND enriched contact details
               await pool.query(
                 `UPDATE ${schema}.campaign_leads 
-                 SET lead_data = $1, updated_at = CURRENT_TIMESTAMP 
-                 WHERE id = $2 AND is_deleted = FALSE`,
-                [JSON.stringify(currentLeadData), lead.id]
+                 SET lead_data = $1, 
+                     email = $2, 
+                     phone = $3,
+                     updated_at = CURRENT_TIMESTAMP 
+                 WHERE id = $4 AND is_deleted = FALSE`,
+                [JSON.stringify(currentLeadData), enrichedEmail, enrichedPhone, lead.id]
               );
             } catch (dbErr) {
             }

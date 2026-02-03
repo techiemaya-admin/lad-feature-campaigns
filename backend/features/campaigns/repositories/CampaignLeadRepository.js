@@ -3,7 +3,7 @@
  * SQL queries only - no business logic
  */
 
-const { pool } = require('../utils/dbConnection');
+const { pool } = require('../../../shared/database/connection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const { randomUUID } = require('crypto');
 class CampaignLeadRepository {
@@ -323,6 +323,90 @@ class CampaignLeadRepository {
       });
       return null;
     }
+  }
+
+  /**
+   * Update lead with enriched data (email, LinkedIn URL)
+   * Used after Apollo enrichment API reveals contact details
+   * @param {string} leadId - Lead ID (from leads table)
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} enrichedData - Enriched data { email, linkedin_url, first_name, last_name }
+   * @param {Object} req - Request object (optional)
+   * @returns {Object} Updated lead row
+   */
+  static async updateLeadEnrichmentData(leadId, tenantId, enrichedData, req = null) {
+    const schema = getSchema(req);
+    const { email, linkedin_url, first_name, last_name } = enrichedData;
+    
+    // Update the leads table
+    const query = `
+      UPDATE ${schema}.leads 
+      SET 
+        email = COALESCE($1, email),
+        linkedin_url = COALESCE($2, linkedin_url),
+        first_name = COALESCE($3, first_name),
+        last_name = COALESCE($4, last_name),
+        updated_at = NOW()
+      WHERE id = $5 AND tenant_id = $6
+      RETURNING id, email, linkedin_url, first_name, last_name
+    `;
+    
+    const result = await pool.query(query, [
+      email || null,
+      linkedin_url || null,
+      first_name || null,
+      last_name || null,
+      leadId,
+      tenantId
+    ]);
+    
+    // Also update campaign_leads with enriched columns AND update snapshot with name
+    // This ensures subsequent steps don't re-enrich the same lead
+    if (linkedin_url || email || first_name || last_name) {
+      try {
+        // Build the full name for display
+        const fullName = first_name && last_name 
+          ? `${first_name} ${last_name}`.trim()
+          : first_name || last_name || null;
+        
+        await pool.query(`
+          UPDATE ${schema}.campaign_leads
+          SET 
+            enriched_email = COALESCE($1, enriched_email),
+            enriched_linkedin_url = COALESCE($2, enriched_linkedin_url),
+            enriched_at = NOW(),
+            updated_at = NOW(),
+            snapshot = CASE 
+              WHEN $5::text IS NOT NULL OR $6::text IS NOT NULL THEN
+                jsonb_set(
+                  jsonb_set(
+                    COALESCE(snapshot::jsonb, '{}'::jsonb),
+                    '{first_name}', COALESCE(to_jsonb($5::text), snapshot::jsonb->'first_name')
+                  ),
+                  '{last_name}', COALESCE(to_jsonb($6::text), snapshot::jsonb->'last_name')
+                )
+              ELSE snapshot
+            END
+          WHERE lead_id = $3 AND tenant_id = $4 AND is_deleted = FALSE
+        `, [
+          email || null,
+          linkedin_url || null,
+          leadId,
+          tenantId,
+          first_name || null,
+          last_name || null
+        ]);
+      } catch (updateErr) {
+        // Log but don't fail - leads table update is the primary goal
+        const logger = require('../../../core/utils/logger');
+        logger.warn('[CampaignLeadRepository.updateLeadEnrichmentData] Failed to update campaign_leads', {
+          error: updateErr.message,
+          leadId
+        });
+      }
+    }
+    
+    return result.rows[0];
   }
 }
 module.exports = CampaignLeadRepository;
