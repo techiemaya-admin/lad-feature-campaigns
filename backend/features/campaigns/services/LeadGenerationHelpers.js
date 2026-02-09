@@ -30,12 +30,34 @@ async function checkLeadExists(campaignId, apolloPersonId, req = null) {
 }
 /**
  * Extract lead fields from employee data
+ * FIX: Enhanced name extraction with better fallback logic
  */
 function extractLeadFields(employee) {
-  const nameParts = (employee.name || employee.employee_name || '').split(' ');
+  // Extract name components with multiple fallbacks
+  let fullName = employee.name || employee.employee_name || '';
+  let firstName = employee.first_name || null;
+  let lastName = employee.last_name || null;
+  
+  // If we have a full name but missing first/last, parse it
+  if (fullName && (!firstName || !lastName)) {
+    const nameParts = fullName.trim().split(/\s+/);
+    if (!firstName && nameParts.length > 0) {
+      firstName = nameParts[0];
+    }
+    if (!lastName && nameParts.length > 1) {
+      lastName = nameParts.slice(1).join(' ');
+    }
+  }
+  
+  // If no full name but have first/last, construct it
+  if (!fullName && (firstName || lastName)) {
+    fullName = [firstName, lastName].filter(Boolean).join(' ');
+  }
+  
   return {
-    firstName: nameParts[0] || employee.first_name || null,
-    lastName: nameParts.slice(1).join(' ') || employee.last_name || null,
+    firstName: firstName,
+    lastName: lastName,
+    fullName: fullName || null,
     email: employee.email || employee.employee_email || employee.work_email || null,
     linkedinUrl: employee.linkedin_url || employee.employee_linkedin_url || employee.linkedin || null,
     companyName: employee.company_name || employee.organization?.name || employee.company?.name || null,

@@ -4,6 +4,7 @@
  */
 const { pool } = require('../../../shared/database/connection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
+const logger = require('../../../core/utils/logger');
 const axios = require('axios');
 const BACKEND_URL = process.env.BACKEND_INTERNAL_URL || process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL;
 if (!BACKEND_URL) {
@@ -80,19 +81,15 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
       }
     }
     if (leadDataResult.rows.length === 0) {
-      console.log('[getLeadData] No rows found for campaignLeadId:', campaignLeadId);
+      logger.debug('[getLeadData] No rows found for campaignLeadId', { campaignLeadId });
       return null;
     }
     const row = leadDataResult.rows[0];
-    console.log('[getLeadData] Raw row data:', {
+    logger.debug('[getLeadData] Raw row data', {
       campaignLeadId,
       hasLeadData: !!row.lead_data,
       hasSnapshot: !!row.snapshot,
-      hasLeadId: !!row.lead_id,
-      linkedin_url: row.linkedin_url,
-      email: row.email,
-      first_name: row.first_name,
-      last_name: row.last_name
+      hasLeadId: !!row.lead_id
     });
     // PRIORITY: Determine campaign type
     // - Outbound campaigns (Apollo): Have lead_data or snapshot in campaign_leads
@@ -103,7 +100,7 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
     const isOutbound = !!(row.lead_data || row.snapshot);
     
     if (row.lead_id && !isOutbound) {
-      console.log('[getLeadData] Has lead_id and NO lead_data - trying inbound path:', {
+      logger.debug('[getLeadData] Has lead_id and NO lead_data - trying inbound path', {
         campaignLeadId,
         lead_id: row.lead_id,
         has_linkedin_url_in_row: !!row.linkedin_url
@@ -116,17 +113,13 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
            WHERE id = $1 AND tenant_id = $2`,
           [row.lead_id, row.tenant_id]
         );
-        console.log('[getLeadData] Leads table query result:', {
-          campaignLeadId,
-          rowsFound: leadsTableResult.rows.length
-        });
-        console.log('[getLeadData] Leads table query result:', {
+        logger.debug('[getLeadData] Leads table query result', {
           campaignLeadId,
           rowsFound: leadsTableResult.rows.length
         });
         if (leadsTableResult.rows.length > 0) {
           const leadRecord = leadsTableResult.rows[0];
-          console.log('[getLeadData] Found lead in leads table:', {
+          logger.debug('[getLeadData] Found lead in leads table', {
             campaignLeadId,
             has_linkedin_url: !!leadRecord.linkedin_url
           });
@@ -142,7 +135,7 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
             phone: leadRecord.phone
           };
         } else {
-          console.log('[getLeadData] No lead found in leads table - using campaign_leads fallback with merge');
+          logger.debug('[getLeadData] No lead found in leads table - using campaign_leads fallback with merge');
           // Fallback to campaign_leads data if exists
           leadData = row.lead_data || row.snapshot || {};
           leadData = typeof leadData === 'string' ? JSON.parse(leadData) : leadData;
@@ -181,7 +174,7 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
         }
       }
     } else if (isOutbound) {
-      console.log('[getLeadData] Outbound campaign path - using lead_data/snapshot with merge:', {
+      logger.debug('[getLeadData] Outbound campaign path - using lead_data/snapshot with merge', {
         campaignLeadId,
         has_lead_id: !!row.lead_id,
         has_linkedin_url_in_row: !!row.linkedin_url
@@ -210,14 +203,10 @@ async function getLeadData(campaignLeadId, req = null, tenantId = null) {
         leadData.name = [row.first_name, row.last_name].filter(Boolean).join(' ');
       }
       
-      console.log('[getLeadData] Final leadData for outbound campaign:', {
+      logger.debug('[getLeadData] Final leadData for outbound campaign', {
         campaignLeadId,
         hasLinkedinUrl: !!leadData.linkedin_url,
-        hasEmail: !!leadData.email,
-        linkedin_url: leadData.linkedin_url,
-        email: leadData.email,
-        enriched_linkedin_url: row.enriched_linkedin_url,
-        enriched_email: row.enriched_email
+        hasEmail: !!leadData.email
       });
     } else {
       // No data found in either location

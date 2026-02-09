@@ -15,13 +15,21 @@ async function getAllLinkedInAccountsForTenant(tenantId, userId) {
     // Use tenantId directly (LAD standard - no organization_id conversion needed)
     const resolvedTenantId = tenantId || userId;
     const schema = getSchema({ user: { tenant_id: resolvedTenantId } });
-    // Try social_linkedin_accounts table first
+    
+    // CRITICAL: Always filter by tenant_id for tenant isolation
+    if (!tenantId) {
+      logger.warn('[LinkedInAccountHelper] No tenantId provided - cannot retrieve accounts');
+      return accounts;
+    }
+    
+    // Query social_linkedin_accounts table with tenant filter
     try {
       const query = `
         SELECT id, tenant_id, account_name, provider_account_id, status
         FROM ${schema}.social_linkedin_accounts
         WHERE tenant_id = $1 
         AND status = 'active'
+        AND is_deleted = false
         AND provider_account_id IS NOT NULL
         ORDER BY created_at DESC
       `;
@@ -32,32 +40,32 @@ async function getAllLinkedInAccountsForTenant(tenantId, userId) {
           unipile_account_id: row.provider_account_id,
           account_name: row.account_name
         })));
+        
+        logger.info('[LinkedInAccountHelper] Found LinkedIn accounts for tenant', {
+          tenantId,
+          accountCount: accounts.length,
+          accountNames: accounts.map(a => a.account_name)
+        });
+      } else {
+        logger.warn('[LinkedInAccountHelper] No LinkedIn accounts found for tenant', {
+          tenantId
+        });
       }
-    } catch (tddError) {
-      // TDD schema not available, continue to global search
+    } catch (queryError) {
+      logger.error('[LinkedInAccountHelper] Error querying LinkedIn accounts', {
+        tenantId,
+        error: queryError.message
+      });
     }
-    // If no accounts found, try global search
-    if (accounts.length === 0) {
-      try {
-        const globalQuery = await pool.query(
-          `SELECT id, provider_account_id, account_name
-           FROM ${schema}.social_linkedin_accounts
-           WHERE status = 'active'
-           AND provider_account_id IS NOT NULL
-           ORDER BY created_at DESC`
-        );
-        if (globalQuery.rows.length > 0) {
-          accounts.push(...globalQuery.rows.map(row => ({
-            id: row.id,
-            unipile_account_id: row.provider_account_id,
-            account_name: row.account_name || 'LinkedIn Account'
-          })));
-        }
-      } catch (globalError) {
-        // Ignore global search errors
-      }
-    }
+    
+    // REMOVED: Global search fallback that violated tenant isolation
+    // Each tenant must have their own LinkedIn accounts configured
+    
   } catch (error) {
+    logger.error('[LinkedInAccountHelper] Error in getAllLinkedInAccountsForTenant', {
+      tenantId,
+      error: error.message
+    });
   }
   return accounts;
 }
@@ -118,6 +126,7 @@ async function getLinkedInAccountForExecution(tenantId, userId) {
       `SELECT id, provider_account_id FROM ${schema}.social_linkedin_accounts
        WHERE tenant_id = $1 
        AND status = 'active'
+       AND is_deleted = false
        AND provider_account_id IS NOT NULL
        ORDER BY created_at DESC LIMIT 1`,
       [tenantId]
@@ -134,6 +143,7 @@ async function getLinkedInAccountForExecution(tenantId, userId) {
       accountResult = await pool.query(
         `SELECT id, provider_account_id FROM ${schema}.social_linkedin_accounts 
          WHERE status = 'active'
+         AND is_deleted = false
          AND provider_account_id IS NOT NULL
          ORDER BY created_at DESC LIMIT 1`
       );
@@ -157,21 +167,28 @@ async function getLinkedInAccountForExecution(tenantId, userId) {
  * 2. If limit exceeded: Fallback to without message
  * 3. If still fails: Try another account
  * 4. If all accounts exhausted: Return error for UI
+ * 
+ * @param {Object} options - Options object
+ * @param {string} options.tenantId - Tenant ID for credit deduction
  */
 async function sendConnectionRequestWithFallback(
   employee,
   message,
   userWantsMessage,
   primaryAccountId,
-  allAccounts
+  allAccounts,
+  options = {}
 ) {
+  const { tenantId } = options;
+  
   logger.info('[LinkedInAccountHelper] sendConnectionRequestWithFallback called', {
     employeeUrl: employee.profile_url,
     employeeName: employee.fullname,
     hasMessage: !!message,
     userWantsMessage,
     primaryAccountId,
-    totalAccounts: allAccounts?.length || 0
+    totalAccounts: allAccounts?.length || 0,
+    tenantId
   });
   
   // Filter out the primary account from fallback list
@@ -200,7 +217,7 @@ async function sendConnectionRequestWithFallback(
         employeeName: employee.fullname
       });
       
-      const result = await unipileService.sendConnectionRequest(employee, message, accountId);
+      const result = await unipileService.sendConnectionRequest(employee, message, accountId, { tenantId });
       
       logger.info('[LinkedInAccountHelper] Connection with message result', {
         accountId,
@@ -258,7 +275,7 @@ async function sendConnectionRequestWithFallback(
         employeeName: employee.fullname
       });
       
-      const result = await unipileService.sendConnectionRequest(employee, null, accountId);
+      const result = await unipileService.sendConnectionRequest(employee, null, accountId, { tenantId });
       
       logger.info('[LinkedInAccountHelper] Connection without message result', {
         accountId,
@@ -372,7 +389,9 @@ async function verifyAccountReadyForCampaign(unipileAccountId) {
     try {
       const result = await pool.query(
         `SELECT id, status, updated_at FROM ${schema}.social_linkedin_accounts 
-         WHERE provider_account_id = $1 LIMIT 1`,
+         WHERE provider_account_id = $1 
+         AND is_deleted = false
+         LIMIT 1`,
         [unipileAccountId]
       );
       if (result.rows.length > 0) {

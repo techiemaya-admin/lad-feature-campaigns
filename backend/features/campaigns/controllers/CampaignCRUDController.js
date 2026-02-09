@@ -9,6 +9,10 @@ const { campaignStatsTracker } = require('../services/campaignStatsTracker');
 const { campaignEventsService } = require('../services/campaignEventsService');
 const { pool } = require('../../../shared/database/connection');
 const logger = require('../../../core/utils/logger');
+const AIMessageDataService = require('../services/AIMessageDataFetcher');
+const CampaignScheduleUtil = require('../utils/campaignScheduleUtil');
+const CampaignSchedulingService = require('../services/CampaignMultiDateScheduler');
+const { getCampaignCreditSummary } = require('../../../shared/middleware/credit_guard');
 
 class CampaignCRUDController {
   /**
@@ -46,10 +50,30 @@ class CampaignCRUDController {
                 platform_metrics: null
               };
             }
+            
+            // Get credit usage data from campaign metadata
+            // Debug: Log metadata to check if it's being retrieved
+            logger.debug('[Campaign List] Processing campaign credits', {
+              campaignId: campaign.id,
+              campaignName: campaign.name,
+              hasMetadata: !!campaign.metadata,
+              metadataType: typeof campaign.metadata,
+              metadata: campaign.metadata,
+              creditsValue: campaign.metadata?.total_credits_deducted
+            });
+            
+            let creditData = {
+              total_credits_deducted: parseFloat(campaign.metadata?.total_credits_deducted) || 0,
+              last_credit_update: campaign.metadata?.last_credit_update || null
+            };
+            
             return {
               ...campaign,
               steps: steps || [],
-              ...stats
+              ...stats,
+              credits: creditData,
+              total_credits_deducted: creditData.total_credits_deducted,
+              last_credit_update: creditData.last_credit_update
             };
           } catch (error) {
             return {
@@ -62,7 +86,13 @@ class CampaignCRUDController {
               replied_count: parseInt(campaign.replied_count) || 0,
               opened_count: parseInt(campaign.opened_count) || 0,
               clicked_count: parseInt(campaign.clicked_count) || 0,
-              platform_metrics: null
+              platform_metrics: null,
+              credits: {
+                total_credits_deducted: parseFloat(campaign.metadata?.total_credits_deducted) || 0,
+                last_credit_update: campaign.metadata?.last_credit_update || null
+              },
+              total_credits_deducted: parseFloat(campaign.metadata?.total_credits_deducted) || 0,
+              last_credit_update: campaign.metadata?.last_credit_update || null
             };
           }
         })
@@ -162,24 +192,54 @@ class CampaignCRUDController {
    * Create a new campaign
    */
   static async createCampaign(req, res) {
-    ;
+    logger.info('[CampaignCreate] CREATE CAMPAIGN REQUEST RECEIVED', {
+      hasBody: !!req.body,
+      bodyKeys: req.body ? Object.keys(req.body) : [],
+      hasUser: !!req.user,
+      userKeys: req.user ? Object.keys(req.user) : []
+    });
+    
     try {
       const tenantId = req.user?.tenantId;
       const userId = req.user?.userId || req.user?.user_id || req.user?.id;
+      
+      logger.info('[CampaignCreate] Authentication context', {
+        tenantId,
+        userId,
+        hasAuth: !!(tenantId && userId)
+      });
+      
       // Validate authentication
       if (!tenantId) {
+        logger.error('[CampaignCreate] Missing tenant ID');
         return res.status(401).json({
           success: false,
           error: 'Tenant ID is required. Please ensure you are authenticated.'
         });
       }
       if (!userId) {
+        logger.error('[CampaignCreate] Missing user ID');
         return res.status(401).json({
           success: false,
           error: 'User ID is required. Please ensure you are authenticated.'
         });
       }
-      const { name, status, config, steps, campaign_type, leads_per_day, inbound_lead_ids } = req.body;
+      const { name, status, config, steps, campaign_type, leads_per_day, inbound_lead_ids, campaign_start_date, campaign_end_date, conversationId } = req.body;
+      
+      logger.info('[CampaignCreate] Request payload parsed', {
+        name,
+        status,
+        hasConfig: !!config,
+        hasSteps: !!(steps && steps.length),
+        stepsCount: steps?.length,
+        campaign_type,
+        leads_per_day,
+        hasInboundLeads: !!(inbound_lead_ids && inbound_lead_ids.length),
+        campaign_start_date,
+        campaign_end_date,
+        conversationId,
+        hasConversationId: !!conversationId
+      });
 
       // Validate required fields
       if (!name) {
@@ -188,6 +248,51 @@ class CampaignCRUDController {
           error: 'Campaign name is required'
         });
       }
+
+      // Fetch message_data from ai_messages if conversationId is provided
+      let messageData = null;
+      let calculatedDates = null;
+      
+      if (conversationId) {
+        try {
+          logger.info('[CampaignCreate] Fetching message_data from ai_messages', {
+            conversationId,
+            tenantId
+          });
+
+          messageData = await AIMessageDataService.fetchMessageDataByConversation(
+            conversationId,
+            tenantId
+          );
+
+          if (messageData) {
+            // Calculate campaign dates from message_data using utility
+            calculatedDates = CampaignScheduleUtil.calculateCampaignDates(messageData);
+            
+            logger.info('[CampaignCreate] Campaign dates calculated from message_data', {
+              conversationId,
+              startDate: calculatedDates.startDate.toISOString(),
+              endDate: calculatedDates.endDate.toISOString(),
+              totalScheduleDates: calculatedDates.scheduleDates.length,
+              workingDays: calculatedDates.workingDaysStr
+            });
+          } else {
+            logger.warn('[CampaignCreate] No message_data found for conversationId, will use provided dates', {
+              conversationId,
+              tenantId
+            });
+          }
+        } catch (error) {
+          logger.error('[CampaignCreate] Error fetching/calculating dates from message_data', {
+            conversationId,
+            tenantId,
+            error: error.message,
+            stack: error.stack
+          });
+          // Continue with provided dates if message_data fetch fails
+        }
+      }
+      
       // Store campaign_type in config
       const campaignConfig = config || {};
       if (campaign_type) {
@@ -197,17 +302,61 @@ class CampaignCRUDController {
       if (leads_per_day !== undefined) {
         campaignConfig.leads_per_day = leads_per_day;
       }
+      
+      // Use calculated dates from message_data, or fall back to provided dates
+      const finalStartDate = calculatedDates?.startDate || campaign_start_date;
+      const finalEndDate = calculatedDates?.endDate || campaign_end_date;
+      
+      // Add campaign dates to config if provided or calculated
+      if (finalStartDate) {
+        campaignConfig.campaign_start_date = finalStartDate;
+      }
+      if (finalEndDate) {
+        campaignConfig.campaign_end_date = finalEndDate;
+      }
+      
+      // Store conversationId and schedule metadata in config
+      if (conversationId) {
+        campaignConfig.conversationId = conversationId;
+      }
+      if (calculatedDates) {
+        campaignConfig.working_days = calculatedDates.workingDaysStr;
+        campaignConfig.total_schedule_dates = calculatedDates.scheduleDates.length;
+      }
+      
+      logger.info('[CampaignCreate] Creating campaign with config', {
+        tenantId,
+        hasStartDate: !!finalStartDate,
+        hasEndDate: !!finalEndDate,
+        hasConversationId: !!conversationId,
+        hasCalculatedDates: !!calculatedDates,
+        configKeys: Object.keys(campaignConfig)
+      });
+      
+      // Calculate campaign duration if we have dates
+      let campaignDurationDays = null;
+      if (finalStartDate && finalEndDate) {
+        const start = new Date(finalStartDate);
+        const end = new Date(finalEndDate);
+        campaignDurationDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+      }
+      
       // Map frontend status 'active' to database status 'running'
       // Frontend uses: draft, active, paused, completed, stopped
       // Database uses: draft, running, paused, completed, stopped
       const dbStatus = status === 'active' ? 'running' : (status || 'draft');
-      // Create campaign
+      
+      // Create campaign with schedule data
       const campaign = await CampaignModel.create({
         name,
         status: dbStatus,
         createdBy: userId,
         config: campaignConfig,
-        inbound_lead_ids  // Pass inbound lead IDs to model
+        inbound_lead_ids,  // Pass inbound lead IDs to model
+        campaign_start_date: finalStartDate || null,
+        campaign_end_date: finalEndDate || null,
+        campaign_duration_days: campaignDurationDays,
+        working_days: calculatedDates?.workingDaysStr || null
       }, tenantId);
       
       logger.info('[CampaignCreate] Campaign created', { 
@@ -257,6 +406,57 @@ class CampaignCRUDController {
       }
       // NOTE: Inbound leads are already linked by CampaignModel.create() when inbound_lead_ids is passed
       // No need to link them again here to avoid duplicates
+      
+      // Schedule Cloud Tasks if we have calculated dates from message_data
+      if (calculatedDates && calculatedDates.scheduleDates && calculatedDates.scheduleDates.length > 0) {
+        try {
+          logger.info('[CampaignCreate] Scheduling Cloud Tasks for calculated dates', {
+            campaignId: campaign.id,
+            tenantId,
+            totalDates: calculatedDates.scheduleDates.length,
+            firstDate: calculatedDates.scheduleDates[0].toISOString(),
+            lastDate: calculatedDates.scheduleDates[calculatedDates.scheduleDates.length - 1].toISOString()
+          });
+          const schedulingResult = await CampaignSchedulingService.scheduleTasksForDates(
+            campaign.id,
+            tenantId,
+            calculatedDates.scheduleDates
+          );
+          
+          logger.info('🔍 [DEBUG BACKEND] Cloud Tasks scheduled:', {
+            totalScheduled: schedulingResult.totalScheduled,
+            totalFailed: schedulingResult.totalFailed
+          });
+
+          logger.info('[CampaignCreate] Cloud Tasks scheduling completed', {
+            campaignId: campaign.id,
+            tenantId,
+            totalScheduled: schedulingResult.totalScheduled,
+            totalFailed: schedulingResult.totalFailed
+          });
+
+          // Store scheduling result in campaign config for reference
+          await CampaignModel.update(campaign.id, tenantId, {
+            config: {
+              ...campaignConfig,
+              scheduling_result: {
+                totalScheduled: schedulingResult.totalScheduled,
+                totalFailed: schedulingResult.totalFailed,
+                scheduledAt: new Date().toISOString()
+              }
+            }
+          });
+        } catch (schedulingError) {
+          logger.error('[CampaignCreate] Error scheduling Cloud Tasks', {
+            campaignId: campaign.id,
+            tenantId,
+            error: schedulingError.message,
+            stack: schedulingError.stack
+          });
+          // Continue anyway - campaign is created, tasks can be rescheduled later
+        }
+      }
+      
       // If campaign is created with status='running' (mapped from 'active'), trigger immediate lead generation
       // This ensures leads are scraped right away when campaign is created and started
       if (campaign.status === 'running' || status === 'active') {

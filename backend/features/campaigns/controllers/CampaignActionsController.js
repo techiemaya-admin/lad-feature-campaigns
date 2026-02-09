@@ -6,6 +6,7 @@ const CampaignModel = require('../models/CampaignModel');
 const CampaignExecutionService = require('../services/CampaignExecutionService');
 const { campaignStatsTracker } = require('../services/campaignStatsTracker');
 const { campaignEventsService } = require('../services/campaignEventsService');
+const campaignDailyScheduler = require('../services/CampaignDailyScheduler');
 const logger = require('../../../core/utils/logger');
 
 class CampaignActionsController {
@@ -77,6 +78,49 @@ class CampaignActionsController {
       } catch (syncError) {
         logger.error('Synchronous error starting campaign', { error: syncError.message, campaignId: id });
       }
+
+      // Check if campaign has start_date and end_date for Cloud Tasks scheduling
+      if (campaign.campaign_start_date && campaign.campaign_end_date) {
+        try {
+          logger.info('[CampaignActions] Attempting to schedule Cloud Task', {
+            campaignId: id,
+            startDate: campaign.campaign_start_date,
+            endDate: campaign.campaign_end_date,
+            projectId: process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT_ID,
+            serviceUrl: process.env.CLOUD_RUN_SERVICE_URL || process.env.SERVICE_URL,
+            queueName: process.env.CLOUD_TASKS_QUEUE_NAME
+          });
+
+          const taskInfo = await campaignDailyScheduler.scheduleInitialTask({
+            id: campaign.id,
+            tenant_id: campaign.tenant_id,
+            campaign_start_date: campaign.campaign_start_date,
+            campaign_end_date: campaign.campaign_end_date
+          });
+          
+          logger.info('[CampaignActions] Cloud Task scheduled for daily execution', {
+            campaignId: id,
+            taskName: taskInfo.taskName,
+            scheduleTime: taskInfo.scheduleTime
+          });
+        } catch (scheduleError) {
+          logger.error('[CampaignActions] Failed to schedule Cloud Task', {
+            campaignId: id,
+            error: scheduleError.message,
+            stack: scheduleError.stack,
+            code: scheduleError.code
+          });
+          // Don't fail the start request if scheduling fails
+        }
+      } else {
+        logger.info('[CampaignActions] Campaign started without Cloud Task scheduling', {
+          campaignId: id,
+          reason: 'No start_date or end_date configured',
+          hasStartDate: !!campaign.campaign_start_date,
+          hasEndDate: !!campaign.campaign_end_date
+        });
+      }
+
       res.json({
         success: true,
         message: 'Campaign started successfully',

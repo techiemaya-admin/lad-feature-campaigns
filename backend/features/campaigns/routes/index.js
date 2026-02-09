@@ -10,6 +10,7 @@ const CampaignLeadsRevealController = require('../controllers/CampaignLeadsRevea
 const CampaignStatsController = require('../controllers/campaignStatsController');
 const CampaignAnalyticsController = require('../controllers/campaignAnalyticsController');
 const CampaignsStreamController = require('../controllers/campaignsStreamController');
+const CampaignDailyController = require('../controllers/CampaignDailyController');
 const linkedInRoutes = require('./linkedin');
 const { authenticateToken: jwtAuth, authenticateSSE: sseAuth } = require('../../../core/middleware/auth');
 const {
@@ -19,8 +20,38 @@ const {
   validatePagination,
   validateLeadIds
 } = require('../middleware/validation');
+
+// Cloud Tasks authentication middleware
+const validateCloudTasksAuth = (req, res, next) => {
+  const cloudTasksSecret = process.env.CLOUD_TASKS_SECRET;
+  
+  // If OIDC is configured, validate JWT token
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    // TODO: Implement OIDC token validation
+    // For now, allow if Bearer token present
+    return next();
+  }
+
+  // Fallback: Check shared secret
+  if (cloudTasksSecret) {
+    const requestSecret = req.headers['x-cloudtasks-secret'];
+    if (requestSecret !== cloudTasksSecret) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized'
+      });
+    }
+  }
+
+  next();
+};
+
 // LinkedIn integration (mount before /:id routes to avoid conflicts)
 router.use('/linkedin', linkedInRoutes);
+
+// NOTE: /run-daily endpoint is now in public.routes.js (mounted without JWT auth for Cloud Tasks)
+
 // Real-time campaigns stream (SSE)
 router.get('/stream', sseAuth, CampaignsStreamController.streamAllCampaigns);
 // Campaign CRUD operations
@@ -51,6 +82,10 @@ router.get('/:id/activities', jwtAuth, validateUuidParam('id'), validatePaginati
 router.post('/:id/start', jwtAuth, validateUuidParam('id'), CampaignController.startCampaign);
 router.post('/:id/pause', jwtAuth, validateUuidParam('id'), CampaignController.pauseCampaign);
 router.post('/:id/stop', jwtAuth, validateUuidParam('id'), CampaignController.stopCampaign);
+
+// Daily scheduling (manual trigger for testing)
+router.post('/:id/schedule-daily', jwtAuth, validateUuidParam('id'), CampaignDailyController.scheduleDaily);
+
 // Campaign steps
 router.get('/:id/steps', jwtAuth, validateUuidParam('id'), CampaignController.getCampaignSteps);
 router.post('/:id/steps', jwtAuth, validateUuidParam('id'), CampaignController.updateCampaignSteps);

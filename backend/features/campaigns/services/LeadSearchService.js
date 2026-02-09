@@ -61,7 +61,7 @@ async function searchEmployeesFromDatabase(searchParams, page, offsetInPage, dai
       },
       {
         headers: getAuthHeaders(authToken, tenantId),
-        timeout: 60000
+        timeout: 120000 // 2 minutes for Apollo API + cache save operations
       }
     );
     if (dbResponse.data && dbResponse.data.success !== false) {
@@ -133,7 +133,7 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
         apolloParams,
         {
           headers: getAuthHeaders(authToken, tenantId),
-          timeout: 60000
+          timeout: 120000 // 2 minutes for Apollo API + cache save operations
         }
       );
     } catch (apolloEndpointError) {
@@ -144,7 +144,7 @@ async function searchEmployeesFromApollo(searchParams, page, offsetInPage, neede
           apolloParams,
           {
             headers: getAuthHeaders(authToken, tenantId),
-            timeout: 60000
+            timeout: 120000 // 2 minutes for Apollo API + cache save operations
           }
         );
       } catch (dbEndpointError) {

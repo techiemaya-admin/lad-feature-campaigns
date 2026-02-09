@@ -3,6 +3,8 @@
  * Handles LinkedIn direct messaging
  */
 const axios = require('axios');
+const { deductCredits } = require('../../../shared/middleware/credit_guard');
+const { CREDIT_COSTS } = require('../../apollo-leads/constants/constants');
 class UnipileMessageService {
     constructor(baseService) {
         this.base = baseService;
@@ -18,8 +20,10 @@ class UnipileMessageService {
      * @param {Object} employee - Employee object with LinkedIn profile information
      * @param {string} messageText - Message text to send
      * @param {string} accountId - Unipile account ID
+     * @param {Object} options - Additional options { tenantId, campaignId, leadId }
      */
-    async sendLinkedInMessage(employee, messageText, accountId) {
+    async sendLinkedInMessage(employee, messageText, accountId, options = {}) {
+        const { tenantId, campaignId, leadId } = options;
         if (!this.base.isConfigured()) {
             throw new Error('Unipile is not configured');
         }
@@ -55,7 +59,7 @@ class UnipileMessageService {
                 {
                     headers,
                     params: { account_id: accountId },
-                    timeout: Number(process.env.UNIPILE_LOOKUP_TIMEOUT_MS) || 15000
+                    timeout: Number(process.env.UNIPILE_LOOKUP_TIMEOUT_MS) || 60000
                 }
             );
             const lookupData = lookupResponse.data?.data || lookupResponse.data || {};
@@ -103,10 +107,30 @@ class UnipileMessageService {
                     timeout: Number(process.env.UNIPILE_PROFILE_TIMEOUT_MS) || 30000
                 }
             );
+            
+            // Deduct credits for successful message
+            let creditsDeducted = 0;
+            if (tenantId && messageText) {
+                try {
+                    const credits = CREDIT_COSTS.TEMPLATE_MESSAGE || 5;
+                    const mockReq = { tenant: { id: tenantId } };
+                    await deductCredits(tenantId, 'campaigns', 'template_message', credits, mockReq, {
+                        campaignId: campaignId,
+                        leadId: leadId,
+                        stepType: 'linkedin_message'
+                    });
+                    creditsDeducted = credits;
+                    // Credit deducted - logged by credit_guard
+                } catch (creditError) {
+                    // Error logged by credit_guard - don't duplicate
+                }
+            }
+            
             return {
                 success: true,
                 data: messageResponse.data,
-                chat_id: chatId
+                chat_id: chatId,
+                credits_used: creditsDeducted
             };
         } catch (error) {
             return {
@@ -116,4 +140,4 @@ class UnipileMessageService {
         }
     }
 }
-module.exports = UnipileMessageService;
+module.exports = UnipileMessageService;

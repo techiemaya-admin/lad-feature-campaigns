@@ -88,8 +88,10 @@ const DEFAULTS = {
 const API_CONFIG = {
   // Unipile API base URL (can be overridden via UNIPILE_DSN or UNIPILE_API_BASE_URL)
   UNIPILE_DEFAULT_BASE_URL: 'https://api.unipile.com/api/v1',
-  // Unipile lookup timeout (ms)
-  UNIPILE_LOOKUP_TIMEOUT_MS: 15000
+  // Unipile lookup timeout (ms) - increased for LinkedIn operations
+  UNIPILE_LOOKUP_TIMEOUT_MS: 60000,
+  // Unipile connection/action timeout (ms)
+  UNIPILE_ACTION_TIMEOUT_MS: 90000
 };
 module.exports = {
   // Feature-level constants (not model-specific)
@@ -103,4 +105,4 @@ module.exports = {
   EXECUTION_STATUS,
   DEFAULTS,
   API_CONFIG
-};
+};
