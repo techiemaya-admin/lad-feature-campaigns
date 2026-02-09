@@ -19,7 +19,9 @@ const CampaignLeadRepository = require('../repositories/CampaignLeadRepository')
 let ApolloRevealService;
 try {
   const ApolloRevealServiceClass = require('../../apollo-leads/services/ApolloRevealService');
-  ApolloRevealService = new ApolloRevealServiceClass();
+  const apiKey = process.env.APOLLO_API_KEY;
+  const baseUrl = process.env.APOLLO_BASE_URL || 'https://api.apollo.io/v1';
+  ApolloRevealService = new ApolloRevealServiceClass(apiKey, baseUrl);
 } catch (err) {
   logger.warn('[LeadGeneration] ApolloRevealService not available - enrichment disabled', { error: err.message });
 }
@@ -154,14 +156,25 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     }
     // Get daily limit from campaign config or step config
     // This is the USER-SELECTED value (e.g., 25, 50, 100, etc.) - NOT hardcoded
-    // Priority: campaign config > step config > step limit > default 50
-    const leadsPerDay = campaignConfig.leads_per_day || stepConfig.leads_per_day || stepConfig.leadGenerationLimit || 50;
+    // Priority: 
+    // 1. Step config leadGenerationLimit (if set and > 0) - allows per-step overrides
+    // 2. Campaign config leads_per_day (default for all steps)
+    // 3. Step config leads_per_day (legacy)
+    // 4. Default 50
+    const stepLimit = stepConfig.leadGenerationLimit;
+    const hasValidStepLimit = stepLimit && !isNaN(stepLimit) && stepLimit > 0;
+    
+    const leadsPerDay = hasValidStepLimit 
+      ? stepLimit 
+      : (campaignConfig.leads_per_day || stepConfig.leads_per_day || 50);
+      
     if (!leadsPerDay || leadsPerDay <= 0) {
       return { success: false, error: 'leads_per_day must be set and greater than 0' };
     }
-    const configSource = campaignConfig.leads_per_day ? 'campaign config' 
+    
+    const configSource = hasValidStepLimit ? 'step limit'
+                        : campaignConfig.leads_per_day ? 'campaign config'
                         : stepConfig.leads_per_day ? 'step config' 
-                        : stepConfig.leadGenerationLimit ? 'step limit'
                         : 'default';
     // Get current offset (how many leads have been processed so far)
     let currentOffset = campaignConfig.lead_gen_offset || stepConfig.lead_gen_offset || 0;
@@ -660,10 +673,12 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
         try {
           // Call enrichment API (costs credits: 2 for email, 10 for phone)
           // Use enrichPersonDetails which returns full person data including name
-          const enrichResult = await ApolloRevealService.enrichPersonDetails(personId);
+          // Pass tenant context for credit deduction
+          const mockReq = tenantId ? { tenant: { id: tenantId } } : null;
+          const enrichResult = await ApolloRevealService.enrichPersonDetails(personId, mockReq);
           
           if (enrichResult.success && enrichResult.person) {
-            // Merge enriched data with search data
+            // Merge enriched data with search data - capture ALL Apollo fields
             const enrichedEmployee = {
               ...employee,
               // Full name (not obfuscated)
@@ -673,11 +688,29 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
               // Contact details
               email: enrichResult.person.email || enrichResult.person.personal_emails?.[0],
               personal_emails: enrichResult.person.personal_emails || [],
-              linkedin_url: enrichResult.person.linkedin_url,
-              // Employment history
+              linkedin_url: enrichResult.person.linkedin_url || employee.linkedin_url,
+              // Phone details - capture all phone numbers and sanitized phone
+              phone: enrichResult.person.phone || enrichResult.person.sanitized_phone || employee.phone,
+              sanitized_phone: enrichResult.person.sanitized_phone,
+              phone_numbers: enrichResult.person.phone_numbers || employee.phone_numbers || [],
+              // Professional details
+              title: enrichResult.person.title || employee.title,
+              headline: enrichResult.person.headline || employee.headline,
+              photo_url: enrichResult.person.photo_url || employee.photo_url,
+              // Career information
               employment_history: enrichResult.person.employment_history || employee.employment_history,
-              // Phone (if available)
-              phone_numbers: enrichResult.person.phone_numbers || employee.phone_numbers,
+              education: enrichResult.person.education || employee.education,
+              // Organization details - merge full organization object
+              organization: enrichResult.person.organization || employee.organization,
+              company_name: enrichResult.person.organization?.name || employee.company_name,
+              company_id: enrichResult.person.organization?.id || employee.company_id,
+              company_domain: enrichResult.person.organization?.domain || employee.company_domain,
+              // Additional Apollo fields
+              seniority: enrichResult.person.seniority || employee.seniority,
+              departments: enrichResult.person.departments || employee.departments,
+              functions: enrichResult.person.functions || employee.functions,
+              // Store the complete enriched person data from Apollo
+              _enriched_data: enrichResult.person,
               // Mark as enriched
               is_enriched: true,
               enriched_at: new Date().toISOString()

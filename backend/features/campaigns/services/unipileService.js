@@ -42,8 +42,8 @@ class UnipileService {
         return this.base.lookupLinkedInUrn(linkedinUrlOrSlug, accountId);
     }
     // Connection service methods
-    async sendConnectionRequest(employee, customMessage = null, accountId = null) {
-        return this.connection.sendConnectionRequest(employee, customMessage, accountId);
+    async sendConnectionRequest(employee, customMessage = null, accountId = null, options = {}) {
+        return this.connection.sendConnectionRequest(employee, customMessage, accountId, options);
     }
     async sendBatchConnectionRequests(employees, customMessage = null, accountId = null, options = {}) {
         return this.connection.sendBatchConnectionRequests(employees, customMessage, accountId, options);
@@ -52,8 +52,8 @@ class UnipileService {
         return this.connection.getInvitationsStatus(filters);
     }
     // Message service methods
-    async sendLinkedInMessage(employee, messageText, accountId) {
-        return this.message.sendLinkedInMessage(employee, messageText, accountId);
+    async sendLinkedInMessage(employee, messageText, accountId, options = {}) {
+        return this.message.sendLinkedInMessage(employee, messageText, accountId, options);
     }
     // Profile service methods
     async followLinkedInProfile(employee, accountId) {
@@ -64,4 +64,4 @@ class UnipileService {
     }
 }
 // Export singleton instance for backward compatibility
-module.exports = new UnipileService();
+module.exports = new UnipileService();

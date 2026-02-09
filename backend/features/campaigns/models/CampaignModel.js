@@ -16,13 +16,37 @@ class CampaignModel {
       status = 'draft',
       createdBy,
       config = {},
-      inbound_lead_ids
+      inbound_lead_ids,
+      campaign_start_date,
+      campaign_end_date,
+      campaign_duration_days,
+      working_days
     } = campaignData;
     const schema = getSchema(req);
     let campaign = null;
+    
+    // Calculate campaign_duration_days if not provided but dates are
+    let durationDays = campaign_duration_days;
+    if (!durationDays && campaign_start_date && campaign_end_date) {
+      const start = new Date(campaign_start_date);
+      const end = new Date(campaign_end_date);
+      durationDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+    }
+    
     // Try different INSERT queries based on database schema
     // Use created_by (correct column name) first, then fallback to created_by_user_id
     const queries = [
+      {
+        name: 'created_by with config and schedule',
+        query: `INSERT INTO ${schema}.campaigns (
+          tenant_id, name, status, created_by, config, 
+          campaign_start_date, campaign_end_date, campaign_duration_days,
+          created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) 
+        RETURNING *`,
+        values: [tenantId, name, status, createdBy, JSON.stringify(config), 
+                 campaign_start_date || null, campaign_end_date || null, durationDays || null]
+      },
       {
         name: 'created_by with config',
         query: `INSERT INTO ${schema}.campaigns (tenant_id, name, status, created_by, config, created_at, updated_at)
@@ -103,7 +127,9 @@ class CampaignModel {
     const schema = getSchema(req);
     let query = `
       SELECT 
-        c.*,
+        c.id, c.tenant_id, c.name, c.status, c.created_by, c.config, c.metadata,
+        c.campaign_start_date, c.campaign_end_date, c.campaign_duration_days,
+        c.created_at, c.updated_at, c.is_deleted,
         COUNT(DISTINCT cl.id) as leads_count,
         COUNT(DISTINCT CASE WHEN cla.status = 'sent' THEN cla.id END) as sent_count,
         COUNT(DISTINCT CASE WHEN cla.status = 'delivered' THEN cla.id END) as delivered_count,
@@ -126,7 +152,7 @@ class CampaignModel {
       query += ` AND c.name ILIKE $${paramIndex++}`;
       params.push(`%${search}%`);
     }
-    query += ` GROUP BY c.id ORDER BY c.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+    query += ` GROUP BY c.id, c.tenant_id, c.name, c.status, c.created_by, c.config, c.metadata, c.campaign_start_date, c.campaign_end_date, c.campaign_duration_days, c.created_at, c.updated_at, c.is_deleted ORDER BY c.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
     params.push(limit, offset);
     try {
       const result = await pool.query(query, params);
@@ -137,7 +163,9 @@ class CampaignModel {
       if (errorMsg.includes('campaign_lead_activities') || errorMsg.includes('does not exist') || errorMsg.includes('relation') || errorMsg.includes('undefined table')) {
         let fallbackQuery = `
           SELECT 
-            c.*,
+            c.id, c.tenant_id, c.name, c.status, c.created_by, c.config, c.metadata,
+            c.campaign_start_date, c.campaign_end_date, c.campaign_duration_days,
+            c.created_at, c.updated_at, c.is_deleted,
             COUNT(DISTINCT cl.id) as leads_count,
             0 as sent_count,
             0 as delivered_count,
@@ -159,7 +187,7 @@ class CampaignModel {
           fallbackQuery += ` AND c.name ILIKE $${fallbackParamIndex++}`;
           fallbackParams.push(`%${search}%`);
         }
-        fallbackQuery += ` GROUP BY c.id ORDER BY c.created_at DESC LIMIT $${fallbackParamIndex++} OFFSET $${fallbackParamIndex++}`;
+        fallbackQuery += ` GROUP BY c.id, c.tenant_id, c.name, c.status, c.created_by, c.config, c.metadata, c.campaign_start_date, c.campaign_end_date, c.campaign_duration_days, c.created_at, c.updated_at, c.is_deleted ORDER BY c.created_at DESC LIMIT $${fallbackParamIndex++} OFFSET $${fallbackParamIndex++}`;
         fallbackParams.push(limit, offset);
         try {
           const result = await pool.query(fallbackQuery, fallbackParams);
@@ -216,7 +244,8 @@ class CampaignModel {
     for (const [key, value] of Object.entries(updates)) {
       if (allowedFields.includes(key)) {
         if (key === 'config') {
-          setClause.push(`${key} = $${paramIndex++}::jsonb`);
+          // Merge config with existing config instead of replacing
+          setClause.push(`${key} = COALESCE(${key}, '{}'::jsonb) || $${paramIndex++}::jsonb`);
           values.push(JSON.stringify(value));
         } else if (key === 'last_lead_check_at' || key === 'next_run_at') {
           // Handle timestamp fields

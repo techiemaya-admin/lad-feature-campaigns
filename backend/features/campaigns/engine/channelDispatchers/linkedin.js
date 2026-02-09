@@ -1,6 +1,5 @@
-const unipileService = require('../services/unipileService');
+const unipileService = require('../../services/unipileService');
 const { getSchema } = require('../../../../core/utils/schemaHelper');
-const { pool } = require('../../../../shared/database/connection');
 const { pool } = require('../../../../shared/database/connection');
 /**
  * LinkedIn Channel Dispatcher
@@ -14,7 +13,7 @@ class LinkedInDispatcher {
     try {
       switch (stepType) {
         case 'linkedin_connect':
-          return await this.sendConnectionRequest(lead, stepConfig, userId);
+          return await this.sendConnectionRequest(lead, stepConfig, userId, tenantId);
         case 'linkedin_message':
           return await this.sendMessage(lead, stepConfig, userId);
         case 'linkedin_visit':
@@ -31,7 +30,7 @@ class LinkedInDispatcher {
   /**
    * Send LinkedIn connection request
    */
-  async sendConnectionRequest(lead, stepConfig, userId) {
+  async sendConnectionRequest(lead, stepConfig, userId, tenantId) {
     try {
       const leadData = lead.lead_data || {};
       const linkedinUrl = leadData.linkedin_url || leadData.linkedin_profile_url;
@@ -40,14 +39,23 @@ class LinkedInDispatcher {
       }
       // Optional message (LinkedIn limits connection messages)
       const message = stepConfig.message || '';
+      
+      // Build employee object for unipileService
+      const employee = {
+        profile_url: linkedinUrl,
+        fullname: leadData.name || leadData.full_name || 'Contact'
+      };
+      
       const result = await unipileService.sendConnectionRequest(
-        userId,
-        linkedinUrl,
-        message
+        employee,
+        message,
+        null, // accountId - will use default
+        { tenantId }
       );
       return {
-        success: true,
-        data: result
+        success: result.success,
+        data: result,
+        error: result.error
       };
     } catch (error) {
       throw error;

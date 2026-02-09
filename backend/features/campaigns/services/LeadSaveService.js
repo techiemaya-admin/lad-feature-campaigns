@@ -73,24 +73,77 @@ async function saveLeadsToCampaign(campaignId, tenantId, employees) {
             : employee.employee_data;
           linkedinUrlValue = employeeDataObj.linkedin_url || employeeDataObj.linkedin || employeeDataObj.profile_url;
         }
+        // FIX: Ensure we always have name fields, even if enrichment failed
+        // Extract name from whatever data is available
+        let extractedName = employee.name || employee.employee_name || null;
+        let extractedFirstName = employee.first_name || null;
+        let extractedLastName = employee.last_name || null;
+        
+        // If we have a full name but no first/last, try to parse it
+        if (extractedName && (!extractedFirstName || !extractedLastName)) {
+          const nameParts = extractedName.trim().split(/\s+/);
+          if (nameParts.length > 0 && !extractedFirstName) {
+            extractedFirstName = nameParts[0];
+          }
+          if (nameParts.length > 1 && !extractedLastName) {
+            extractedLastName = nameParts.slice(1).join(' ');
+          }
+        }
+        
+        // If we have first/last but no full name, construct it
+        if (!extractedName && (extractedFirstName || extractedLastName)) {
+          extractedName = [extractedFirstName, extractedLastName].filter(Boolean).join(' ');
+        }
+        
+        // If still no name, use title or email prefix as fallback
+        if (!extractedName) {
+          if (employee.title) {
+            extractedName = `${employee.title} (Lead)`;
+          } else if (employee.email) {
+            const emailPrefix = employee.email.split('@')[0];
+            extractedName = emailPrefix.replace(/[._-]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+          } else if (employee.headline) {
+            extractedName = employee.headline;
+          }
+        }
+        
         const leadData = {
           id: sourceId,  // Explicitly set id to the source person ID
-          name: employee.name || employee.employee_name,
-          first_name: employee.first_name,
-          last_name: employee.last_name,
+          name: extractedName,
+          first_name: extractedFirstName,
+          last_name: extractedLastName,
           title: employee.title || employee.job_title || employee.headline,
           email: employee.email || employee.work_email,
-          phone: employee.phone || employee.phone_number,
+          phone: employee.phone || employee.phone_number || employee.sanitized_phone,
           linkedin_url: linkedinUrlValue,
+          // Company information
           company_id: employee.company_id,
           company_name: employee.company_name,
           company_domain: employee.company_domain,
+          // Additional profile fields from Apollo
           photo_url: employee.photo_url || employee.profile_picture_url,
           headline: employee.headline,
           city: employee.city,
           state: employee.state,
           country: employee.country,
+          // Extended Apollo data - store ALL fields
+          personal_emails: employee.personal_emails || [],
+          phone_numbers: employee.phone_numbers || [],
+          sanitized_phone: employee.sanitized_phone,
+          employment_history: employee.employment_history,
+          education: employee.education,
+          seniority: employee.seniority,
+          departments: employee.departments,
+          functions: employee.functions,
+          // Full organization object with all details
+          organization: employee.organization,
+          // Enrichment metadata
+          is_enriched: employee.is_enriched || false,
+          enriched_at: employee.enriched_at,
+          _enriched_data: employee._enriched_data,
+          // Source tracking
           source: source, // Track which source this lead came from
+          // Store complete Apollo response
           _full_data: employee
         };
         // Extract fields and create snapshot

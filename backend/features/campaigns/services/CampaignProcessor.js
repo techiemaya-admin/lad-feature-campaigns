@@ -20,6 +20,7 @@ const {
 } = require('./StepExecutors');
 const { processLeadThroughWorkflow } = require('./WorkflowProcessor');
 const CampaignModel = require('../models/CampaignModel');
+const { getCampaignCreditUsage } = require('../../../shared/middleware/credit_guard');
 /**
  * Execute a campaign step for a specific lead
  */
@@ -95,7 +96,21 @@ async function executeStepForLead(campaignId, step, campaignLead, userId, tenant
       });
     } else if (stepType && stepType.startsWith('linkedin_')) {
       // All LinkedIn steps: connect, message, follow, visit, scrape_profile, company_search, employee_list, autopost, comment_reply
+      logger.info('[executeStepForLead] Calling executeLinkedInStep', {
+        campaignId,
+        stepType,
+        campaignLeadId: campaignLead?.id,
+        campaignLeadKeys: campaignLead ? Object.keys(campaignLead) : [],
+        userId,
+        tenantId
+      });
       result = await executeLinkedInStep(stepType, stepConfig, campaignLead, userId, tenantId);
+      logger.info('[executeStepForLead] executeLinkedInStep returned', {
+        campaignId,
+        stepType,
+        success: result?.success,
+        error: result?.error
+      });
     } else if (stepType && stepType.startsWith('email_')) {
       // All email steps: send, followup
       result = await executeEmailStep(stepType, stepConfig, campaignLead, userId, tenantId);
@@ -537,6 +552,27 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
         });
       }
     }
+    
+    // 📊 LOG CAMPAIGN CREDIT SUMMARY
+    // Aggregate and log total credits used for this campaign execution
+    try {
+      const creditUsage = await getCampaignCreditUsage(campaignId, tenantId);
+      if (creditUsage.totalCredits > 0) {
+        logger.info('📊 [CampaignProcessor] Campaign credit usage summary', {
+          campaignId,
+          tenantId,
+          totalCredits: creditUsage.totalCredits,
+          transactionCount: creditUsage.transactionCount,
+          breakdown: creditUsage.breakdown
+        });
+      }
+    } catch (creditSummaryErr) {
+      // Don't fail if credit summary fails
+      logger.warn('[CampaignProcessor] Failed to get credit usage summary', { 
+        error: creditSummaryErr.message 
+      });
+    }
+    
     // Return success to signal completion to caller
     return { success: true, campaignId, leadCount: leads.length };
   } catch (error) {

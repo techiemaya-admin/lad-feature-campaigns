@@ -33,9 +33,10 @@ try {
  * @param {Object} leadData - Lead data object
  * @param {string} tenantId - Tenant ID
  * @param {string} databaseLeadId - The actual UUID lead_id from leads table (not Apollo ID)
+ * @param {string} campaignId - Campaign ID for credit tracking (optional)
  * @returns {Object} Enriched lead data with email and linkedin_url
  */
-async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null) {
+async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, campaignId = null) {
   const logger = require('../../../core/utils/logger');
   
   if (!ApolloRevealService) {
@@ -70,11 +71,17 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null) 
     logger.info('[LinkedInStepExecutor] Enriching lead for LinkedIn visit', {
       leadId: leadData.id,
       personId,
+      tenantId,
       needsEmail: !hasEmail,
       needsLinkedIn: !hasLinkedIn
     });
     
-    const enrichResult = await ApolloRevealService.enrichPersonDetails(personId);
+    // Pass tenant context for credit deduction
+    const mockReq = tenantId ? { tenant: { id: tenantId } } : null;
+    const enrichResult = await ApolloRevealService.enrichPersonDetails(personId, mockReq, {
+      campaignId: campaignId,
+      leadId: databaseLeadId
+    });
     
     if (enrichResult && enrichResult.success && enrichResult.person) {
       const enrichedPerson = enrichResult.person;
@@ -193,10 +200,12 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
         logger.info('[LinkedInStepExecutor] LinkedIn URL not found - triggering auto-enrichment', {
           stepType,
           campaignLeadId: campaignLead.id,
-          databaseLeadId: campaignLead.lead_id
+          databaseLeadId: campaignLead.lead_id,
+          campaignId: campaignLead.campaign_id
         });
         // Pass the actual database lead_id (UUID) for updating the leads table
-        leadData = await enrichLeadForLinkedIn(leadData, tenantId, campaignLead.lead_id);
+        // Also pass campaignId for credit tracking
+        leadData = await enrichLeadForLinkedIn(leadData, tenantId, campaignLead.lead_id, campaignLead.campaign_id);
       }
     }
     
@@ -246,20 +255,54 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
     let result;
     // Handle all LinkedIn step types dynamically
     if (stepType === 'linkedin_connect') {
+      // Get campaign to read connection message from config
+      const CampaignModel = require('../models/CampaignModel');
+      const campaign = await CampaignModel.getById(campaignLead.campaign_id, tenantId);
+      const campaignConnectionMessage = campaign?.config?.connectionMessage || null;
+      
       // LinkedIn allows unlimited connection requests WITHOUT messages
       // But only 4-5 connection requests WITH messages per month
       // User can select "send with message" in UI - if limit exceeded, fallback to without message
-      const userWantsMessage = stepConfig.sendWithMessage === true || stepConfig.sendWithMessage === 'true' || stepConfig.connectionMessage !== null;
-      const message = stepConfig.message || stepConfig.connectionMessage || null;
+      let message = stepConfig.message || stepConfig.connectionMessage || campaignConnectionMessage || null;
+      
+      // FIX: Enhanced message validation with trim
+      // Clean up message - trim whitespace and convert empty strings to null
+      const trimmedMessage = message && typeof message === 'string' ? message.trim() : message;
+      const hasMessage = trimmedMessage && trimmedMessage !== '';
+      
+      // Replace message with trimmed version (or null if empty)
+      message = hasMessage ? trimmedMessage : null;
+      
+      // User wants message if: explicitly requested OR message content exists
+      const userWantsMessage = !!hasMessage;
+      
+      // Replace variables in message if message exists
+      if (message) {
+        const firstName = (leadData.name || leadData.employee_name || 'there').split(' ')[0];
+        const lastName = (leadData.name || leadData.employee_name || '').split(' ').slice(1).join(' ');
+        const title = leadData.title || leadData.employee_data?.title || '';
+        const companyName = leadData.company_name || leadData.organization || leadData.company || leadData.employee_data?.organization?.name || '';
+        const industry = leadData.employee_data?.organization?.industry || '';
+        
+        message = message
+          .replace(/\{\{first_name\}\}/g, firstName)
+          .replace(/\{\{last_name\}\}/g, lastName)
+          .replace(/\{\{title\}\}/g, title)
+          .replace(/\{\{company_name\}\}/g, companyName)
+          .replace(/\{\{company\}\}/g, companyName)
+          .replace(/\{\{industry\}\}/g, industry);
+      }
       // Get all available LinkedIn accounts for fallback
       const allAccounts = await getAllLinkedInAccountsForTenant(tenantId, userId);
       // Try connection request with smart fallback logic
+      // Pass tenantId for credit deduction on success
       result = await sendConnectionRequestWithFallback(
         employee,
         message,
         userWantsMessage,
         linkedinAccountId,
-        allAccounts
+        allAccounts,
+        { tenantId }
       );
       
       logger.info('[LinkedInStepExecutor] Connection request result', {
@@ -287,22 +330,63 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
       // Delay applies regardless of success/failure to maintain consistent rate
       await new Promise(resolve => setTimeout(resolve, 10000));
     } else if (stepType === 'linkedin_message') {
-      const message = stepConfig.message || stepConfig.body || 'Hello!';
+      let message = stepConfig.message || stepConfig.body || 'Hello!';
+      
+      // Replace variables in message
+      const firstName = (leadData.name || leadData.employee_name || 'there').split(' ')[0];
+      const lastName = (leadData.name || leadData.employee_name || '').split(' ').slice(1).join(' ');
+      const title = leadData.title || leadData.employee_data?.title || '';
+      const companyName = leadData.company_name || leadData.organization || leadData.company || leadData.employee_data?.organization?.name || '';
+      const industry = leadData.employee_data?.organization?.industry || '';
+      
+      message = message
+        .replace(/\{\{first_name\}\}/g, firstName)
+        .replace(/\{\{last_name\}\}/g, lastName)
+        .replace(/\{\{title\}\}/g, title)
+        .replace(/\{\{company_name\}\}/g, companyName)
+        .replace(/\{\{company\}\}/g, companyName)
+        .replace(/\{\{industry\}\}/g, industry);
+      
       // ✅ Check if connection was accepted before sending message
+      // Get the lead_id from campaign_leads (the actual lead UUID, not campaign_lead ID)
+      let actualLeadId = campaignLead.lead_id || campaignLead.id;
+      
       try {
-        const { db } = require('../../../shared/database/connection');
-        const connectionCheck = await db('campaign_analytics')
-          .where({
-            campaign_id: campaignLead.campaign_id,
-            lead_id: campaignLead.lead_id || campaignLead.id,
-            action_type: 'CONNECTION_ACCEPTED',
-            status: 'success'
-          })
-          .first();
+        const { pool } = require('../../../shared/database/connection');
+        const schema = process.env.POSTGRES_SCHEMA || process.env.DB_SCHEMA || 'lad_dev';
+        
+        logger.info('[LinkedInStepExecutor] Checking connection acceptance', {
+          stepType,
+          campaignId: campaignLead.campaign_id,
+          leadId: actualLeadId,
+          schema
+        });
+        
+        const connectionCheckQuery = `
+          SELECT * FROM ${schema}.campaign_analytics
+          WHERE campaign_id = $1
+            AND lead_id = $2
+            AND action_type = 'CONNECTION_ACCEPTED'
+            AND status = 'success'
+          LIMIT 1
+        `;
+        
+        const connectionCheckResult = await pool.query(connectionCheckQuery, [
+          campaignLead.campaign_id,
+          actualLeadId
+        ]);
+        
+        const connectionCheck = connectionCheckResult.rows[0];
+          
         if (!connectionCheck) {
+          logger.info('[LinkedInStepExecutor] Connection not accepted yet - skipping message', {
+            campaignId: campaignLead.campaign_id,
+            leadId: actualLeadId
+          });
+          
           // Track as skipped (not failed, just waiting for acceptance)
           await campaignStatsTracker.trackAction(campaignLead.campaign_id, 'MESSAGE_SKIPPED', {
-            leadId: campaignLead.lead_id || campaignLead.id,
+            leadId: actualLeadId,
             channel: 'linkedin',
             leadName: employee.fullname,
             messageContent: message,
@@ -315,10 +399,20 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
             skipped: true
           };
         }
+        
+        logger.info('[LinkedInStepExecutor] Connection accepted - proceeding with message', {
+          campaignId: campaignLead.campaign_id,
+          leadId: actualLeadId
+        });
       } catch (checkErr) {
-        // Continue anyway if check fails (backward compatibility)
+        // Log the error but continue anyway (backward compatibility)
+        logger.warn('[LinkedInStepExecutor] Error checking connection acceptance - continuing anyway', {
+          error: checkErr.message,
+          campaignId: campaignLead.campaign_id,
+          leadId: actualLeadId
+        });
       }
-      result = await unipileService.sendLinkedInMessage(employee, message, linkedinAccountId);
+      result = await unipileService.sendLinkedInMessage(employee, message, linkedinAccountId, { tenantId });
       // Track message in campaign_analytics for Live Activity Feed
       try {
         await campaignStatsTracker.trackAction(campaignLead.campaign_id, 'MESSAGE_SENT', {
@@ -450,6 +544,13 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
     }
     return result;
   } catch (error) {
+    const logger = require('../../../core/utils/logger');
+    logger.error('[LinkedInStepExecutor] executeLinkedInStep failed', {
+      stepType,
+      error: error.message,
+      stack: error.stack,
+      campaignLeadId: campaignLead?.id
+    });
     return { success: false, error: error.message };
   }
 }

@@ -3,19 +3,64 @@
  * Handles LinkedIn connection requests and invitation management
  */
 const axios = require('axios');
+const logger = require('../../../core/utils/logger');
+const { deductCredits, getCreditBalance } = require('../../../shared/middleware/credit_guard');
+const { CREDIT_COSTS } = require('../../apollo-leads/constants/constants');
+
 class UnipileConnectionService {
     constructor(baseService) {
         this.base = baseService;
     }
+
+    /**
+     * Deduct credits for successful LinkedIn connection
+     * @param {string} tenantId - Tenant ID
+     * @param {boolean} hasMessage - Whether connection includes a template message
+     * @param {Object} req - Request object for logging
+     * @param {Object} options - Additional options { campaignId, leadId, stepType }
+     */
+    async _deductConnectionCredits(tenantId, hasMessage, req = {}, options = {}) {
+        try {
+            // LinkedIn connection: 1 credit
+            // Template message: +5 credits (if message included)
+            let totalCredits = CREDIT_COSTS.LINKEDIN_CONNECTION || 1;
+            let usageType = 'linkedin_connection';
+            
+            if (hasMessage) {
+                totalCredits += CREDIT_COSTS.TEMPLATE_MESSAGE || 5;
+                usageType = 'linkedin_connection_with_message';
+            }
+            
+            await deductCredits(tenantId, 'campaigns', usageType, totalCredits, req, {
+                campaignId: options.campaignId,
+                leadId: options.leadId,
+                stepType: options.stepType || 'linkedin_connect'
+            });
+            logger.info('[UnipileConnectionService] Credits deducted for LinkedIn connection', {
+                credits: totalCredits,
+                hasMessage,
+                campaignId: options.campaignId ? options.campaignId.substring(0, 8) : null
+            });
+            
+            return { success: true, credits_deducted: totalCredits };
+        } catch (error) {
+            logger.error('[UnipileConnectionService] Error deducting credits for LinkedIn connection', { error: error.message });
+            // Don't throw - connection already sent, just log the error
+            return { success: false, error: error.message };
+        }
+    }
+
     /**
      * Send connection request to a LinkedIn profile
      * 
      * @param {Object} employee - Employee object with LinkedIn profile information
      * @param {string} customMessage - Custom connection message (optional)
      * @param {string} accountId - Unipile account ID (required - must be from connect call)
+     * @param {Object} options - Additional options { tenantId, req } for credit deduction
      * @returns {Promise<Object>} Response from Unipile API
      */
-    async sendConnectionRequest(employee, customMessage = null, accountId = null) {
+    async sendConnectionRequest(employee, customMessage = null, accountId = null, options = {}) {
+        const { tenantId, req } = options;
         if (!this.base.isConfigured()) {
             throw new Error('Unipile is not configured');
         }
@@ -61,7 +106,7 @@ class UnipileConnectionService {
                         params: {
                             account_id: accountId
                         },
-                        timeout: Number(process.env.UNIPILE_LOOKUP_TIMEOUT_MS) || 15000
+                        timeout: Number(process.env.UNIPILE_LOOKUP_TIMEOUT_MS) || 60000
                     }
                 );
             } catch (lookupError) {
@@ -111,7 +156,7 @@ class UnipileConnectionService {
                     payload,
                     {
                         headers: headers,
-                        timeout: Number(process.env.UNIPILE_PROFILE_TIMEOUT_MS) || 30000
+                        timeout: Number(process.env.UNIPILE_ACTION_TIMEOUT_MS) || 90000
                     }
                 );
                 const statusCode = response.status;
@@ -126,9 +171,18 @@ class UnipileConnectionService {
                             employee: { fullname: employee.fullname }
                         };
                     }
+                    
+                    // SUCCESS: Deduct credits for successful connection
+                    let creditsDeducted = 0;
+                    if (tenantId) {
+                        const creditResult = await this._deductConnectionCredits(tenantId, !!customMessage, req || {});
+                        creditsDeducted = creditResult.credits_deducted || 0;
+                    }
+                    
                     return {
                         success: true,
                         data: responseData,
+                        credits_used: creditsDeducted,
                         employee: {
                             fullname: employee.fullname,
                             profile_url: linkedInUrl,
@@ -242,7 +296,9 @@ class UnipileConnectionService {
     async sendBatchConnectionRequests(employees, customMessage = null, accountId = null, options = {}) {
         const {
             delay = 2000,
-            stopOnError = false
+            stopOnError = false,
+            tenantId = null,
+            req = null
         } = options;
         if (!this.base.isConfigured()) {
             return {
@@ -267,7 +323,7 @@ class UnipileConnectionService {
         for (let i = 0; i < employees.length; i++) {
             const employee = employees[i];
             try {
-                const result = await this.sendConnectionRequest(employee, customMessage, accountId);
+                const result = await this.sendConnectionRequest(employee, customMessage, accountId, { tenantId, req });
                 results.results.push(result);
                 if (result.success) {
                     results.successful++;
@@ -331,4 +387,4 @@ class UnipileConnectionService {
         }
     }
 }
-module.exports = UnipileConnectionService;
+module.exports = UnipileConnectionService;
