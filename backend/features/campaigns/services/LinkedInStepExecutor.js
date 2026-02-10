@@ -11,6 +11,7 @@ const {
 } = require('./LinkedInAccountHelper');
 const { generateAndSaveProfileSummary } = require('./LinkedInProfileSummaryService');
 const { campaignStatsTracker } = require('./campaignStatsTracker');
+const linkedInPollingRepository = require('../repositories/LinkedInPollingRepository');
 
 // Import ApolloRevealService for data enrichment
 // TODO: ARCHITECTURE EXCEPTION - Direct cross-feature import
@@ -27,7 +28,6 @@ try {
   const logger = require('../../../core/utils/logger');
   logger.warn('[LinkedInStepExecutor] ApolloRevealService not available', { error: err.message });
 }
-
 /**
  * Enrich lead data with Apollo to reveal email and LinkedIn URL
  * @param {Object} leadData - Lead data object
@@ -220,14 +220,17 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
       return { success: false, error: 'LinkedIn URL not found for lead' };
     }
     // Get LinkedIn account with Unipile account ID (using helper)
-    const linkedinAccountId = await getLinkedInAccountForExecution(tenantId, userId);
+    const linkedinAccount = await getLinkedInAccountForExecution(tenantId, userId);
+    const linkedinAccountId = linkedinAccount?.provider_account_id || null;
+    const linkedinAccountName = linkedinAccount?.account_name || 'LinkedIn Account';
     
     logger.info('[LinkedInStepExecutor] LinkedIn account check', {
       stepType,
       tenantId,
       userId,
       hasLinkedInAccountId: !!linkedinAccountId,
-      linkedinAccountId
+      linkedinAccountId,
+      linkedinAccountName
     });
     
     if (!linkedinAccountId) {
@@ -239,7 +242,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
       });
       return { 
         success: false, 
-        error: 'No active LinkedIn account connected with Unipile. Please connect a LinkedIn account in Settings → LinkedIn Integration to enable LinkedIn campaign steps.',
+        error: 'No active LinkedIn account connected. Please connect a LinkedIn account in Settings → LinkedIn Integration to enable LinkedIn campaign steps.',
         userAction: 'Connect LinkedIn account in Settings'
       };
     }
@@ -321,7 +324,11 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
           channel: 'linkedin',
           leadName: employee.fullname,
           status: result.success ? 'success' : 'failed',
-          errorMessage: result.error || null
+          errorMessage: result.error || null,
+          tenantId: tenantId,
+          accountName: result.accountInfo?.account_name || result.accountUsed || null,
+          providerAccountId: result.accountInfo?.provider_account_id || null,
+          leadLinkedIn: linkedinUrl
         });
       } catch (trackErr) {
       }
@@ -352,33 +359,20 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
       let actualLeadId = campaignLead.lead_id || campaignLead.id;
       
       try {
-        const { pool } = require('../../../shared/database/connection');
-        const schema = process.env.POSTGRES_SCHEMA || process.env.DB_SCHEMA || 'lad_dev';
-        
         logger.info('[LinkedInStepExecutor] Checking connection acceptance', {
           stepType,
           campaignId: campaignLead.campaign_id,
-          leadId: actualLeadId,
-          schema
+          leadId: actualLeadId
         });
         
-        const connectionCheckQuery = `
-          SELECT * FROM ${schema}.campaign_analytics
-          WHERE campaign_id = $1
-            AND lead_id = $2
-            AND action_type = 'CONNECTION_ACCEPTED'
-            AND status = 'success'
-          LIMIT 1
-        `;
-        
-        const connectionCheckResult = await pool.query(connectionCheckQuery, [
+        // Call repository to check connection status (repository handles SQL)
+        const isConnectionAccepted = await linkedInPollingRepository.isConnectionAccepted(
           campaignLead.campaign_id,
-          actualLeadId
-        ]);
-        
-        const connectionCheck = connectionCheckResult.rows[0];
+          actualLeadId,
+          { user: { tenant_id: tenantId } }
+        );
           
-        if (!connectionCheck) {
+        if (!isConnectionAccepted) {
           logger.info('[LinkedInStepExecutor] Connection not accepted yet - skipping message', {
             campaignId: campaignLead.campaign_id,
             leadId: actualLeadId
@@ -391,8 +385,13 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
             leadName: employee.fullname,
             messageContent: message,
             status: 'skipped',
-            errorMessage: 'Waiting for connection acceptance'
+            errorMessage: 'Waiting for connection acceptance',
+            tenantId: tenantId,
+            accountName: linkedinAccountName,
+            providerAccountId: linkedinAccountId,
+            leadLinkedIn: linkedinUrl
           });
+          
           return {
             success: false,
             error: 'Connection not accepted yet - message will be sent after acceptance',
@@ -421,7 +420,11 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
           leadName: employee.fullname,
           messageContent: message,
           status: result.success ? 'success' : 'failed',
-          errorMessage: result.error || null
+          errorMessage: result.error || null,
+          tenantId: tenantId,
+          accountName: linkedinAccountName,
+          providerAccountId: linkedinAccountId,
+          leadLinkedIn: linkedinUrl
         });
       } catch (trackErr) {
       }
@@ -434,7 +437,11 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
           channel: 'linkedin',
           leadName: employee.fullname,
           status: result.success ? 'success' : 'failed',
-          errorMessage: result.error || null
+          errorMessage: result.error || null,
+          tenantId: tenantId,
+          accountName: linkedinAccountName,
+          providerAccountId: linkedinAccountId,
+          leadLinkedIn: linkedinUrl
         });
       } catch (trackErr) {
       }
@@ -448,9 +455,9 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
         result = { success: false, error: 'LinkedIn account ID is required' };
         return result;
       }
-      // Check if Unipile service is configured
+      // Check if LinkedIn service is configured
       if (!unipileService.isConfigured()) {
-        result = { success: false, error: 'Unipile service is not configured' };
+        result = { success: false, error: 'LinkedIn service is not configured' };
         return result;
       }
       
@@ -482,7 +489,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
             if (retryResult && retryResult.success !== false) {
               result = {
                 success: true,
-                message: 'Profile visited via Unipile and contact details fetched',
+                message: 'Profile visited and contact details fetched',
                 profile: retryResult.profile || retryResult
               };
               const profileData = retryResult.profile || retryResult;
@@ -512,7 +519,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
         } else if (profileResult && profileResult.success !== false) {
           result = {
             success: true,
-            message: 'Profile visited via Unipile and contact details fetched',
+            message: 'Profile visited and contact details fetched',
             profile: profileResult.profile || profileResult
           };
           // After successfully visiting profile, generate summary automatically
@@ -521,7 +528,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
         } else {
           result = {
             success: false,
-            error: profileResult?.error || 'Failed to fetch LinkedIn profile via Unipile'
+            error: profileResult?.error || 'Failed to fetch LinkedIn profile'
           };
         }
       } catch (visitErr) {
@@ -534,7 +541,11 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
           channel: 'linkedin',
           leadName: employee.fullname,
           status: result.success ? 'success' : 'failed',
-          errorMessage: result.error || null
+          errorMessage: result.error || null,
+          tenantId: tenantId,
+          accountName: linkedinAccountName,
+          providerAccountId: linkedinAccountId,
+          leadLinkedIn: linkedinUrl
         });
       } catch (trackErr) {
       }
