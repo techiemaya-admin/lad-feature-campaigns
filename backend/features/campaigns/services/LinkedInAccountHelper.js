@@ -65,7 +65,7 @@ async function verifyAccountHealth(unipileAccountId) {
     const unipileService = require('./unipileService');
     const baseService = unipileService.base;
     if (!baseService.isConfigured()) {
-      return { valid: false, error: 'Unipile not configured' };
+      return { valid: false, error: 'LinkedIn service not configured' };
     }
     const baseUrl = baseService.getBaseUrl();
     const headers = baseService.getAuthHeaders();
@@ -96,7 +96,7 @@ async function verifyAccountHealth(unipileAccountId) {
       return { valid: false, error: 'Account credentials expired', expired: true };
     }
     if (error.response && error.response.status === 404) {
-      return { valid: false, error: 'Account not found in Unipile', notFound: true };
+      return { valid: false, error: 'LinkedIn account not found', notFound: true };
     }
     // For other errors, assume account might be valid (network issues, etc.)
     return { valid: true, warning: error.message };

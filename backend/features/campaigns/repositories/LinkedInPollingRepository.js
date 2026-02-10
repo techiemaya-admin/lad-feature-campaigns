@@ -13,39 +13,40 @@ const { getSchema } = require('../../../core/utils/schemaHelper');
 
 class LinkedInPollingRepository {
   /**
-   * Get all active LinkedIn accounts for polling
-   * @param {Object} context - Request context with tenant info
-   * @returns {Promise<Array>} LinkedIn accounts
+   * Get tenant IDs that have active LinkedIn accounts
+   * Used by scheduler to iterate through tenants in tenant-scoped manner
+   * @param {Object} context - Request context
+   * @returns {Promise<Array<string>>} Array of tenant IDs
    */
-  async getActiveLinkedInAccounts(context = {}) {
+  async getTenantsWithActiveLinkedInAccounts(context = {}) {
     const schema = getSchema(context);
     
     const query = `
-      SELECT 
-        id, 
-        tenant_id, 
-        account_name, 
-        provider_account_id as unipile_account_id,
-        status
+      SELECT DISTINCT tenant_id
       FROM ${schema}.social_linkedin_accounts
       WHERE provider = 'unipile'
         AND status = 'active'
         AND is_deleted = false
         AND provider_account_id IS NOT NULL
-      ORDER BY created_at DESC
+      ORDER BY tenant_id
     `;
     
     const result = await pool.query(query);
-    return result.rows;
+    return result.rows.map(row => row.tenant_id);
   }
 
   /**
-   * Get active LinkedIn accounts for specific tenant
-   * @param {string} tenantId - Tenant ID
-   * @param {Object} context - Request context
+   * Get all active LinkedIn accounts for specific tenant
+   * ARCHITECTURE: Always tenant-scoped with WHERE tenant_id = $1
+   * @param {string} tenantId - Tenant ID (required)
+   * @param {Object} context - Request context with tenant info
    * @returns {Promise<Array>} LinkedIn accounts
    */
-  async getLinkedInAccountsByTenant(tenantId, context = {}) {
+  async getActiveLinkedInAccounts(tenantId, context = {}) {
+    if (!tenantId) {
+      throw new Error('[Repository] tenantId is required - all queries must be tenant-scoped');
+    }
+    
     const schema = getSchema(context);
     
     const query = `
