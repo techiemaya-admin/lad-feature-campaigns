@@ -7,6 +7,7 @@ const router = express.Router();
 const { authenticateToken: jwtAuth } = require('../../../core/middleware/auth');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const linkedInIntegrationService = require('../services/LinkedInIntegrationService');
+const { pollingScheduler } = require('../services/pollingScheduler');
 // GET /api/campaigns/linkedin/status - Check LinkedIn connection status
 router.get('/status', jwtAuth, async (req, res) => {
   try {
@@ -232,4 +233,38 @@ router.get('/accounts', jwtAuth, async (req, res) => {
     });
   }
 });
+
+// GET /api/campaigns/linkedin/polling/status - Get polling scheduler status
+router.get('/polling/status', jwtAuth, async (req, res) => {
+  try {
+    const status = pollingScheduler.getStatus();
+    res.json({
+      success: true,
+      polling: status
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// POST /api/campaigns/linkedin/polling/trigger - Manually trigger polling (for testing)
+router.post('/polling/trigger', jwtAuth, async (req, res) => {
+  try {
+    const result = await pollingScheduler.triggerManualPoll();
+    res.json({
+      success: result.success,
+      message: result.message || result.error,
+      result: result.result || null
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 module.exports = router;
