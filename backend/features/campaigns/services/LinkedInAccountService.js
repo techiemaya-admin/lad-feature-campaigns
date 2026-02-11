@@ -94,12 +94,12 @@ class LinkedInAccountService {
     }
   }
   /**
-   * Get all connected LinkedIn accounts for a user
-   * @param {string} userId - User ID
+   * Get all connected LinkedIn accounts for a tenant
+   * @param {string} tenantId - Tenant ID (required for multi-tenancy)
    * @returns {Array} List of connected accounts
    */
-  async getUserLinkedInAccounts(userId) {
-    return await getUserLinkedInAccounts(userId);
+  async getUserLinkedInAccounts(tenantId) {
+    return await getUserLinkedInAccounts(tenantId);
   }
   /**
    * Get all connected accounts across all users (for cron jobs)
