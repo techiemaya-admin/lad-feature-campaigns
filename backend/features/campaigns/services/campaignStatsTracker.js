@@ -29,7 +29,7 @@ class CampaignStatsTracker {
       tenantId,
       accountName,
       providerAccountId,
-      leadLinkedin
+      leadLinkedIn
     } = metadata;
     
     const schema = getSchema(null);
@@ -55,7 +55,7 @@ class CampaignStatsTracker {
           tenantId,
           accountName,
           providerAccountId,
-          leadLinkedin
+          leadLinkedIn
         ]
       );
       
