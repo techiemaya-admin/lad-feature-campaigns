@@ -101,7 +101,11 @@ class CampaignModel {
             start_date: campaign_start_date,
             end_date: campaign_end_date,
             duration_days: durationDays
-          }
+          },
+          tenantId: campaign.tenant_id,
+          accountName: config.linkedin_account_name || config.account_name || null,
+          providerAccountId: config.linkedin_account_id || config.account_id || null,
+          leadLinkedin: null
         }
       );
     } catch (trackError) {
