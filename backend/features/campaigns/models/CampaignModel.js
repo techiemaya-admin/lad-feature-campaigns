@@ -79,6 +79,36 @@ class CampaignModel {
     if (!campaign) {
       throw new Error('Failed to create campaign with all available query patterns');
     }
+    
+    // Track campaign creation to campaign_analytics (LAD architecture: Model handles data events)
+    try {
+      const { campaignStatsTracker } = require('../services/campaignStatsTracker');
+      await campaignStatsTracker.trackAction(
+        campaign.id,
+        'CAMPAIGN_CREATED',
+        {
+          leadId: null,
+          channel: config.campaign_type || 'unknown',
+          leadName: null,
+          leadEmail: null,
+          leadPhone: null,
+          messageContent: `Campaign "${name}" created`,
+          status: 'success',
+          responseData: {
+            campaign_name: name,
+            campaign_status: status,
+            campaign_type: config.campaign_type,
+            start_date: campaign_start_date,
+            end_date: campaign_end_date,
+            duration_days: durationDays
+          }
+        }
+      );
+    } catch (trackError) {
+      // Don't fail campaign creation if tracking fails
+      // Tracking is a side effect, not critical for operation
+    }
+    
     // Link inbound leads if provided (AFTER campaign is successfully created)
     if (inbound_lead_ids && Array.isArray(inbound_lead_ids) && inbound_lead_ids.length > 0) {
       try {
