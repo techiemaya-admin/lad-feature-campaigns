@@ -41,5 +41,38 @@ module.exports = {
     'edit_campaigns',
     'delete_campaigns',
     'manage_campaign_leads'
-  ]
-};
+  ],
+  
+  // Feature lifecycle hooks
+  onFeatureLoad: async (context) => {
+    const logger = require('../../core/utils/logger');
+    logger.info('[Campaigns Feature] Initializing LinkedIn polling scheduler');
+    
+    try {
+      const { pollingScheduler } = require('./services/pollingScheduler');
+      pollingScheduler.start();
+      logger.info('[Campaigns Feature] LinkedIn polling scheduler started successfully');
+    } catch (error) {
+      logger.error('[Campaigns Feature] Failed to start polling scheduler', {
+        error: error.message,
+        stack: error.stack
+      });
+      // Don't fail feature load if polling fails to start
+    }
+  },
+  
+  onFeatureUnload: async (context) => {
+    const logger = require('../../core/utils/logger');
+    logger.info('[Campaigns Feature] Stopping LinkedIn polling scheduler');
+    
+    try {
+      const { pollingScheduler } = require('./services/pollingScheduler');
+      pollingScheduler.stop();
+      logger.info('[Campaigns Feature] LinkedIn polling scheduler stopped successfully');
+    } catch (error) {
+      logger.error('[Campaigns Feature] Failed to stop polling scheduler', {
+        error: error.message
+      });
+    }
+  }
+};

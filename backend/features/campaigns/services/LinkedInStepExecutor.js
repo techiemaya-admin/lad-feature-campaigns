@@ -318,11 +318,17 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
       });
       
       // Track connection request in campaign_analytics for Live Activity Feed
+      // Differentiate between connection with message vs without message
+      const actionType = result.strategy === 'with_message' 
+        ? 'CONNECTION_SENT_WITH_MESSAGE' 
+        : 'CONNECTION_SENT';
+      
       try {
-        await campaignStatsTracker.trackAction(campaignLead.campaign_id, 'CONNECTION_SENT', {
+        await campaignStatsTracker.trackAction(campaignLead.campaign_id, actionType, {
           leadId: campaignLead.lead_id || campaignLead.id,
           channel: 'linkedin',
           leadName: employee.fullname,
+          messageContent: result.strategy === 'with_message' ? message : null,
           status: result.success ? 'success' : 'failed',
           errorMessage: result.error || null,
           tenantId: tenantId,
@@ -413,8 +419,9 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
       }
       result = await unipileService.sendLinkedInMessage(employee, message, linkedinAccountId, { tenantId });
       // Track message in campaign_analytics for Live Activity Feed
+      // Use 'CONTACTED' to indicate follow-up message after connection acceptance
       try {
-        await campaignStatsTracker.trackAction(campaignLead.campaign_id, 'MESSAGE_SENT', {
+        await campaignStatsTracker.trackAction(campaignLead.campaign_id, 'CONTACTED', {
           leadId: campaignLead.lead_id || campaignLead.id,
           channel: 'linkedin',
           leadName: employee.fullname,
