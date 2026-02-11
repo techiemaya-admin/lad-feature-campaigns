@@ -13,7 +13,7 @@ class CampaignStatsTracker {
    * Track campaign action and update stats atomically
    * @param {string} campaignId 
    * @param {string} actionType - CONNECTION_SENT, CONNECTION_ACCEPTED, MESSAGE_SENT, REPLY_RECEIVED, etc.
-   * @param {object} metadata - { leadId, channel: 'linkedin'|'email'|'whatsapp'|'voice'|'instagram', leadName, leadPhone, leadEmail, messageContent, status }
+   * @param {object} metadata - { leadId, channel: 'linkedin'|'email'|'whatsapp'|'voice'|'instagram', leadName, leadPhone, leadEmail, messageContent, status, tenantId, accountName, providerAccountId, leadLinkedIn }
    */
   async trackAction(campaignId, actionType, metadata = {}) {
     const { 
@@ -25,7 +25,11 @@ class CampaignStatsTracker {
       messageContent,
       status = 'success',
       errorMessage,
-      responseData
+      responseData,
+      tenantId,
+      accountName,
+      providerAccountId,
+      leadLinkedIn
     } = metadata;
     
     const schema = getSchema(null);
@@ -34,8 +38,8 @@ class CampaignStatsTracker {
       // Insert into campaign_analytics for real-time tracking using pool
       await pool.query(
         `INSERT INTO ${schema}.campaign_analytics 
-         (campaign_id, lead_id, action_type, platform, status, lead_name, lead_phone, lead_email, message_content, error_message, response_data, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())`,
+         (campaign_id, lead_id, action_type, platform, status, lead_name, lead_phone, lead_email, message_content, error_message, response_data, tenant_id, account_name, provider_account_id, lead_linkedin, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())`,
         [
           campaignId,
           leadId,
@@ -47,7 +51,11 @@ class CampaignStatsTracker {
           leadEmail,
           messageContent,
           errorMessage,
-          responseData ? JSON.stringify(responseData) : null
+          responseData ? JSON.stringify(responseData) : null,
+          tenantId,
+          accountName,
+          providerAccountId,
+          leadLinkedIn
         ]
       );
       
@@ -55,7 +63,11 @@ class CampaignStatsTracker {
         campaignId: campaignId?.substring(0, 8),
         actionType,
         status,
-        channel
+        channel,
+        tenantId: tenantId?.substring(0, 8),
+        accountName,
+        providerAccountId,
+        leadLinkedIn: leadLinkedIn?.substring(0, 50)
       });
       
       // Emit stats update event

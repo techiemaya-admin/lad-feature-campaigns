@@ -13,40 +13,39 @@ const { getSchema } = require('../../../core/utils/schemaHelper');
 
 class LinkedInPollingRepository {
   /**
-   * Get tenant IDs that have active LinkedIn accounts
-   * Used by scheduler to iterate through tenants in tenant-scoped manner
-   * @param {Object} context - Request context
-   * @returns {Promise<Array<string>>} Array of tenant IDs
+   * Get all active LinkedIn accounts for polling
+   * @param {Object} context - Request context with tenant info
+   * @returns {Promise<Array>} LinkedIn accounts
    */
-  async getTenantsWithActiveLinkedInAccounts(context = {}) {
+  async getActiveLinkedInAccounts(context = {}) {
     const schema = getSchema(context);
     
     const query = `
-      SELECT DISTINCT tenant_id
+      SELECT 
+        id, 
+        tenant_id, 
+        account_name, 
+        provider_account_id as unipile_account_id,
+        status
       FROM ${schema}.social_linkedin_accounts
       WHERE provider = 'unipile'
         AND status = 'active'
         AND is_deleted = false
         AND provider_account_id IS NOT NULL
-      ORDER BY tenant_id
+      ORDER BY created_at DESC
     `;
     
     const result = await pool.query(query);
-    return result.rows.map(row => row.tenant_id);
+    return result.rows;
   }
 
   /**
-   * Get all active LinkedIn accounts for specific tenant
-   * ARCHITECTURE: Always tenant-scoped with WHERE tenant_id = $1
-   * @param {string} tenantId - Tenant ID (required)
-   * @param {Object} context - Request context with tenant info
+   * Get active LinkedIn accounts for specific tenant
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} context - Request context
    * @returns {Promise<Array>} LinkedIn accounts
    */
-  async getActiveLinkedInAccounts(tenantId, context = {}) {
-    if (!tenantId) {
-      throw new Error('[Repository] tenantId is required - all queries must be tenant-scoped');
-    }
-    
+  async getLinkedInAccountsByTenant(tenantId, context = {}) {
     const schema = getSchema(context);
     
     const query = `
@@ -321,6 +320,100 @@ class LinkedInPollingRepository {
     
     const result = await pool.query(query, [campaignId, leadId]);
     return result.rows.length > 0;
+  }
+
+  /**
+   * Get skipped message record for a lead
+   * @param {string} campaignId - Campaign ID
+   * @param {string} leadId - Lead ID
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} context - Request context
+   * @returns {Promise<Object|null>} Skipped message record or null
+   */
+  async getSkippedMessage(campaignId, leadId, tenantId, context = {}) {
+    const schema = getSchema(context);
+    
+    const query = `
+      SELECT id, action_type, created_at
+      FROM ${schema}.campaign_analytics
+      WHERE campaign_id = $1
+        AND lead_id = $2
+        AND tenant_id = $3
+        AND action_type = 'MESSAGE_SKIPPED'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    
+    const result = await pool.query(query, [campaignId, leadId, tenantId]);
+    return result.rows.length > 0 ? result.rows[0] : null;
+  }
+
+  /**
+   * Get campaign by ID
+   * @param {string} campaignId - Campaign ID
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} context - Request context
+   * @returns {Promise<Object|null>} Campaign or null
+   */
+  async getCampaign(campaignId, tenantId, context = {}) {
+    const schema = getSchema(context);
+    
+    const query = `
+      SELECT id, name, config, tenant_id
+      FROM ${schema}.campaigns
+      WHERE id = $1 AND tenant_id = $2
+    `;
+    
+    const result = await pool.query(query, [campaignId, tenantId]);
+    return result.rows.length > 0 ? result.rows[0] : null;
+  }
+
+  /**
+   * Get campaign lead with lead details
+   * @param {string} campaignId - Campaign ID
+   * @param {string} leadId - Lead ID
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} context - Request context
+   * @returns {Promise<Object|null>} Campaign lead with lead details or null
+   */
+  async getCampaignLeadWithDetails(campaignId, leadId, tenantId, context = {}) {
+    const schema = getSchema(context);
+    
+    const query = `
+      SELECT cl.id, cl.lead_id, cl.campaign_id, cl.status,
+             l.linkedin_url, l.company_name, l.title
+      FROM ${schema}.campaign_leads cl
+      LEFT JOIN ${schema}.leads l ON cl.lead_id = l.id
+      WHERE cl.campaign_id = $1 
+        AND cl.lead_id = $2 
+        AND cl.tenant_id = $3
+      LIMIT 1
+    `;
+    
+    const result = await pool.query(query, [campaignId, leadId, tenantId]);
+    return result.rows.length > 0 ? result.rows[0] : null;
+  }
+
+  /**
+   * Get linkedin_message step for a campaign
+   * @param {string} campaignId - Campaign ID
+   * @param {Object} context - Request context
+   * @returns {Promise<Object|null>} Message step or null
+   */
+  async getLinkedInMessageStep(campaignId, context = {}) {
+    const schema = getSchema(context);
+    
+    const query = `
+      SELECT id, step_type, config, step_order
+      FROM ${schema}.campaign_steps
+      WHERE campaign_id = $1
+        AND step_type = 'linkedin_message'
+      ORDER BY step_order ASC
+      LIMIT 1
+    `;
+    
+    const result = await pool.query(query, [campaignId]);
+    return result.rows.length > 0 ? result.rows[0] : null;
   }
 }
 

@@ -14,115 +14,20 @@ const unipileService = require('./unipileService');
 const { campaignStatsTracker } = require('./campaignStatsTracker');
 const linkedInPollingRepository = require('../repositories/LinkedInPollingRepository');
 const pollingConstants = require('../constants/pollingConstants');
+const { executeLinkedInStep } = require('./LinkedInStepExecutor');
 
 class LinkedInPollingService {
   /**
-   * Poll all tenants for LinkedIn connection acceptances (multi-tenant orchestration)
-   * Used by cron scheduler - iterates through tenants in tenant-scoped manner
-   * ARCHITECTURE COMPLIANCE: Gets tenant list, then calls tenant-scoped polling for each
-   * This ensures ALL data queries have WHERE tenant_id = $1 filter
-   * @param {Object} context - Optional request context
+   * Poll all active LinkedIn accounts for connection acceptances
+   * @param {Object} context - Request context with tenant info
    * @returns {Promise<Object>} Polling results
    */
   async pollAllLinkedInAccounts(context = {}) {
-    logger.info('[LinkedInPolling] Starting multi-tenant polling orchestration');
+    logger.info('[LinkedInPolling] Starting polling for all accounts');
 
     try {
-      // Step 1: Get list of tenants that have active LinkedIn accounts
-      // This is a metadata query (tenant IDs only), not tenant data
-      const tenantIds = await linkedInPollingRepository.getTenantsWithActiveLinkedInAccounts(context);
-
-      logger.info('[LinkedInPolling] Found tenants with LinkedIn accounts', {
-        tenantCount: tenantIds.length
-      });
-
-      if (tenantIds.length === 0) {
-        return {
-          success: true,
-          total: 0,
-          tenantsPolled: 0,
-          successful: 0,
-          failed: 0,
-          details: []
-        };
-      }
-
-      const results = {
-        tenantsPolled: tenantIds.length,
-        successful: 0,
-        failed: 0,
-        details: []
-      };
-
-      // Step 2: Poll each tenant individually with full tenant isolation
-      // Each call to pollTenantLinkedInConnections uses tenant-scoped queries
-      for (const tenantId of tenantIds) {
-        try {
-          logger.info('[LinkedInPolling] Polling tenant', { tenantId });
-          
-          const tenantResult = await this.pollTenantLinkedInConnections(tenantId, context);
-          
-          results.details.push({
-            tenantId,
-            success: true,
-            accountsPolled: tenantResult.total,
-            accountsSuccessful: tenantResult.successful,
-            accountsFailed: tenantResult.failed
-          });
-          
-          results.successful++;
-        } catch (error) {
-          logger.error('[LinkedInPolling] Failed to poll tenant', {
-            tenantId,
-            error: error.message
-          });
-          
-          results.details.push({
-            tenantId,
-            success: false,
-            error: error.message
-          });
-          
-          results.failed++;
-        }
-      }
-
-      logger.info('[LinkedInPolling] Multi-tenant polling completed', {
-        tenantsPolled: results.tenantsPolled,
-        successful: results.successful,
-        failed: results.failed
-      });
-
-      return {
-        success: true,
-        ...results
-      };
-    } catch (error) {
-      logger.error('[LinkedInPolling] Multi-tenant polling orchestration failed', {
-        error: error.message,
-        stack: error.stack
-      });
-      
-      throw error;
-    }
-  }
-
-  /**
-   * Poll connections for a specific tenant (fully tenant-scoped)
-   * @param {string} tenantId - Tenant ID (required)
-   * @param {Object} context - Request context
-   * @returns {Promise<Object>} Polling results
-   */
-  async pollTenantLinkedInConnections(tenantId, context = {}) {
-    if (!tenantId) {
-      throw new Error('[LinkedInPolling] Tenant ID is required for polling');
-    }
-    
-    logger.info('[LinkedInPolling] Starting tenant-specific polling', { tenantId });
-
-    try {
-      // Get LinkedIn accounts for this tenant (tenant-scoped query)
-      const accounts = await linkedInPollingRepository.getActiveLinkedInAccounts(tenantId, context);
+      // Get all active LinkedIn accounts (repository handles SQL)
+      const accounts = await linkedInPollingRepository.getActiveLinkedInAccounts(context);
 
       logger.info('[LinkedInPolling] Found accounts to poll', {
         totalAccounts: accounts.length
@@ -495,6 +400,15 @@ class LinkedInPollingService {
         connectionCreatedAt: new Date(connection.created_at).toISOString()
       });
 
+      // ✅ NEW: Immediately trigger message sending if there's a skipped message
+      await this.triggerMessageSendingIfSkipped(
+        campaignId,
+        leadId,
+        tenantId,
+        normalizedLinkedInUrl,
+        context
+      );
+
       // Update campaign lead status (optional - only if campaign_leads exists)
       // await linkedInPollingRepository.updateCampaignLeadStatus(
       //   leadId,
@@ -554,6 +468,214 @@ class LinkedInPollingService {
         error: error.message
       });
       throw error;
+    }
+  }
+
+  /**
+   * Poll connections for a specific tenant
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} context - Request context
+   * @returns {Promise<Object>} Polling results
+   */
+  async pollTenantLinkedInConnections(tenantId, context = {}) {
+    logger.info('[LinkedInPolling] Starting tenant-specific polling', { tenantId });
+
+    try {
+      // Get LinkedIn accounts for this tenant
+      const accounts = await linkedInPollingRepository.getLinkedInAccountsByTenant(tenantId, context);
+
+      if (accounts.length === 0) {
+        logger.warn('[LinkedInPolling] No LinkedIn accounts found for tenant', { tenantId });
+        return {
+          success: true,
+          total: 0,
+          successful: 0,
+          failed: 0,
+          details: []
+        };
+      }
+
+      const results = {
+        total: accounts.length,
+        successful: 0,
+        failed: 0,
+        details: []
+      };
+
+      // Poll each account
+      for (const account of accounts) {
+        try {
+          const accountResult = await this.pollLinkedInConnections(
+            account.unipile_account_id,
+            account.tenant_id,
+            account.account_name,
+            context
+          );
+          
+          results.details.push({
+            accountId: account.unipile_account_id,
+            accountName: account.account_name,
+            success: true,
+            processed: accountResult.processed || 0
+          });
+          
+          results.successful++;
+        } catch (error) {
+          logger.error('[LinkedInPolling] Failed to poll account', {
+            accountId: account.unipile_account_id,
+            error: error.message
+          });
+          
+          results.details.push({
+            accountId: account.unipile_account_id,
+            accountName: account.account_name,
+            success: false,
+            error: error.message
+          });
+          
+          results.failed++;
+        }
+      }
+
+      logger.info('[LinkedInPolling] Tenant polling completed', {
+        tenantId,
+        total: results.total,
+        successful: results.successful,
+        failed: results.failed
+      });
+
+      return {
+        success: true,
+        ...results
+      };
+    } catch (error) {
+      logger.error('[LinkedInPolling] Tenant polling failed', {
+        tenantId,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Trigger message sending immediately if there's a skipped message waiting
+   * Called automatically after CONNECTION_ACCEPTED is recorded
+   * @param {string} campaignId - Campaign ID
+   * @param {string} leadId - Lead ID
+   * @param {string} tenantId - Tenant ID
+   * @param {string} linkedInUrl - LinkedIn profile URL
+   * @param {Object} context - Request context
+   */
+  async triggerMessageSendingIfSkipped(campaignId, leadId, tenantId, linkedInUrl, context = {}) {
+    try {
+      logger.info('[LinkedInPolling] Checking for skipped messages', {
+        campaignId,
+        leadId,
+        tenantId
+      });
+
+      // 1. Check if there's a MESSAGE_SKIPPED record for this lead
+      const skippedMessage = await linkedInPollingRepository.getSkippedMessage(
+        campaignId,
+        leadId,
+        tenantId,
+        context
+      );
+
+      if (!skippedMessage) {
+        logger.debug('[LinkedInPolling] No skipped message found - message step may not have been reached yet', {
+          campaignId,
+          leadId
+        });
+        return;
+      }
+
+      logger.info('[LinkedInPolling] Found skipped message - triggering immediate send', {
+        campaignId,
+        leadId,
+        skippedAt: skippedMessage.created_at
+      });
+
+      // 2. Get campaign data
+      const campaign = await linkedInPollingRepository.getCampaign(
+        campaignId,
+        tenantId,
+        context
+      );
+
+      if (!campaign) {
+        logger.warn('[LinkedInPolling] Campaign not found', { campaignId, tenantId });
+        return;
+      }
+
+      // 3. Get campaign_lead data
+      const campaignLead = await linkedInPollingRepository.getCampaignLeadWithDetails(
+        campaignId,
+        leadId,
+        tenantId,
+        context
+      );
+
+      if (!campaignLead) {
+        logger.warn('[LinkedInPolling] Campaign lead not found', { campaignId, leadId });
+        return;
+      }
+
+      // 4. Get the linkedin_message step from workflow steps
+      const messageStep = await linkedInPollingRepository.getLinkedInMessageStep(
+        campaignId,
+        context
+      );
+
+      if (!messageStep) {
+        logger.warn('[LinkedInPolling] No linkedin_message step found in campaign', { campaignId });
+        return;
+      }
+
+      // 5. Execute the message step immediately
+      logger.info('[LinkedInPolling] Executing linkedin_message step immediately', {
+        campaignId,
+        leadId,
+        stepId: messageStep.id,
+        linkedInUrl: linkedInUrl
+      });
+
+      const result = await executeLinkedInStep(
+        campaign,
+        messageStep,
+        campaignLead,
+        tenantId,
+        context
+      );
+
+      if (result.success) {
+        logger.info('[LinkedInPolling] ✅ Message sent successfully immediately after connection acceptance!', {
+          campaignId,
+          leadId,
+          linkedInUrl: linkedInUrl
+        });
+      } else if (result.skipped) {
+        logger.warn('[LinkedInPolling] Message still skipped (unexpected)', {
+          campaignId,
+          leadId,
+          error: result.error
+        });
+      } else {
+        logger.error('[LinkedInPolling] Failed to send message', {
+          campaignId,
+          leadId,
+          error: result.error
+        });
+      }
+
+    } catch (error) {
+      // Don't throw error - this is a bonus feature, shouldn't break polling
+      logger.error('[LinkedInPolling] Failed to trigger message sending', {
+        campaignId,
+        leadId,
+        error: error.message,
+        stack: error.stack
+      });
     }
   }
 }
