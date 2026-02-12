@@ -100,28 +100,43 @@ class LinkedInAuthController {
    * POST /api/campaigns/linkedin/connect
    */
   static async connect(req, res) {
+    const logger = require('../../../core/utils/logger');
     try {
       // Use tenantId per TDD (linkedin_accounts table uses tenant_id)
       const tenantId = req.user.tenantId || req.user.userId || req.user.user_id;
       const { method, email, password, li_at, li_a, user_agent } = req.body;
+      
+      logger.info('[LinkedInAuthController] Connect request', { 
+        method, 
+        tenantId: tenantId?.substring(0, 8),
+        hasEmail: !!email,
+        hasPassword: !!password,
+        hasLiAt: !!li_at
+      });
+      
       if (!method || (method !== 'credentials' && method !== 'cookies')) {
+        logger.warn('[LinkedInAuthController] Invalid method', { method });
         return res.status(400).json({
           success: false,
           error: 'Invalid method. Must be "credentials" or "cookies"'
         });
       }
       if (method === 'credentials' && (!email || !password)) {
+        logger.warn('[LinkedInAuthController] Missing credentials');
         return res.status(400).json({
           success: false,
           error: 'Email and password are required for credentials method'
         });
       }
       if (method === 'cookies' && (!li_at && !li_a)) {
+        logger.warn('[LinkedInAuthController] Missing cookies');
         return res.status(400).json({
           success: false,
           error: 'li_at or li_a cookie is required for cookies method'
         });
       }
+      
+      logger.info('[LinkedInAuthController] Calling connectAccount service');
       let result;
       try {
         result = await linkedInService.connectAccount({
@@ -132,17 +147,34 @@ class LinkedInAuthController {
           li_a,
           user_agent
         });
+        logger.info('[LinkedInAuthController] connectAccount returned', { 
+          hasResult: !!result,
+          isCheckpoint: result?.object === 'Checkpoint'
+        });
       } catch (error) {
+        logger.error('[LinkedInAuthController] connectAccount failed', { 
+          error: error.message || 'Unknown error',
+          errorString: String(error),
+          errorName: error.name,
+          status: error.response?.status,
+          responseData: error.response?.data,
+          stack: error.stack?.substring(0, 500)
+        });
+        
         // Handle Unipile API errors gracefully
-        const errorMessage = error.message || 'Failed to connect LinkedIn account';
+        const errorMessage = error.message || String(error) || 'Failed to connect LinkedIn account';
+        
+        // Remove any Unipile branding from error messages
+        const cleanError = errorMessage.replace(/unipile/gi, 'service').replace(/Unipile/g, 'Service');
+        
         // Check if it's the 404 error we're handling
-        if (errorMessage.includes('not supported by this Unipile API version') || 
-            errorMessage.includes('404') ||
+        if (cleanError.includes('not supported by this') || 
+            cleanError.includes('404') ||
             (error.response && error.response.status === 404)) {
           return res.status(501).json({
             success: false,
             error: 'LinkedIn connection via credentials is not supported',
-            message: 'The Unipile API endpoint for credential-based LinkedIn connection is not available. Please use one of the following alternatives:',
+            message: 'The LinkedIn credential-based connection endpoint is not available. Please use one of the following alternatives:',
             alternatives: [
               {
                 method: 'OAuth',
@@ -150,19 +182,19 @@ class LinkedInAuthController {
                 endpoint: '/api/campaigns/linkedin/auth/start'
               },
               {
-                method: 'Unipile Dashboard',
-                description: 'Connect your LinkedIn account through the Unipile dashboard',
-                action: 'Visit your Unipile dashboard to connect LinkedIn accounts'
+                method: 'Dashboard',
+                description: 'Connect your LinkedIn account through the provider dashboard',
+                action: 'Visit the provider dashboard to connect LinkedIn accounts'
               }
             ],
-            details: errorMessage
+            details: cleanError
           });
         }
         // Handle other errors
         return res.status(error.response?.status || 500).json({
           success: false,
-          error: errorMessage,
-          details: error.response?.data || error.message
+          error: cleanError,
+          details: error.response?.data || cleanError
         });
       }
       // Check if result is a checkpoint (OTP/2FA required)
@@ -238,25 +270,53 @@ class LinkedInAuthController {
             email: email,
             connected_at: new Date().toISOString()
           };
-            tenant_id: tenantId,
-            unipile_account_id: unipileAccountId,
-            profile_name: profileName,
-            has_profile_url: !!profileUrl
+          
+          const userId = req.user.userId || req.user.user_id;
+          
+          logger.info('[LinkedInAuthController] Saving account to database', {
+            userId: userId?.substring(0, 8),
+            tenantId: tenantId?.substring(0, 8),
+            unipileAccountId: unipileAccountId?.substring(0, 8)
           });
+          
           // Use service to save account (handles database operations)
-          await linkedInAccountStorage.saveLinkedInAccount(tenantId, credentials);
+          const savedAccount = await linkedInAccountStorage.saveLinkedInAccount(userId, tenantId, credentials);
+          
+          logger.info('[LinkedInAuthController] Account saved successfully', {
+            accountId: savedAccount?.id?.substring(0, 8),
+            accountName: savedAccount?.account_name
+          });
         }
       } else {
+        logger.warn('[LinkedInAuthController] No unipileAccountId in result', { 
+          hasResult: !!result,
+          resultKeys: result ? Object.keys(result) : []
+        });
       }
+      
+      logger.info('[LinkedInAuthController] Returning success response');
+      
       res.json({
         success: true,
         message: 'Account connected successfully',
         result
       });
     } catch (error) {
+      logger.error('[LinkedInAuthController] Connect failed', { 
+        error: error.message || 'Unknown error',
+        errorString: String(error),
+        errorName: error.name,
+        stack: error.stack?.substring(0, 500)
+      });
+      
+      // Clean error message - remove Unipile branding
+      const cleanError = (error.message || String(error) || 'Failed to connect account. Please check your credentials and try again.')
+        .replace(/unipile/gi, 'service')
+        .replace(/Unipile/g, 'Service');
+      
       res.status(500).json({
         success: false,
-        error: error.message || 'Failed to connect account'
+        error: cleanError
       });
     }
   }

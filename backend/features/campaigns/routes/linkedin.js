@@ -65,21 +65,42 @@ router.get('/status', jwtAuth, async (req, res) => {
 });
 // POST /api/campaigns/linkedin/connect - Connect LinkedIn account (OAuth or credentials)
 router.post('/connect', jwtAuth, async (req, res) => {
+  const logger = require('../../../core/utils/logger');
   try {
     const { method, email, password, redirectUri, li_at, li_a, user_agent } = req.body;
+    
+    logger.info('[LinkedIn Connect] Request received', { 
+      method, 
+      hasEmail: !!email,
+      hasPassword: !!password,
+      hasLiAt: !!li_at,
+      hasRedirectUri: !!redirectUri,
+      userId: req.user?.userId?.substring(0, 8)
+    });
+    
     // If method is provided (credentials or cookies), use credentials-based connection
     if (method && (method === 'credentials' || method === 'cookies')) {
+      logger.info('[LinkedIn Connect] Using credentials/cookies method', { method });
       const LinkedInAuthController = require('../controllers/LinkedInAuthController');
       return LinkedInAuthController.connect(req, res);
     }
+    
     // Otherwise, use OAuth flow (backward compatibility)
+    logger.info('[LinkedIn Connect] Using OAuth flow');
     const userId = req.user.userId;
     const result = await linkedInIntegrationService.startLinkedInConnection(userId, redirectUri);
+    
+    logger.info('[LinkedIn Connect] OAuth URL generated', { hasUrl: !!result });
+    
     res.json({
       success: true,
       data: result
     });
   } catch (error) {
+    logger.error('[LinkedIn Connect] Error', { 
+      error: error.message,
+      stack: error.stack 
+    });
     res.status(500).json({
       success: false,
       error: error.message
@@ -125,39 +146,56 @@ router.get('/callback', jwtAuth, async (req, res) => {
   }
 });
 // POST /api/campaigns/linkedin/disconnect - Disconnect LinkedIn account
+// POST /api/campaigns/linkedin/disconnect - Disconnect LinkedIn account
 router.post('/disconnect', jwtAuth, async (req, res) => {
+  const logger = require('../../../core/utils/logger');
   try {
     // Use tenantId per TDD (linkedin_accounts table uses tenant_id)
     const tenantId = req.user.tenantId || req.user.userId;
+    
+    logger.info('[LinkedIn Disconnect] Request received', {
+      tenantId: tenantId?.substring(0, 8),
+      body: req.body,
+      query: req.query
+    });
+    
     // Support multiple parameter names (like pluto_campaigns)
     // UI might send: connection_id (database id), unipileAccountId, or accountId
-    // Frontend sends connection_id as query parameter: ?connection_id=xxx
+    // Frontend sends accountId as the database UUID
     const connectionId = req.body.connection_id || req.query.connection_id || req.body.connectionId || req.query.connectionId;
-    const unipileAccountId = req.body.unipileAccountId || req.query.unipileAccountId || req.body.unipile_account_id || req.headers['x-unipile-account-id'];
     const accountId = req.body.accountId || req.query.accountId || req.headers['x-account-id'];
-    // If connection_id is provided (database UUID), look up the unipile_account_id
-    let targetUnipileAccountId = unipileAccountId || accountId;
-    if (connectionId && !targetUnipileAccountId) {
+    const unipileAccountId = req.body.unipileAccountId || req.query.unipileAccountId || req.body.unipile_account_id || req.headers['x-unipile-account-id'];
+    
+    // accountId or connectionId are database IDs - need to look up provider_account_id
+    const databaseId = accountId || connectionId;
+    let targetUnipileAccountId = unipileAccountId;
+    
+    if (databaseId && !targetUnipileAccountId) {
       try {
         const { pool } = require('../../../shared/database/connection');
         const schema = getSchema(req);
-        // Check if connection_id is a UUID (from ${schema}.linkedin_accounts) or integer
-        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(connectionId);
+        // Check if databaseId is a UUID (from ${schema}.social_linkedin_accounts) or integer
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(databaseId);
         if (isUUID) {
-          // UUID - query ${schema}.linkedin_accounts table (TDD schema)
+          // UUID - query ${schema}.social_linkedin_accounts table (production schema)
           const lookupQuery = `
-            SELECT unipile_account_id
-            FROM ${schema}.linkedin_accounts
+            SELECT provider_account_id as unipile_account_id
+            FROM ${schema}.social_linkedin_accounts
             WHERE id = $1
               AND tenant_id = $2
-              AND unipile_account_id IS NOT NULL
-              AND unipile_account_id != ''
+              AND provider_account_id IS NOT NULL
+              AND provider_account_id != ''
             LIMIT 1
           `;
-          const lookupResult = await pool.query(lookupQuery, [connectionId, tenantId]);
+          const lookupResult = await pool.query(lookupQuery, [databaseId, tenantId]);
           if (lookupResult.rows.length > 0) {
             targetUnipileAccountId = lookupResult.rows[0].unipile_account_id;
+            logger.info('[LinkedIn Disconnect] Found unipileAccountId from database', {
+              databaseId,
+              unipileAccountId: targetUnipileAccountId
+            });
           } else {
+            logger.warn('[LinkedIn Disconnect] No account found for databaseId', { databaseId, tenantId });
           }
         } else {
           // Integer ID - try old schema (fallback)
@@ -170,19 +208,28 @@ router.post('/disconnect', jwtAuth, async (req, res) => {
               AND credentials->>'unipile_account_id' != ''
             LIMIT 1
           `;
-          const lookupResult = await pool.query(lookupQuery, [connectionId]);
+          const lookupResult = await pool.query(lookupQuery, [databaseId]);
           if (lookupResult.rows.length > 0) {
             targetUnipileAccountId = lookupResult.rows[0].unipile_account_id;
+            logger.info('[LinkedIn Disconnect] Found unipileAccountId from old schema', {
+              databaseId,
+              unipileAccountId: targetUnipileAccountId
+            });
           } else {
+            logger.warn('[LinkedIn Disconnect] No account found in old schema', { databaseId });
           }
         }
       } catch (lookupError) {
-        // Continue - we'll try to use connectionId as unipileAccountId
+        logger.error('[LinkedIn Disconnect] Error looking up account', { 
+          error: lookupError.message,
+          databaseId 
+        });
+        // Continue - we'll try to use databaseId as unipileAccountId
       }
     }
-    // If still no unipileAccountId found, try to use connectionId directly (might be unipileAccountId)
+    // If still no unipileAccountId found, try to use databaseId directly (might be unipileAccountId)
     if (!targetUnipileAccountId) {
-      targetUnipileAccountId = connectionId;
+      targetUnipileAccountId = databaseId;
     }
     // If no account identifier provided, try to get the first account for the user
     if (!targetUnipileAccountId) {
@@ -204,12 +251,22 @@ router.post('/disconnect', jwtAuth, async (req, res) => {
         });
       }
     }
+    
+    logger.info('[LinkedIn Disconnect] Calling disconnect service', {
+      tenantId: tenantId?.substring(0, 8),
+      targetUnipileAccountId: targetUnipileAccountId?.substring(0, 8)
+    });
+    
     await linkedInIntegrationService.disconnectAccount(tenantId, targetUnipileAccountId);
+    
+    logger.info('[LinkedIn Disconnect] Disconnect successful');
+    
     res.json({
       success: true,
       message: 'LinkedIn account disconnected successfully'
     });
   } catch (error) {
+    logger.error('[LinkedIn Disconnect] Error', { error: error.message });
     res.status(500).json({
       success: false,
       error: error.message
@@ -266,5 +323,52 @@ router.post('/polling/trigger', jwtAuth, async (req, res) => {
     });
   }
 });
+
+// GET /api/campaigns/linkedin/polling/status - Get polling scheduler status
+router.get('/polling/status', jwtAuth, async (req, res) => {
+  try {
+    const status = pollingScheduler.getStatus();
+    res.json({
+      success: true,
+      polling: status
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// POST /api/campaigns/linkedin/polling/trigger - Manually trigger polling (for testing)
+router.post('/polling/trigger', jwtAuth, async (req, res) => {
+  try {
+    const result = await pollingScheduler.triggerManualPoll();
+    res.json({
+      success: result.success,
+      message: result.message || result.error
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ==================== WEBHOOK ROUTES ====================
+const LinkedInWebhookController = require('../controllers/LinkedInWebhookController');
+
+// NOTE: Webhook receiver (/webhooks/account-status) is in public.routes.js (no JWT required)
+// These routes are for webhook MANAGEMENT (require JWT auth)
+
+// POST /api/campaigns/linkedin/webhooks/register-account-status - Register account status webhook
+router.post('/webhooks/register-account-status', jwtAuth, LinkedInWebhookController.registerAccountStatusWebhook);
+
+// GET /api/campaigns/linkedin/webhooks - List all webhooks
+router.get('/webhooks', jwtAuth, LinkedInWebhookController.listWebhooks);
+
+// POST /api/campaigns/linkedin/webhooks/register - Register general webhook
+router.post('/webhooks/register', jwtAuth, LinkedInWebhookController.registerWebhook);
 
 module.exports = router;
