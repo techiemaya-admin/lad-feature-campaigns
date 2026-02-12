@@ -15,6 +15,7 @@ async function getUserLinkedInAccounts(tenantId, req = null) {
     const schema = getSchema(req);
     
     // Query social_linkedin_accounts table (production schema)
+    // Get all active accounts for the tenant
     const query = `
       SELECT 
         id, 
@@ -26,7 +27,7 @@ async function getUserLinkedInAccounts(tenantId, req = null) {
         metadata
       FROM ${schema}.social_linkedin_accounts
       WHERE tenant_id = $1 
-      AND status = 'active'
+        AND status = 'active'
       ORDER BY created_at DESC
     `;
     
