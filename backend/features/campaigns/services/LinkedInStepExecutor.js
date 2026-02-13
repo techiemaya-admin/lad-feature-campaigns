@@ -223,6 +223,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
     const linkedinAccount = await getLinkedInAccountForExecution(tenantId, userId);
     const linkedinAccountId = linkedinAccount?.provider_account_id || null;
     const linkedinAccountName = linkedinAccount?.account_name || 'LinkedIn Account';
+    const linkedinAccountUserId = linkedinAccount?.user_id || userId;  // User ID from social_linkedin_accounts
     
     logger.info('[LinkedInStepExecutor] LinkedIn account check', {
       stepType,
@@ -334,6 +335,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
           tenantId: tenantId,
           accountName: result.accountInfo?.account_name || result.accountUsed || null,
           providerAccountId: result.accountInfo?.provider_account_id || null,
+          userId: linkedinAccountUserId,  // User ID from social_linkedin_accounts
           leadLinkedIn: linkedinUrl
         });
       } catch (trackErr) {
@@ -395,6 +397,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
             tenantId: tenantId,
             accountName: linkedinAccountName,
             providerAccountId: linkedinAccountId,
+            userId: linkedinAccountUserId,  // User ID from social_linkedin_accounts
             leadLinkedIn: linkedinUrl
           });
           
@@ -431,6 +434,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
           tenantId: tenantId,
           accountName: linkedinAccountName,
           providerAccountId: linkedinAccountId,
+          userId: linkedinAccountUserId,  // User ID from social_linkedin_accounts
           leadLinkedIn: linkedinUrl
         });
       } catch (trackErr) {
@@ -448,6 +452,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
           tenantId: tenantId,
           accountName: linkedinAccountName,
           providerAccountId: linkedinAccountId,
+          userId: linkedinAccountUserId,  // User ID from social_linkedin_accounts
           leadLinkedIn: linkedinUrl
         });
       } catch (trackErr) {
@@ -552,6 +557,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
           tenantId: tenantId,
           accountName: linkedinAccountName,
           providerAccountId: linkedinAccountId,
+          userId: linkedinAccountUserId,  // User ID from social_linkedin_accounts
           leadLinkedIn: linkedinUrl
         });
       } catch (trackErr) {
