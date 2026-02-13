@@ -135,8 +135,25 @@ class LinkedInPollingRepository {
    * @param {Object} context - Request context
    * @returns {Promise<Object|null>} Sent record with lead info
    */
+  /**
+   * Get CONNECTION_SENT record by LinkedIn URL
+   * 
+   * @param {string} tenantId - Tenant ID
+   * @param {string} linkedInUrl - LinkedIn profile URL
+   * @param {object} context - Request context
+   * @returns {Promise<object|null>} CONNECTION_SENT record or null
+   */
   async getConnectionSentRecordByLinkedInUrl(tenantId, linkedInUrl, context = {}) {
     const schema = getSchema(context);
+    
+    if (!linkedInUrl) {
+      return null;
+    }
+    
+    // Normalize the incoming URL: ensure https, remove trailing slash
+    const normalizedUrl = linkedInUrl
+      .replace('http://', 'https://')
+      .replace(/\/$/, ''); // Remove trailing slash
     
     const query = `
       SELECT 
@@ -145,6 +162,7 @@ class LinkedInPollingRepository {
         ca.lead_id,
         ca.account_name,
         ca.provider_account_id,
+        ca.user_id,
         ca.lead_linkedin,
         ca.tenant_id,
         ca.response_data,
@@ -153,12 +171,16 @@ class LinkedInPollingRepository {
       WHERE ca.tenant_id = $1
         AND ca.action_type = 'CONNECTION_SENT'
         AND ca.status = 'success'
-        AND ca.lead_linkedin = $2
+        AND (
+          -- Normalize both URLs for comparison: replace http with https, remove trailing slashes, compare lowercase
+          LOWER(TRIM(TRAILING '/' FROM REPLACE(ca.lead_linkedin, 'http://', 'https://'))) = 
+          LOWER(TRIM(TRAILING '/' FROM $2))
+        )
       ORDER BY ca.created_at DESC
       LIMIT 1
     `;
     
-    const result = await pool.query(query, [tenantId, linkedInUrl]);
+    const result = await pool.query(query, [tenantId, normalizedUrl]);
     return result.rows.length > 0 ? result.rows[0] : null;
   }
 

@@ -469,8 +469,22 @@ class LinkedInPollingService {
       const leadName = `${connection.first_name || ''} ${connection.last_name || ''}`.trim() 
         || 'Unknown';
 
-      // ✅ Record CONNECTION_ACCEPTED with ALL 4 new tracking columns
-      // Use account info from CONNECTION_SENT record for consistency
+      // ⚠️ CRITICAL: Must have provider_account_id (unique identifier)
+      // Note: account_name can vary (e.g., "Sathwik Reddy" vs "sathwik492@gmail.com")
+      // so we only require provider_account_id - account_name is optional for display
+      if (!sentRecord.provider_account_id) {
+        logger.error('[LinkedInPolling] Missing provider_account_id in CONNECTION_SENT record - cannot proceed', {
+          campaignId,
+          leadId,
+          leadLinkedIn: normalizedLinkedInUrl
+        });
+        return false;
+      }
+
+      // Use account_name from sentRecord if available, else use placeholder
+      const recordAccountName = sentRecord.account_name || 'Unknown Account';
+
+      // ✅ Record CONNECTION_ACCEPTED with account that sent the request
       await campaignStatsTracker.trackAction(
         campaignId,
         pollingConstants.ACTION_TYPES.CONNECTION_ACCEPTED,
@@ -478,8 +492,10 @@ class LinkedInPollingService {
           tenantId,
           leadId,
           status: 'success',
-          accountName: sentRecord.account_name || accountName,
-          providerAccountId: sentRecord.provider_account_id || unipileAccountId,
+          leadName: leadName,
+          accountName: recordAccountName,  // ✅ From CONNECTION_SENT (may vary)
+          providerAccountId: sentRecord.provider_account_id,  // ✅ Sender's Unipile account ID
+          userId: sentRecord.user_id || null,  // ✅ User ID from CONNECTION_SENT record
           leadLinkedIn: normalizedLinkedInUrl
         }
       );
@@ -489,19 +505,74 @@ class LinkedInPollingService {
         leadId: leadId,
         tenantId: tenantId,
         leadName: leadName,
-        accountName: sentRecord.account_name || accountName,
-        providerAccountId: sentRecord.provider_account_id || unipileAccountId,
+        accountName: recordAccountName,
+        providerAccountId: sentRecord.provider_account_id,
         leadLinkedIn: normalizedLinkedInUrl,
         connectionCreatedAt: new Date(connection.created_at).toISOString()
       });
 
-      // Update campaign lead status (optional - only if campaign_leads exists)
-      // await linkedInPollingRepository.updateCampaignLeadStatus(
-      //   leadId,
-      //   tenantId,
-      //   'in_progress',
-      //   context
-      // );
+      // 🚀 IMMEDIATELY send message after connection accepted (don't wait for next campaign run)
+      try {
+        logger.info('[LinkedInPolling] Triggering immediate message sending after connection acceptance', {
+          campaignId,
+          leadId,
+          tenantId,
+          leadName,
+          accountName: recordAccountName,
+          providerAccountId: sentRecord.provider_account_id,
+          recipientProviderId: connection.member_id
+        });
+        
+        // ✅ Pass the SAME provider_account_id that sent the connection
+        await this.sendImmediateMessageAfterAcceptance(
+          campaignId,
+          leadId,
+          tenantId,
+          sentRecord,
+          sentRecord.provider_account_id,  // ✅ CRITICAL: Use account from CONNECTION_SENT, NOT current polling account
+          { 
+            ...context, 
+            leadName, 
+            normalizedLinkedInUrl,
+            recipientProviderId: connection.member_id  // Pass recipient's provider ID for first message
+          }
+        );
+      } catch (msgError) {
+        logger.error('[LinkedInPolling] Failed to send immediate message after acceptance', {
+          campaignId,
+          leadId,
+          error: msgError.message,
+          stack: msgError.stack
+        });
+        
+        // Store error in response_data for debugging
+        try {
+          await campaignStatsTracker.trackAction(
+            campaignId,
+            'IMMEDIATE_MESSAGE_FAILED',
+            {
+              tenantId,
+              leadId,
+              status: 'failed',
+              leadName: leadName,
+              errorMessage: msgError.message,
+              responseData: JSON.stringify({
+                error: msgError.message,
+                stack: msgError.stack,
+                timestamp: new Date().toISOString()
+              }),
+              accountName: recordAccountName,  // ✅ From CONNECTION_SENT (may vary)
+              providerAccountId: sentRecord.provider_account_id,  // ✅ Sender's Unipile account ID
+              userId: sentRecord.user_id || null,  // ✅ User ID from CONNECTION_SENT record
+              leadLinkedIn: normalizedLinkedInUrl
+            }
+          );
+        } catch (trackError) {
+          logger.error('[LinkedInPolling] Failed to track immediate message error', { trackError: trackError.message });
+        }
+        
+        // Don't throw - connection acceptance is already recorded
+      }
 
     } catch (error) {
       logger.error('[LinkedInPolling] Failed to record connection acceptance', {
@@ -510,6 +581,419 @@ class LinkedInPollingService {
         error: error.message
       });
       throw error;
+    }
+  }
+
+  /**
+   * Send immediate message after connection acceptance
+   * @param {string} campaignId - Campaign ID
+   * @param {string} leadId - Lead ID
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} sentRecord - Original CONNECTION_SENT record
+   * @param {string} senderAccountId - Unipile account ID that sent the connection (MUST be from sentRecord)
+   * @param {Object} context - Request context
+   */
+  async sendImmediateMessageAfterAcceptance(campaignId, leadId, tenantId, sentRecord, senderAccountId, context = {}) {
+    try {
+      const { pool } = require('../../../shared/database/connection');
+      const { getSchema } = require('../../../core/utils/schemaHelper');
+      const unipileService = require('./unipileService');
+      
+      const schema = getSchema({ user: { tenant_id: tenantId } });
+      
+      // ⚠️ CRITICAL VALIDATION: Must have provider_account_id from CONNECTION_SENT
+      if (!senderAccountId) {
+        logger.error('[LinkedInPolling] Cannot send message - missing provider_account_id from CONNECTION_SENT', {
+          campaignId,
+          leadId,
+          tenantId
+        });
+        return { success: false, error: 'Missing provider_account_id - cannot send message' };
+      }
+
+      // 🎯 SMART ACCOUNT SELECTION LOGIC:
+      // 1. Check if original account (from CONNECTION_SENT) is still active
+      // 2. If not active, find another ACTIVE account for the same user_id
+      // 3. This provides automatic failover while maintaining security
+      
+      logger.info('[LinkedInPolling] Finding active account for message sending', {
+        campaignId,
+        leadId,
+        tenantId,
+        originalAccountId: senderAccountId
+      });
+      
+      // Step 1: Get the original account and its user_id
+      const originalAccountQuery = `
+        SELECT id, account_name, provider_account_id, status, is_deleted, user_id
+        FROM ${schema}.social_linkedin_accounts
+        WHERE tenant_id = $1
+          AND provider_account_id = $2
+          AND provider = 'unipile'
+      `;
+      
+      const originalAccountResult = await pool.query(originalAccountQuery, [tenantId, senderAccountId]);
+      
+      if (originalAccountResult.rows.length === 0) {
+        logger.error('[LinkedInPolling] Original account not found in social_linkedin_accounts', {
+          campaignId,
+          leadId,
+          tenantId,
+          originalAccountId: senderAccountId
+        });
+        return { success: false, error: 'Original account not found - cannot send message' };
+      }
+      
+      const originalAccount = originalAccountResult.rows[0];
+      const userId = originalAccount.user_id;
+      
+      logger.info('[LinkedInPolling] Original account found', {
+        accountName: originalAccount.account_name,
+        userId: userId,
+        status: originalAccount.status,
+        isDeleted: originalAccount.is_deleted
+      });
+      
+      // Step 2: Check if original account is active
+      let accountData;
+      let actualSenderAccountId;
+      
+      if (originalAccount.status === 'active' && originalAccount.is_deleted === false) {
+        // ✅ Original account is active - use it
+        accountData = originalAccount;
+        actualSenderAccountId = senderAccountId;
+        
+        logger.info('[LinkedInPolling] Using original account - it is active', {
+          accountName: accountData.account_name,
+          provider_account_id: actualSenderAccountId
+        });
+      } else {
+        // ⚠️ Original account is NOT active - find another active account for same user_id
+        logger.warn('[LinkedInPolling] Original account is not active - searching for alternate active account', {
+          originalAccountName: originalAccount.account_name,
+          originalStatus: originalAccount.status,
+          userId: userId
+        });
+        
+        const alternateAccountQuery = `
+          SELECT id, account_name, provider_account_id, status, is_deleted, user_id
+          FROM ${schema}.social_linkedin_accounts
+          WHERE tenant_id = $1
+            AND user_id = $2
+            AND provider = 'unipile'
+            AND status = 'active'
+            AND is_deleted = false
+            AND provider_account_id IS NOT NULL
+          ORDER BY created_at DESC
+          LIMIT 1
+        `;
+        
+        const alternateAccountResult = await pool.query(alternateAccountQuery, [tenantId, userId]);
+        
+        if (alternateAccountResult.rows.length === 0) {
+          logger.error('[LinkedInPolling] No active account found for this user', {
+            campaignId,
+            leadId,
+            tenantId,
+            userId: userId,
+            originalAccountName: originalAccount.account_name,
+            originalStatus: originalAccount.status
+          });
+          return { 
+            success: false, 
+            error: `No active LinkedIn account found for user. Original account '${originalAccount.account_name}' is ${originalAccount.status}` 
+          };
+        }
+        
+        accountData = alternateAccountResult.rows[0];
+        actualSenderAccountId = accountData.provider_account_id;
+        
+        logger.info('[LinkedInPolling] ✅ Found alternate active account - using it instead', {
+          originalAccount: originalAccount.account_name,
+          originalStatus: originalAccount.status,
+          alternateAccount: accountData.account_name,
+          alternateStatus: accountData.status,
+          provider_account_id: actualSenderAccountId
+        });
+      }
+      
+      logger.info('[LinkedInPolling] Account verification passed - starting immediate message sending', {
+        campaignId,
+        leadId,
+        tenantId,
+        accountName: accountData.account_name,
+        userId: accountData.user_id,
+        accountStatus: accountData.status,
+        senderAccountId: actualSenderAccountId,
+        usingAlternate: actualSenderAccountId !== senderAccountId
+      });
+      
+      // Get campaign details and config
+      const campaignResult = await pool.query(
+        `SELECT id, name, config, created_by, status FROM ${schema}.campaigns WHERE id = $1 AND tenant_id = $2`,
+        [campaignId, tenantId]
+      );
+      
+      if (campaignResult.rows.length === 0) {
+        logger.warn('[LinkedInPolling] Campaign not found for immediate messaging', { campaignId, tenantId });
+        return { success: false, error: 'Campaign not found' };
+      }
+      
+      const campaign = campaignResult.rows[0];
+      
+      // Check if campaign has a connectionMessage configured
+      if (!campaign.config || !campaign.config.connectionMessage) {
+        logger.info('[LinkedInPolling] No connectionMessage configured in campaign', { campaignId });
+        return { success: false, error: 'No connectionMessage configured' };
+      }
+      
+      const messageTemplate = campaign.config.connectionMessage;
+      
+      logger.info('[LinkedInPolling] Found connectionMessage', {
+        campaignId,
+        messagePreview: messageTemplate.substring(0, 50) + '...'
+      });
+      
+      // Get LinkedIn URL from sentRecord or use the normalizedLinkedInUrl passed in context
+      const linkedInUrl = sentRecord.lead_linkedin || context.normalizedLinkedInUrl;
+      const leadName = context.leadName || sentRecord.lead_name || '';
+      
+      if (!linkedInUrl) {
+        logger.warn('[LinkedInPolling] No LinkedIn URL in sentRecord', { campaignId, leadId });
+        return { success: false, error: 'No LinkedIn URL provided' };
+      }
+      
+      // Try to find lead in campaign_leads by LinkedIn URL or name
+      // Note: lead_data may not have 'linkedin' field, so we also try matching by name
+      let leadResult = null;
+      let campaignLead = null;
+      let leadData = null;
+      
+      // Attempt 1: Try to find by LinkedIn URL (if stored in lead_data)
+      leadResult = await pool.query(
+        `SELECT id, campaign_id, lead_data, status, tenant_id 
+         FROM ${schema}.campaign_leads 
+         WHERE campaign_id = $1 
+           AND tenant_id = $2
+           AND (
+             lead_data->>'linkedin' = $3 OR
+             LOWER(REGEXP_REPLACE(TRIM(lead_data->>'linkedin'), '^https?://|/$', '', 'g')) = 
+             LOWER(REGEXP_REPLACE(TRIM($3), '^https?://|/$', '', 'g'))
+           )`,
+        [campaignId, tenantId, linkedInUrl]
+      );
+      
+      if (leadResult.rows.length > 0) {
+        campaignLead = leadResult.rows[0];
+        leadData = campaignLead.lead_data || {};
+        logger.info('[LinkedInPolling] Found lead by LinkedIn URL', {
+          leadId: campaignLead.id,
+          leadName: leadData.fullname || leadData.name
+        });
+      } else if (leadName) {
+        // Attempt 2: Try to find by name (fallback)
+        const firstName = leadName.split(' ')[0];
+        leadResult = await pool.query(
+          `SELECT id, campaign_id, lead_data, status, tenant_id 
+           FROM ${schema}.campaign_leads 
+           WHERE campaign_id = $1 
+             AND tenant_id = $2
+             AND (
+               lead_data->>'first_name' ILIKE $3 OR
+               lead_data->>'name' ILIKE $3
+             )
+           LIMIT 1`,
+          [campaignId, tenantId, firstName]
+        );
+        
+        if (leadResult.rows.length > 0) {
+          campaignLead = leadResult.rows[0];
+          leadData = campaignLead.lead_data || {};
+          logger.info('[LinkedInPolling] Found lead by name match', {
+            leadId: campaignLead.id,
+            leadName: leadData.fullname || leadData.name,
+            matchedName: firstName
+          });
+        }
+      }
+      
+      if (!campaignLead) {
+        // Attempt 3: Use data from CONNECTION_ACCEPTED record (fallback)
+        logger.warn('[LinkedInPolling] Lead not found in campaign_leads, using connection data', { 
+          campaignId, 
+          linkedInUrl,
+          leadName
+        });
+        
+        // Create synthetic lead data from connection info
+        leadData = {
+          fullname: leadName,
+          first_name: leadName.split(' ')[0],
+          last_name: leadName.split(' ').slice(1).join(' '),
+          linkedin: linkedInUrl,
+          company: '', // Not available
+          title: '' // Not available
+        };
+      }
+      
+      // IMPORTANT: Always use the leadId parameter (from leads table), NOT campaignLead.id (from campaign_leads table)
+      // The campaign_analytics.lead_id has a foreign key to leads.id, not campaign_leads.id
+      const correctLeadId = leadId;
+      
+      logger.info('[LinkedInPolling] Preparing to send message', {
+        campaignId,
+        leadId: correctLeadId,
+        leadName: leadData.fullname || leadData.name || leadName,
+        hasLeadInCampaignLeads: !!campaignLead
+      });
+      
+      // Replace variables in message template
+      let personalizedMessage = messageTemplate;
+      personalizedMessage = personalizedMessage.replace(/\{\{first_name\}\}/gi, leadData.first_name || leadData.fullname?.split(' ')[0] || '');
+      personalizedMessage = personalizedMessage.replace(/\{\{last_name\}\}/gi, leadData.last_name || leadData.fullname?.split(' ').slice(1).join(' ') || '');
+      personalizedMessage = personalizedMessage.replace(/\{\{fullname\}\}/gi, leadData.fullname || '');
+      personalizedMessage = personalizedMessage.replace(/\{\{company\}\}/gi, leadData.company || leadData.organization || '');
+      personalizedMessage = personalizedMessage.replace(/\{\{title\}\}/gi, leadData.title || '');
+      
+      logger.info('[LinkedInPolling] Personalized message ready', {
+        campaignId,
+        leadId: correctLeadId,
+        leadName: leadData.fullname || leadData.name || leadName,
+        messagePreview: personalizedMessage.substring(0, 50) + '...'
+      });
+      
+      // Determine if this is a first message (newly accepted connection) or follow-up
+      const recipientProviderId = context.recipientProviderId;
+      const isFirstMessage = !!recipientProviderId;
+      
+      let result;
+      
+      if (isFirstMessage) {
+        // This is a newly accepted connection - use POST /chats with text (create chat + send first message)
+        logger.info('[LinkedInPolling] Sending FIRST message to newly accepted connection', {
+          campaignId,
+          leadId: correctLeadId,
+          recipientProviderId,
+          accountName: accountData.account_name,
+          senderAccountId: actualSenderAccountId,  // ✅ Active account (original or alternate)
+          usingAlternate: actualSenderAccountId !== senderAccountId,
+          leadName: leadData.fullname || leadData.name || leadName
+        });
+        
+        // ✅ SMART: Use actualSenderAccountId (active account for user_id)
+        result = await unipileService.sendFirstLinkedInMessage(
+          actualSenderAccountId,  // ✅ Active account (automatic failover if original inactive)
+          recipientProviderId,
+          personalizedMessage,
+          { tenantId, campaignId, leadId: correctLeadId }
+        );
+        
+        logger.info('[LinkedInPolling] sendFirstLinkedInMessage result:', {
+          campaignId,
+          leadId: correctLeadId,
+          accountName: accountData.account_name,  // ✅ Use current name from database
+          resultSuccess: result.success,
+          resultError: result.error,
+          resultChatId: result.chatId,
+          resultMessageId: result.messageId
+        });
+      } else {
+        // This is a follow-up message - use existing chat lookup logic
+        logger.info('[LinkedInPolling] Sending follow-up message (existing chat)', {
+          campaignId,
+          leadId: correctLeadId,
+          accountName: accountData.account_name,
+          senderAccountId: actualSenderAccountId,  // ✅ Active account (original or alternate)
+          usingAlternate: actualSenderAccountId !== senderAccountId,
+          linkedInUrl
+        });
+        
+        const employee = {
+          fullname: leadData.fullname || leadData.name || leadName,
+          linkedin_url: linkedInUrl,
+          first_name: leadData.first_name,
+          last_name: leadData.last_name,
+          company: leadData.company_name || leadData.company,
+          title: leadData.title,
+          ...leadData
+        };
+        
+        // ✅ SMART: Use actualSenderAccountId (active account for user_id)
+        result = await unipileService.sendLinkedInMessage(
+          employee,
+          personalizedMessage,
+          actualSenderAccountId,  // ✅ Active account (automatic failover if original inactive)
+          { tenantId, campaignId, leadId: correctLeadId }
+        );
+      }
+      
+      // Always track the attempt, whether success or failure
+      const finalLeadName = leadData.fullname || leadData.name || leadName;
+      // recipientProviderId already declared above (line ~811)
+      
+      const trackingData = {
+        leadId: correctLeadId,
+        channel: 'linkedin',
+        leadName: finalLeadName,
+        messageContent: personalizedMessage,
+        tenantId: tenantId,
+        accountName: accountData.account_name,  // ✅ Current account name (may be alternate)
+        providerAccountId: actualSenderAccountId,  // ✅ ACTUALLY USED account ID (original or alternate)
+        userId: userId,  // ✅ User ID from social_linkedin_accounts
+        leadLinkedIn: leadData.linkedin || linkedInUrl
+      };
+      
+      if (result.success) {
+        // Track successful message
+        trackingData.status = 'success';
+        trackingData.responseData = JSON.stringify({
+          chatId: result.chatId || result.chat_id,
+          timestamp: new Date().toISOString()
+        });
+        
+        logger.info('[LinkedInPolling] ✅ Message sent immediately after connection acceptance', {
+          campaignId,
+          leadId: correctLeadId,
+          leadName: leadData.fullname
+        });
+      } else {
+        // Track failed message with error details
+        trackingData.status = 'failed';
+        trackingData.errorMessage = result.error || 'Unknown error';
+        trackingData.responseData = JSON.stringify({
+          error: result.error,
+          statusCode: result.statusCode,
+          details: result.details,
+          timestamp: new Date().toISOString()
+        });
+        
+        logger.warn('[LinkedInPolling] ⚠️ Immediate message sending failed', {
+          campaignId,
+          leadId: correctLeadId,
+          error: result.error,
+          statusCode: result.statusCode
+        });
+      }
+      
+      // Track the CONTACTED action (success or failed)
+      await campaignStatsTracker.trackAction(campaignId, 'CONTACTED', trackingData);
+      
+      logger.info('[LinkedInPolling] CONTACTED action tracked', {
+        campaignId,
+        leadId: correctLeadId,
+        status: trackingData.status
+      });
+      
+      return result;
+      
+    } catch (error) {
+      logger.error('[LinkedInPolling] Error in immediate message sending', {
+        campaignId,
+        leadId,
+        errorMessage: error.message,
+        errorStack: error.stack
+      });
+      return { success: false, error: error.message };
     }
   }
 
@@ -534,7 +1018,10 @@ class LinkedInPollingService {
     // Remove query parameters and fragments
     normalized = normalized.split('?')[0].split('#')[0];
     
-    return normalized;
+    // Remove trailing slash for consistent matching
+    normalized = normalized.replace(/\/$/, '');
+    
+    return normalized.toLowerCase(); // Convert to lowercase for case-insensitive matching
   }
 
   /**
