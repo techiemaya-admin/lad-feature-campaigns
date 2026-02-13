@@ -790,17 +790,43 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       throw new Error(`Campaign ${campaignId} not found for tenant ${tenantId}`);
     }
     
+    // Determine platform from campaign steps
+    const CampaignStepModel = require('../models/CampaignStepModel');
+    let platform = 'apollo_io'; // default
+    try {
+      const steps = await CampaignStepModel.getStepsByCampaignId(campaignId, tenantId, null);
+      if (steps && steps.length > 0) {
+        // Find first non-lead_generation step to determine platform
+        const platformStep = steps.find(s => s.type !== 'lead_generation');
+        if (platformStep) {
+          // Extract platform from step type (e.g., 'linkedin_connect' -> 'linkedin')
+          const stepType = platformStep.type || '';
+          if (stepType.startsWith('linkedin')) platform = 'linkedin';
+          else if (stepType.startsWith('email')) platform = 'email';
+          else if (stepType.startsWith('whatsapp')) platform = 'whatsapp';
+          else if (stepType.startsWith('voice')) platform = 'voice';
+          else if (stepType.startsWith('instagram')) platform = 'instagram';
+        }
+      }
+    } catch (stepErr) {
+      logger.warn('[executeLeadGeneration] Failed to determine platform from steps, using default', {
+        error: stepErr.message
+      });
+    }
+    
     logger.info('[executeLeadGeneration] Calling saveLeadsToCampaign', {
       campaignId,
       tenantId,
-      leadsCount: diverseEmployees.length
+      leadsCount: diverseEmployees.length,
+      platform
     });
     
     // Save enriched leads to campaign_leads table (only the daily limit)
     const { savedCount, firstGeneratedLeadId } = await saveLeadsToCampaign(
       campaignId,
       tenantId,
-      enrichedEmployees
+      enrichedEmployees,
+      platform
     );
     
     logger.info('[executeLeadGeneration] Leads saved', {
