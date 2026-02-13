@@ -153,8 +153,16 @@ class LinkedInOAuthService {
    * @returns {Object} Result
    */
   async connectAccount(params) {
+    const logger = require('../../../core/utils/logger');
     try {
+      logger.info('[LinkedInOAuthService] connectAccount called', { 
+        method: params.method,
+        hasEmail: !!params.email,
+        hasLiAt: !!params.li_at
+      });
+      
       if (!this.baseService.isConfigured()) {
+        logger.error('[LinkedInOAuthService] Unipile not configured');
         throw new Error('Unipile is not configured');
       }
       const { method, email, password, li_at, li_a, user_agent } = params;
@@ -163,58 +171,214 @@ class LinkedInOAuthService {
       }
       // Get base URL and prepare SDK base URL (SDK expects URL without /api/v1)
       const baseUrl = this.baseService.getBaseUrl();
+      logger.info('[LinkedInOAuthService] Base URL', { baseUrl });
+      
       let sdkBaseUrl = baseUrl;
       if (sdkBaseUrl.endsWith('/api/v1')) {
         sdkBaseUrl = sdkBaseUrl.replace(/\/api\/v1$/, '');
       } else if (sdkBaseUrl.endsWith('/api/v1/')) {
         sdkBaseUrl = sdkBaseUrl.replace(/\/api\/v1\/$/, '');
       }
+      
+      logger.info('[LinkedInOAuthService] SDK base URL', { sdkBaseUrl });
+      
       // Try SDK first (preferred method like pluto_campaigns)
       if (UnipileClient) {
+        logger.info('[LinkedInOAuthService] Using Unipile SDK');
         try {
           // Get token from baseService or environment
           const token = (this.baseService.dsn && this.baseService.token) 
             ? this.baseService.token.trim() 
             : (process.env.UNIPILE_TOKEN || '').trim();
           if (!token) {
+            logger.error('[LinkedInOAuthService] No Unipile token');
             throw new Error('UNIPILE_TOKEN is not configured');
           }
+          
+          logger.info('[LinkedInOAuthService] Creating Unipile client');
           const unipile = new UnipileClient(sdkBaseUrl, token);
           if (method === 'credentials') {
             if (!email || !password) {
               throw new Error('Email and password are required for credentials method');
             }
-            const account = await unipile.account.connectLinkedin({
-              username: email,
-              password: password
-            });
-            // Check if response is a checkpoint (OTP/2FA required)
-            if (account && account.object === 'Checkpoint' && account.checkpoint) {
-              return await handleCheckpointResponse(account, unipile, email);
+            logger.info('[LinkedInOAuthService] Calling SDK connectLinkedin with credentials');
+            
+            try {
+              const account = await unipile.account.connectLinkedin({
+                username: email,
+                password: password
+              });
+              logger.info('[LinkedInOAuthService] SDK connectLinkedin returned', { 
+                hasAccount: !!account,
+                isCheckpoint: account?.object === 'Checkpoint'
+              });
+              // Check if response is a checkpoint (OTP/2FA required)
+              if (account && account.object === 'Checkpoint' && account.checkpoint) {
+                return await handleCheckpointResponse(account, unipile, email);
+              }
+              return account;
+            } catch (connectError) {
+              logger.error('[LinkedInOAuthService] connectLinkedin failed', {
+                error: connectError.message || 'Empty error',
+                errorType: typeof connectError,
+                errorConstructor: connectError.constructor?.name,
+                errorKeys: connectError ? Object.keys(connectError) : [],
+                hasResponse: !!connectError.response,
+                responseStatus: connectError.response?.status,
+                responseData: connectError.response?.data,
+                hasBody: !!connectError.body,
+                bodyType: typeof connectError.body,
+                bodyKeys: connectError.body ? Object.keys(connectError.body) : [],
+                bodyContent: connectError.body ? JSON.stringify(connectError.body) : null
+              });
+              
+              // Extract error details from SDK error body
+              let errorMessage = 'Failed to connect LinkedIn account';
+              
+              if (connectError.body) {
+                const errorBody = connectError.body;
+                logger.info('[LinkedInOAuthService] Parsing error body', { 
+                  errorBody: JSON.stringify(errorBody),
+                  hasMessage: !!errorBody.message,
+                  hasError: !!errorBody.error,
+                  hasCode: !!errorBody.code
+                });
+                
+                // Map error messages to user-friendly messages
+                const errorText = errorBody.message || errorBody.error || errorBody.detail || '';
+                const errorCode = errorBody.code || errorBody.error_code || '';
+                
+                logger.info('[LinkedInOAuthService] Extracted error text', { errorText, errorCode });
+                
+                if (errorText) {
+                  const msg = String(errorText).toLowerCase();
+                  if (msg.includes('invalid') && (msg.includes('credential') || msg.includes('password') || msg.includes('username') || msg.includes('login'))) {
+                    errorMessage = 'Invalid email or password. Please check your LinkedIn credentials and try again.';
+                  } else if (msg.includes('incorrect') || msg.includes('wrong password')) {
+                    errorMessage = 'Invalid email or password. Please check your LinkedIn credentials and try again.';
+                  } else if (msg.includes('rate limit') || msg.includes('too many')) {
+                    errorMessage = 'Too many connection attempts. Please try again in a few minutes.';
+                  } else if (msg.includes('account') && msg.includes('locked')) {
+                    errorMessage = 'Your LinkedIn account appears to be locked. Please log in to LinkedIn directly to verify your account.';
+                  } else if (msg.includes('checkpoint') || msg.includes('verification') || msg.includes('captcha')) {
+                    errorMessage = 'LinkedIn requires additional verification. Please complete the verification process.';
+                  } else if (msg.includes('cookies') && msg.includes('expired')) {
+                    errorMessage = 'LinkedIn session expired. Please provide fresh cookies.';
+                  } else if (msg.includes('not found') || msg.includes('does not exist')) {
+                    errorMessage = 'LinkedIn account not found. Please check the email address.';
+                  } else {
+                    // Use the original message but remove service provider references
+                    errorMessage = String(errorText).replace(/unipile/gi, 'service').replace(/Unipile/g, 'Service');
+                  }
+                } else if (errorCode) {
+                  // Handle error codes
+                  if (errorCode === 'INVALID_CREDENTIALS' || errorCode === 'INVALID_LOGIN') {
+                    errorMessage = 'Invalid email or password. Please check your LinkedIn credentials and try again.';
+                  }
+                }
+              } else {
+                // No body, check error message
+                const errorMsg = connectError.message || String(connectError) || '';
+                logger.info('[LinkedInOAuthService] No error body, checking error message', { errorMsg });
+                
+                if (errorMsg) {
+                  const msg = errorMsg.toLowerCase();
+                  if (msg.includes('invalid') || msg.includes('incorrect') || msg.includes('wrong')) {
+                    errorMessage = 'Invalid email or password. Please check your LinkedIn credentials and try again.';
+                  }
+                }
+              }
+              
+              logger.info('[LinkedInOAuthService] Final error message', { errorMessage });
+              
+              const finalError = new Error(errorMessage);
+              if (connectError.response) {
+                finalError.response = connectError.response;
+              }
+              throw finalError;
             }
-            return account;
           } else if (method === 'cookies') {
             if (!li_at) {
               throw new Error('li_at cookie is required for cookies method');
             }
-            const account = await unipile.account.connectLinkedin({
-              cookies: {
-                li_at: li_at,
-                li_a: li_a || undefined
-              },
-              user_agent: user_agent || 'your-app/1.0'
-            });
-            // Check if response is a checkpoint (OTP/2FA required) - same logic as credentials
-            if (account && account.object === 'Checkpoint' && account.checkpoint) {
-              return await handleCheckpointResponse(account, unipile, account.email);
+            logger.info('[LinkedInOAuthService] Calling SDK connectLinkedin with cookies');
+            
+            try {
+              const account = await unipile.account.connectLinkedin({
+                cookies: {
+                  li_at: li_at,
+                  li_a: li_a || undefined
+                },
+                user_agent: user_agent || 'your-app/1.0'
+              });
+              logger.info('[LinkedInOAuthService] SDK connectLinkedin returned', { 
+                hasAccount: !!account,
+                isCheckpoint: account?.object === 'Checkpoint'
+              });
+              // Check if response is a checkpoint (OTP/2FA required) - same logic as credentials
+              if (account && account.object === 'Checkpoint' && account.checkpoint) {
+                return await handleCheckpointResponse(account, unipile, account.email);
+              }
+              return account;
+            } catch (connectError) {
+              logger.error('[LinkedInOAuthService] connectLinkedin (cookies) failed', {
+                error: connectError.message || 'Empty error',
+                errorType: typeof connectError,
+                hasResponse: !!connectError.response,
+                responseStatus: connectError.response?.status,
+                responseData: connectError.response?.data,
+                body: connectError.body
+              });
+              
+              // Extract error details from SDK error body
+              let errorMessage = 'Failed to connect LinkedIn account';
+              
+              if (connectError.body) {
+                const errorBody = connectError.body;
+                logger.info('[LinkedInOAuthService] Error body details (cookies)', { errorBody });
+                
+                // Map Unipile error messages to user-friendly messages
+                if (errorBody.message) {
+                  const msg = errorBody.message.toLowerCase();
+                  if (msg.includes('invalid') && msg.includes('cookies')) {
+                    errorMessage = 'Invalid LinkedIn cookies. Please provide fresh cookies from an active LinkedIn session.';
+                  } else if (msg.includes('expired')) {
+                    errorMessage = 'LinkedIn session expired. Please log in to LinkedIn and get fresh cookies.';
+                  } else if (msg.includes('rate limit') || msg.includes('too many')) {
+                    errorMessage = 'Too many connection attempts. Please try again in a few minutes.';
+                  } else {
+                    errorMessage = errorBody.message.replace(/unipile/gi, 'service').replace(/Unipile/g, 'Service');
+                  }
+                } else if (errorBody.error) {
+                  errorMessage = String(errorBody.error).replace(/unipile/gi, 'service').replace(/Unipile/g, 'Service');
+                }
+              }
+              
+              if (connectError.response?.data) {
+                const apiError = new Error(errorMessage);
+                apiError.response = connectError.response;
+                throw apiError;
+              }
+              
+              const finalError = new Error(errorMessage);
+              throw finalError;
             }
-            return account;
           }
         } catch (sdkError) {
+          logger.error('[LinkedInOAuthService] SDK error', { 
+            error: sdkError.message || 'Unknown error',
+            errorString: String(sdkError),
+            errorName: sdkError.name,
+            errorCode: sdkError.code,
+            response: sdkError.response?.data,
+            status: sdkError.response?.status,
+            stack: sdkError.stack
+          });
           // Fall through to HTTP fallback
           throw sdkError;
         }
       } else {
+        logger.warn('[LinkedInOAuthService] SDK not available, using HTTP');
         // SDK not available, try HTTP API (fallback)
         const headers = this.baseService.getAuthHeaders();
         let payload = {};
@@ -231,13 +395,19 @@ class LinkedInOAuthService {
           };
         }
         try {
+          logger.info('[LinkedInOAuthService] Calling HTTP API');
           const response = await axios.post(
             `${baseUrl}/accounts`,
             payload,
             { headers, timeout: 60000 }
           );
+          logger.info('[LinkedInOAuthService] HTTP API returned', { status: response.status });
           return response.data;
         } catch (apiError) {
+          logger.error('[LinkedInOAuthService] HTTP API error', { 
+            error: apiError.message,
+            status: apiError.response?.status
+          });
           // Handle 404 - endpoint doesn't exist
           if (apiError.response?.status === 404) {
             throw new Error(
@@ -249,6 +419,13 @@ class LinkedInOAuthService {
         }
       }
     } catch (error) {
+      logger.error('[LinkedInOAuthService] connectAccount failed', { 
+        error: error.message || 'Unknown error',
+        errorString: String(error),
+        errorType: typeof error,
+        errorName: error.name,
+        hasStack: !!error.stack
+      });
       throw error;
     }
   }
@@ -331,4 +508,4 @@ class LinkedInOAuthService {
 // Export the service instance and the helper function
 const serviceInstance = new LinkedInOAuthService();
 serviceInstance.extractLinkedInProfileUrl = extractLinkedInProfileUrl; // For backward compatibility
-module.exports = serviceInstance;
+module.exports = serviceInstance;

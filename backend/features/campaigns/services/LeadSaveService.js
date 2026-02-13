@@ -16,9 +16,10 @@ const {
  * @param {string} campaignId - Campaign ID
  * @param {string} tenantId - Tenant ID
  * @param {Array} employees - Array of employee objects
+ * @param {string} platform - Platform type ('linkedin', 'email', 'whatsapp', etc.)
  * @returns {Object} { savedCount, firstGeneratedLeadId }
  */
-async function saveLeadsToCampaign(campaignId, tenantId, employees) {
+async function saveLeadsToCampaign(campaignId, tenantId, employees, platform = null) {
   const logger = require('../../../core/utils/logger');
   
   logger.info('[saveLeadsToCampaign] Starting', {
@@ -30,8 +31,9 @@ async function saveLeadsToCampaign(campaignId, tenantId, employees) {
   let savedCount = 0;
   let firstGeneratedLeadId = null;
   for (const employee of employees) {
-    // DETECT SOURCE: Check if this lead came from Unipile or Apollo
-    const source = employee._source || 'apollo_io'; // Default to apollo_io for backward compatibility
+    // DETECT SOURCE: Use provided platform, or check if this lead came from Unipile/Apollo
+    // Priority: 1) provided platform, 2) employee._source, 3) default 'apollo_io'
+    const source = platform || employee._source || 'apollo_io';
     // Extract the appropriate ID based on source
     let sourceId = null;
     if (source === 'unipile') {

@@ -18,7 +18,7 @@ class LinkedInWebhookService {
   async registerWebhook(webhookUrl, events = ['new_relation'], source = 'users') {
     try {
       if (!this.baseService.isConfigured()) {
-        throw new Error('Unipile is not configured');
+        throw new Error('LinkedIn integration service is not configured. Please contact support.');
       }
       const baseUrl = this.baseService.getBaseUrl();
       const headers = this.baseService.getAuthHeaders();
@@ -44,7 +44,7 @@ class LinkedInWebhookService {
   async listWebhooks() {
     try {
       if (!this.baseService.isConfigured()) {
-        throw new Error('Unipile is not configured');
+        throw new Error('LinkedIn integration service is not configured. Please contact support.');
       }
       const baseUrl = this.baseService.getBaseUrl();
       const headers = this.baseService.getAuthHeaders();
@@ -59,5 +59,82 @@ class LinkedInWebhookService {
       return [];
     }
   }
+
+  /**
+   * Register account status webhook for real-time LinkedIn account updates
+   * @param {string} webhookUrl - Your backend webhook endpoint URL
+   * @returns {Promise<Object>} Webhook registration result
+   */
+  async registerAccountStatusWebhook(webhookUrl) {
+    try {
+      if (!this.baseService.isConfigured()) {
+        throw new Error('LinkedIn integration service is not configured. Please contact support.');
+      }
+
+      const baseUrl = this.baseService.getBaseUrl();
+      const headers = this.baseService.getAuthHeaders();
+      const webhookSecret = process.env.WEBHOOK_SECRET || 'lad-webhook-secret';
+
+      const payload = {
+        source: 'account_status', // Account status changes (OK, CREDENTIALS, ERROR, etc.)
+        request_url: webhookUrl,
+        headers: [
+          {
+            key: 'Content-Type',
+            value: 'application/json'
+          },
+          {
+            key: 'X-Webhook-Secret',
+            value: webhookSecret
+          }
+        ]
+      };
+
+      const response = await axios.post(
+        `${baseUrl}/webhooks`,
+        payload,
+        { headers, timeout: 30000 }
+      );
+
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a webhook by ID
+   * @param {string} webhookId - Webhook ID to delete
+   * @returns {Promise<boolean>} Success status
+   */
+  async deleteWebhook(webhookId) {
+    try {
+      if (!this.baseService.isConfigured()) {
+        throw new Error('LinkedIn integration service is not configured. Please contact support.');
+      }
+
+      const baseUrl = this.baseService.getBaseUrl();
+      const headers = this.baseService.getAuthHeaders();
+
+      await axios.delete(
+        `${baseUrl}/webhooks/${webhookId}`,
+        { headers, timeout: 30000 }
+      );
+
+      return true;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Verify webhook secret from incoming webhook request
+   * @param {string} receivedSecret - Secret from webhook request headers
+   * @returns {boolean} Valid or not
+   */
+  verifyWebhookSecret(receivedSecret) {
+    const expectedSecret = process.env.WEBHOOK_SECRET || 'lad-webhook-secret';
+    return receivedSecret === expectedSecret;
+  }
 }
-module.exports = new LinkedInWebhookService();
+module.exports = new LinkedInWebhookService();

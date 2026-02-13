@@ -75,4 +75,15 @@ const validateCloudTasksAuth = (req, res, next) => {
  */
 router.post('/run-daily', validateCloudTasksAuth, (req, res) => CampaignDailyController.runDaily(req, res));
 
+/**
+ * POST /api/campaigns/linkedin/webhooks/account-status
+ * Unipile webhook endpoint for LinkedIn account status updates
+ * 
+ * This endpoint is called by Unipile when LinkedIn account status changes.
+ * Authentication is via X-Webhook-Secret header (verified in controller).
+ * NO JWT AUTH - External service webhook
+ */
+const LinkedInWebhookController = require('../controllers/LinkedInWebhookController');
+router.post('/linkedin/webhooks/account-status', LinkedInWebhookController.handleAccountStatusWebhook);
+
 module.exports = router;

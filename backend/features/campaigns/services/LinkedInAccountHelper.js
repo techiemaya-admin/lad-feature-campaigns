@@ -164,10 +164,18 @@ async function sendConnectionRequestWithFallback(
   let actualRateLimitErrors = 0; // Count actual rate limit errors
   let credentialErrors = 0; // Count credential-related errors
   let otherErrors = 0; // Count other errors
+  let lastAttemptedAccount = null; // Track last account tried for error reporting
+  
   for (const account of accountsToTry) {
     const accountId = account.unipile_account_id;
     const accountName = account.account_name || 'LinkedIn Account';
     accountErrors[accountId] = [];
+    
+    // Track this as the last attempted account
+    lastAttemptedAccount = {
+      account_name: accountName,
+      provider_account_id: accountId
+    };
     // Strategy 1: If user wants message, try with message first
     if (userWantsMessage && message && !triedStrategies.has(`${accountId}:with_message`)) {
       triedStrategies.add(`${accountId}:with_message`);
@@ -334,6 +342,11 @@ async function sendConnectionRequestWithFallback(
     errorType: errorType,
     isRateLimit: actualRateLimitErrors > 0,
     allAccountsExhausted: true,
+    accountInfo: lastAttemptedAccount || {
+      account_name: null,
+      provider_account_id: null
+    },
+    accountUsed: lastAttemptedAccount?.account_name || 'Unknown Account',
     diagnostics: {
       totalAccountsTried: accountsToTry.length,
       actualRateLimitErrors,
