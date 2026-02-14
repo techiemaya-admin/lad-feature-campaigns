@@ -26,7 +26,7 @@ class LinkedInAccountRepository {
     
     try {
       const query = `
-        SELECT id, tenant_id, account_name, provider_account_id, status
+        SELECT id, tenant_id, account_name, provider_account_id, status, user_id
         FROM ${schema}.social_linkedin_accounts
         WHERE tenant_id = $1 
         AND status = 'active'
@@ -39,7 +39,8 @@ class LinkedInAccountRepository {
       return result.rows.map(row => ({
         id: row.id,
         unipile_account_id: row.provider_account_id,
-        account_name: row.account_name
+        account_name: row.account_name,
+        user_id: row.user_id
       }));
     } catch (error) {
       logger.error('[LinkedInAccountRepository] Error getting accounts for tenant', {
@@ -66,7 +67,7 @@ class LinkedInAccountRepository {
     
     try {
       const query = `
-        SELECT id, provider_account_id, account_name 
+        SELECT id, provider_account_id, account_name, user_id 
         FROM ${schema}.social_linkedin_accounts
         WHERE tenant_id = $1 
         AND status = 'active'
@@ -83,8 +84,10 @@ class LinkedInAccountRepository {
 
       const account = result.rows[0];
       return {
+        id: account.id,
         provider_account_id: account.provider_account_id,
-        account_name: account.account_name || 'LinkedIn Account'
+        account_name: account.account_name || 'LinkedIn Account',
+        user_id: account.user_id
       };
     } catch (error) {
       logger.error('[LinkedInAccountRepository] Error getting primary account', {
@@ -236,7 +239,8 @@ class LinkedInAccountRepository {
            tenant_id,
            account_name,
            provider_account_id,
-           status
+           status,
+           user_id
          FROM ${schema}.social_linkedin_accounts
          WHERE provider_account_id = $1
          AND is_deleted = false
@@ -254,7 +258,8 @@ class LinkedInAccountRepository {
         tenant_id: row.tenant_id,
         unipile_account_id: row.provider_account_id,
         account_name: row.account_name,
-        status: row.status
+        status: row.status,
+        user_id: row.user_id
       };
     } catch (error) {
       logger.error('[LinkedInAccountRepository] Failed to get account by Unipile ID', {
@@ -284,7 +289,8 @@ class LinkedInAccountRepository {
           provider_account_id as unipile_account_id,
           status,
           created_at,
-          metadata
+          metadata,
+          user_id
         FROM ${schema}.social_linkedin_accounts
         WHERE tenant_id = $1 
           AND status = 'active'
@@ -310,7 +316,8 @@ class LinkedInAccountRepository {
         isActive: row.status === 'active',
         status: row.status,
         connectedAt: row.created_at,
-        metadata: row.metadata
+        metadata: row.metadata,
+        user_id: row.user_id
       }));
     } catch (error) {
       logger.error('[LinkedInAccountRepository] Error getting LinkedIn accounts', {
@@ -339,7 +346,8 @@ class LinkedInAccountRepository {
           provider_account_id as unipile_account_id, 
           account_name,
           status,
-          metadata
+          metadata,
+          user_id
          FROM ${schema}.social_linkedin_accounts
          WHERE tenant_id = $1 
          AND provider_account_id = $2
