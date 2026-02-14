@@ -85,7 +85,7 @@ class LinkedInAccountRepository {
       const account = result.rows[0];
       return {
         id: account.id,
-        provider_account_id: account.provider_account_id,
+        unipile_account_id: account.provider_account_id,
         account_name: account.account_name || 'LinkedIn Account',
         user_id: account.user_id
       };
