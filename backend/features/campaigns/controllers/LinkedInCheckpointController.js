@@ -17,6 +17,7 @@ class LinkedInCheckpointController {
   /**
    * Solve checkpoint (Yes/No validation)
    * POST /api/campaigns/linkedin/solve-checkpoint
+   * Note: IN_APP_VALIDATION cannot be solved via API - user must approve in LinkedIn mobile app
    */
   static async solveCheckpoint(req, res) {
     try {
@@ -57,6 +58,20 @@ class LinkedInCheckpointController {
       } catch (dbError) {
         logger.warn('Failed to fetch checkpoint metadata, using default type:', dbError);
       }
+      
+      // IN_APP_VALIDATION cannot be solved via API - must be approved in mobile app
+      if (checkpointType === 'IN_APP_VALIDATION') {
+        logger.info('[LinkedInCheckpointController] IN_APP_VALIDATION checkpoint requires mobile app approval', {
+          unipileAccountId
+        });
+        return res.status(400).json({
+          success: false,
+          error: 'This checkpoint requires approval in the LinkedIn mobile app. Please click YES in the LinkedIn app notification.',
+          checkpointType: 'IN_APP_VALIDATION',
+          requiresMobileApproval: true
+        });
+      }
+      
       const result = await linkedInService.solveCheckpoint(unipileAccountId, answer, checkpointType);
       res.json({
         success: true,
@@ -78,13 +93,16 @@ class LinkedInCheckpointController {
   static async verifyOTP(req, res) {
     try {
       const userId = req.user.userId || req.user.user_id;
+      const tenantId = req.user.tenantId || req.user.userId || req.user.user_id;
       const { otp, account_id, email } = req.body;
+      
       if (!otp) {
         return res.status(400).json({
           success: false,
           error: 'OTP is required'
         });
       }
+      
       // Get account ID from request or database
       let unipileAccountId = account_id;
       if (!unipileAccountId) {
@@ -93,17 +111,30 @@ class LinkedInCheckpointController {
           unipileAccountId = accounts[0].unipile_account_id;
         }
       }
+      
       if (!unipileAccountId) {
         return res.status(400).json({
           success: false,
           error: 'Account ID is required'
         });
       }
-      const result = await linkedInService.verifyOTP(unipileAccountId, otp);
+      
+      // LAD Architecture: Controller calls Service, Service handles business logic
+      const schema = getSchema(req);
+      const result = await linkedInService.verifyOTPAndSaveAccount(
+        unipileAccountId, 
+        otp, 
+        userId, 
+        tenantId, 
+        email, 
+        schema
+      );
+      
       res.json({
         success: true,
         message: 'OTP verified successfully',
-        result
+        accountSaved: result.accountSaved,
+        result: result.verificationResult
       });
     } catch (error) {
       res.status(500).json({
