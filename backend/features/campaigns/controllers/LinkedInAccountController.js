@@ -10,14 +10,14 @@ class LinkedInAccountController {
    */
   static async getAccounts(req, res) {
     try {
-      const userId = req.user.userId || req.user.user_id;
-      if (!userId) {
+      const tenantId = req.user.tenantId || req.user.tenant_id || req.user.userId || req.user.user_id;
+      if (!tenantId) {
         return res.status(400).json({
           success: false,
-          error: 'User ID is required'
+          error: 'Tenant ID is required'
         });
       }
-      const accounts = await linkedInService.getUserLinkedInAccounts(userId);
+      const accounts = await linkedInService.getUserLinkedInAccounts(tenantId);
       res.json({
         success: true,
         connected: accounts.length > 0,
@@ -37,14 +37,14 @@ class LinkedInAccountController {
    */
   static async getStatus(req, res) {
     try {
-      const userId = req.user.userId || req.user.user_id;
-      if (!userId) {
+      const tenantId = req.user.tenantId || req.user.tenant_id || req.user.userId || req.user.user_id;
+      if (!tenantId) {
         return res.status(400).json({
           success: false,
-          error: 'User ID is required'
+          error: 'Tenant ID is required'
         });
       }
-      const accounts = await linkedInService.getUserLinkedInAccounts(userId);
+      const accounts = await linkedInService.getUserLinkedInAccounts(tenantId);
       // Build connections array for frontend
       const connections = accounts.map(account => ({
         id: account.unipile_account_id,
@@ -80,11 +80,11 @@ class LinkedInAccountController {
    */
   static async getAccountStatus(req, res) {
     try {
-      const userId = req.user.userId || req.user.user_id;
+      const tenantId = req.user.tenantId || req.user.tenant_id || req.user.userId || req.user.user_id;
       const { account_id } = req.query;
       let unipileAccountId = account_id;
-      if (!unipileAccountId && userId) {
-        const accounts = await linkedInService.getUserLinkedInAccounts(userId);
+      if (!unipileAccountId && tenantId) {
+        const accounts = await linkedInService.getUserLinkedInAccounts(tenantId);
         if (accounts.length > 0) {
           unipileAccountId = accounts[0].unipile_account_id;
         }
@@ -113,12 +113,12 @@ class LinkedInAccountController {
    */
   static async disconnect(req, res) {
     try {
-      const userId = req.user.userId || req.user.user_id;
+      const tenantId = req.user.tenantId || req.user.tenant_id || req.user.userId || req.user.user_id;
       const unipileAccountId = req.body.unipileAccountId || req.query.unipileAccountId;
-      if (!userId) {
+      if (!tenantId) {
         return res.status(400).json({
           success: false,
-          error: 'User ID is required'
+          error: 'Tenant ID is required'
         });
       }
       if (!unipileAccountId) {
@@ -127,9 +127,9 @@ class LinkedInAccountController {
           error: 'unipileAccountId is required to disconnect a specific account'
         });
       }
-      const result = await linkedInService.disconnectAccount(userId, unipileAccountId);
+      const result = await linkedInService.disconnectAccount(tenantId, unipileAccountId);
       // Get all remaining accounts
-      const remainingAccounts = await linkedInService.getUserLinkedInAccounts(userId);
+      const remainingAccounts = await linkedInService.getUserLinkedInAccounts(tenantId);
       // Build connections array for frontend
       const connections = remainingAccounts.map(account => ({
         id: account.unipile_account_id,
@@ -167,16 +167,16 @@ class LinkedInAccountController {
    */
   static async sync(req, res) {
     try {
-      const userId = req.user.userId || req.user.user_id;
+      const tenantId = req.user.tenantId || req.user.tenant_id || req.user.userId || req.user.user_id;
       const unipileAccountId = req.body.unipileAccountId || req.query.unipileAccountId;
-      if (!userId) {
+      if (!tenantId) {
         return res.status(400).json({
           success: false,
-          error: 'User ID is required'
+          error: 'Tenant ID is required'
         });
       }
       // Get user accounts
-      const accounts = await linkedInService.getUserLinkedInAccounts(userId);
+      const accounts = await linkedInService.getUserLinkedInAccounts(tenantId);
       if (accounts.length === 0) {
         return res.status(404).json({
           success: false,
@@ -189,7 +189,7 @@ class LinkedInAccountController {
         : accounts;
       const syncResults = [];
       for (const account of accountsToSync) {
-        const result = await linkedInService.syncAccountData({ ...account, userId });
+        const result = await linkedInService.syncAccountData({ ...account, tenantId });
         syncResults.push({
           unipileAccountId: account.unipile_account_id,
           ...result
@@ -213,11 +213,11 @@ class LinkedInAccountController {
    */
   static async syncFromUnipile(req, res) {
     try {
-      const userId = req.user.userId || req.user.user_id;
+      const tenantId = req.user.tenantId || req.user.tenant_id || req.user.userId || req.user.user_id;
       const { account_id } = req.query;
       let unipileAccountId = account_id;
-      if (!unipileAccountId && userId) {
-        const accounts = await linkedInService.getUserLinkedInAccounts(userId);
+      if (!unipileAccountId && tenantId) {
+        const accounts = await linkedInService.getUserLinkedInAccounts(tenantId);
         if (accounts.length > 0) {
           unipileAccountId = accounts[0].unipile_account_id;
         }
@@ -243,15 +243,15 @@ class LinkedInAccountController {
    */
   static async refreshToken(req, res) {
     try {
-      const userId = req.user.userId || req.user.user_id;
+      const tenantId = req.user.tenantId || req.user.tenant_id || req.user.userId || req.user.user_id;
       const { account_id } = req.body;
       // Get account
       let account = null;
       if (account_id) {
-        const accounts = await linkedInService.getUserLinkedInAccounts(userId);
+        const accounts = await linkedInService.getUserLinkedInAccounts(tenantId);
         account = accounts.find(acc => acc.unipile_account_id === account_id);
       } else {
-        const accounts = await linkedInService.getUserLinkedInAccounts(userId);
+        const accounts = await linkedInService.getUserLinkedInAccounts(tenantId);
         if (accounts.length > 0) {
           account = accounts[0];
         }
@@ -276,4 +276,4 @@ class LinkedInAccountController {
     }
   }
 }
-module.exports = LinkedInAccountController;
+module.exports = LinkedInAccountController;

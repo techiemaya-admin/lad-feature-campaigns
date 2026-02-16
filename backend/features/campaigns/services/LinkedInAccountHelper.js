@@ -1,73 +1,61 @@
 /**
  * LinkedIn Account Helper
  * Handles LinkedIn account lookup and connection request fallback logic
+ * 
+ * LAD Architecture: Service Layer (NO SQL)
+ * - Business logic only
+ * - Calls repository for data access
+ * - Orchestrates account selection and fallback
  */
 const { pool } = require('../../../shared/database/connection');
-const { getSchema } = require('../../../core/utils/schemaHelper');
+const LinkedInAccountRepository = require('../repositories/LinkedInAccountRepository');
 const unipileService = require('./unipileService');
 const logger = require('../../../core/utils/logger');
+
+// Initialize repository
+const linkedInAccountRepository = new LinkedInAccountRepository(pool);
+
 /**
  * Get all available LinkedIn accounts for a tenant/user (for account fallback)
  */
 async function getAllLinkedInAccountsForTenant(tenantId, userId) {
-  const accounts = [];
   try {
     // Use tenantId directly (LAD standard - no organization_id conversion needed)
     const resolvedTenantId = tenantId || userId;
-    const schema = getSchema({ user: { tenant_id: resolvedTenantId } });
     
     // CRITICAL: Always filter by tenant_id for tenant isolation
     if (!tenantId) {
       logger.warn('[LinkedInAccountHelper] No tenantId provided - cannot retrieve accounts');
-      return accounts;
+      return [];
     }
     
-    // Query social_linkedin_accounts table with tenant filter
-    try {
-      const query = `
-        SELECT id, tenant_id, account_name, provider_account_id, status
-        FROM ${schema}.social_linkedin_accounts
-        WHERE tenant_id = $1 
-        AND status = 'active'
-        AND is_deleted = false
-        AND provider_account_id IS NOT NULL
-        ORDER BY created_at DESC
-      `;
-      const result = await pool.query(query, [tenantId]);
-      if (result.rows.length > 0) {
-        accounts.push(...result.rows.map(row => ({
-          id: row.id,
-          unipile_account_id: row.provider_account_id,
-          account_name: row.account_name
-        })));
-        
-        logger.info('[LinkedInAccountHelper] Found LinkedIn accounts for tenant', {
-          tenantId,
-          accountCount: accounts.length,
-          accountNames: accounts.map(a => a.account_name)
-        });
-      } else {
-        logger.warn('[LinkedInAccountHelper] No LinkedIn accounts found for tenant', {
-          tenantId
-        });
-      }
-    } catch (queryError) {
-      logger.error('[LinkedInAccountHelper] Error querying LinkedIn accounts', {
+    // Call repository to get accounts (repository handles SQL)
+    const accounts = await linkedInAccountRepository.getAllAccountsForTenant(
+      tenantId, 
+      { user: { tenant_id: resolvedTenantId } }
+    );
+    
+    if (accounts.length > 0) {
+      logger.info('[LinkedInAccountHelper] Found LinkedIn accounts for tenant', {
         tenantId,
-        error: queryError.message
+        accountCount: accounts.length,
+        accountNames: accounts.map(a => a.account_name)
+      });
+    } else {
+      logger.warn('[LinkedInAccountHelper] No LinkedIn accounts found for tenant', {
+        tenantId
       });
     }
     
-    // REMOVED: Global search fallback that violated tenant isolation
-    // Each tenant must have their own LinkedIn accounts configured
+    return accounts;
     
   } catch (error) {
     logger.error('[LinkedInAccountHelper] Error in getAllLinkedInAccountsForTenant', {
       tenantId,
       error: error.message
     });
+    return [];
   }
-  return accounts;
 }
 /**
  * Verify account health with Unipile
@@ -77,7 +65,7 @@ async function verifyAccountHealth(unipileAccountId) {
     const unipileService = require('./unipileService');
     const baseService = unipileService.base;
     if (!baseService.isConfigured()) {
-      return { valid: false, error: 'Unipile not configured' };
+      return { valid: false, error: 'LinkedIn service not configured' };
     }
     const baseUrl = baseService.getBaseUrl();
     const headers = baseService.getAuthHeaders();
@@ -108,7 +96,7 @@ async function verifyAccountHealth(unipileAccountId) {
       return { valid: false, error: 'Account credentials expired', expired: true };
     }
     if (error.response && error.response.status === 404) {
-      return { valid: false, error: 'Account not found in Unipile', notFound: true };
+      return { valid: false, error: 'LinkedIn account not found', notFound: true };
     }
     // For other errors, assume account might be valid (network issues, etc.)
     return { valid: true, warning: error.message };
@@ -116,50 +104,23 @@ async function verifyAccountHealth(unipileAccountId) {
 }
 /**
  * Get LinkedIn account for execution (with fallback strategies)
+ * @returns {Object|null} - Returns { provider_account_id, account_name } or null
  */
 async function getLinkedInAccountForExecution(tenantId, userId) {
-  let accountResult = { rows: [] };  // Initialize with empty result to prevent undefined errors
-  const schema = getSchema({ user: { tenant_id: tenantId || userId } });
-  // Strategy 1: Try social_linkedin_accounts table by tenant_id
-  try {
-    accountResult = await pool.query(
-      `SELECT id, provider_account_id FROM ${schema}.social_linkedin_accounts
-       WHERE tenant_id = $1 
-       AND status = 'active'
-       AND is_deleted = false
-       AND provider_account_id IS NOT NULL
-       ORDER BY created_at DESC LIMIT 1`,
-      [tenantId]
-    );
-  } catch (tddError) {
-    // Fallback to old schema if TDD table doesn't exist
-    // Note: Old schema uses organization_id, but we use tenantId directly (LAD standard)
-    // Skip old schema fallback as it's not compatible with tenantId
-    accountResult = { rows: [] };
+  // Call repository to get primary account (repository handles SQL)
+  const account = await linkedInAccountRepository.getPrimaryAccountForTenant(
+    tenantId,
+    { user: { tenant_id: tenantId || userId } }
+  );
+
+  if (!account) {
+    logger.warn('[LinkedInAccountHelper] No LinkedIn account found for tenant', {
+      tenantId,
+      userId
+    });
   }
-  // Strategy 2: If not found, try global search in social_linkedin_accounts
-  if (accountResult.rows.length === 0) {
-    try {
-      accountResult = await pool.query(
-        `SELECT id, provider_account_id FROM ${schema}.social_linkedin_accounts 
-         WHERE status = 'active'
-         AND is_deleted = false
-         AND provider_account_id IS NOT NULL
-         ORDER BY created_at DESC LIMIT 1`
-      );
-    } catch (error) {
-      accountResult = { rows: [] };  // Ensure accountResult is never undefined
-    }
-  }
-  if (accountResult.rows.length === 0) {
-    return null;
-  }
-  const accountId = accountResult.rows[0].provider_account_id;
-  // Verify account health before returning (quick check)
-  // Note: We don't verify on every call to avoid performance issues
-  // Instead, we verify when we get 401 errors (handled in UnipileProfileService)
-  // But we can add a periodic health check here if needed
-  return accountId;
+
+  return account;
 }
 /**
  * Send connection request with smart fallback:
@@ -203,10 +164,18 @@ async function sendConnectionRequestWithFallback(
   let actualRateLimitErrors = 0; // Count actual rate limit errors
   let credentialErrors = 0; // Count credential-related errors
   let otherErrors = 0; // Count other errors
+  let lastAttemptedAccount = null; // Track last account tried for error reporting
+  
   for (const account of accountsToTry) {
     const accountId = account.unipile_account_id;
     const accountName = account.account_name || 'LinkedIn Account';
     accountErrors[accountId] = [];
+    
+    // Track this as the last attempted account
+    lastAttemptedAccount = {
+      account_name: accountName,
+      provider_account_id: accountId
+    };
     // Strategy 1: If user wants message, try with message first
     if (userWantsMessage && message && !triedStrategies.has(`${accountId}:with_message`)) {
       triedStrategies.add(`${accountId}:with_message`);
@@ -231,7 +200,15 @@ async function sendConnectionRequestWithFallback(
           accountName,
           employeeName: employee.fullname
         });
-        return { ...result, accountUsed: accountName, strategy: 'with_message' };
+        return { 
+          ...result, 
+          accountUsed: accountName, 
+          accountInfo: {
+            account_name: accountName,
+            provider_account_id: accountId
+          },
+          strategy: 'with_message' 
+        };
       }
       // Track the error reason
       accountErrors[accountId].push({
@@ -293,7 +270,11 @@ async function sendConnectionRequestWithFallback(
         });
         return { 
           ...result, 
-          accountUsed: accountName, 
+          accountUsed: accountName,
+          accountInfo: {
+            account_name: accountName,
+            provider_account_id: accountId
+          },
           strategy: strategy,
           messageSkipped: userWantsMessage // Flag to indicate message was skipped due to limit
         };
@@ -340,7 +321,7 @@ async function sendConnectionRequestWithFallback(
   let errorType = '';
   if (credentialErrors > 0 && actualRateLimitErrors === 0) {
     // Primary issue is account credentials
-    errorMessage = 'No valid LinkedIn accounts available. Please verify your connected accounts are still active and their credentials are valid in Unipile.';
+    errorMessage = 'No valid LinkedIn accounts available. Please verify your connected accounts are still active and their credentials are valid in Settings → LinkedIn Integration.';
     errorType = 'no_valid_accounts';
   } else if (actualRateLimitErrors > 0) {
     // We hit actual rate limits
@@ -361,6 +342,11 @@ async function sendConnectionRequestWithFallback(
     errorType: errorType,
     isRateLimit: actualRateLimitErrors > 0,
     allAccountsExhausted: true,
+    accountInfo: lastAttemptedAccount || {
+      account_name: null,
+      provider_account_id: null
+    },
+    accountUsed: lastAttemptedAccount?.account_name || 'Unknown Account',
     diagnostics: {
       totalAccountsTried: accountsToTry.length,
       actualRateLimitErrors,
@@ -382,33 +368,25 @@ async function sendConnectionRequestWithFallback(
  */
 async function verifyAccountReadyForCampaign(unipileAccountId) {
   try {
-    // Try to get account status from database first
-    // Use default schema since tenantId is not available in this function
-    const schema = getSchema();
-    // Check TDD schema
-    try {
-      const result = await pool.query(
-        `SELECT id, status, updated_at FROM ${schema}.social_linkedin_accounts 
-         WHERE provider_account_id = $1 
-         AND is_deleted = false
-         LIMIT 1`,
-        [unipileAccountId]
-      );
-      if (result.rows.length > 0) {
-        const account = result.rows[0];
-        if (account.status === 'expired' || account.status === 'revoked' || account.status === 'error') {
-          return {
-            valid: false,
-            reason: 'Account is marked as inactive or expired',
-            canRetry: false,
-            requiresReconnection: true
-          };
-        }
-        return { valid: true, reason: 'OK', canRetry: false };
+    // Call repository to check account status (repository handles SQL)
+    const accountStatus = await linkedInAccountRepository.checkAccountStatus(
+      unipileAccountId,
+      {}
+    );
+
+    if (accountStatus.exists) {
+      if (accountStatus.status === 'expired' || accountStatus.status === 'revoked' || accountStatus.status === 'error') {
+        return {
+          valid: false,
+          reason: 'Account is marked as inactive or expired',
+          canRetry: false,
+          requiresReconnection: true
+        };
       }
-    } catch (error) {
+      return { valid: true, reason: 'OK', canRetry: false };
     }
-    // Fallback check
+
+    // Account not found - assume it might still be valid (possibly registered elsewhere)
     return { valid: true, reason: 'OK', canRetry: false };
   } catch (error) {
     // If we can't reach database, assume account might still be valid

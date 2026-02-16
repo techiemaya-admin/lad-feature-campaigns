@@ -79,6 +79,7 @@ class CampaignModel {
     if (!campaign) {
       throw new Error('Failed to create campaign with all available query patterns');
     }
+    
     // Link inbound leads if provided (AFTER campaign is successfully created)
     if (inbound_lead_ids && Array.isArray(inbound_lead_ids) && inbound_lead_ids.length > 0) {
       try {

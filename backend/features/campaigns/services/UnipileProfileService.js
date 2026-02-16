@@ -93,7 +93,7 @@ class UnipileProfileService {
                 account_id: accountId,
                 provider_id: providerId
             };
-            const response = await axios.post(
+            const followResponse = await axios.post(
                 `${baseUrl}/users/relations`,
                 followPayload,
                 {
@@ -125,7 +125,7 @@ class UnipileProfileService {
             });
             return {
                 success: true,
-                data: response.data
+                data: followResponse.data
             };
         } catch (error) {
             return {

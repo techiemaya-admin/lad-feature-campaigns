@@ -37,8 +37,8 @@ class LinkedInIntegrationService {
   async disconnectAccount(userId, unipileAccountId) {
     return linkedInAccountService.disconnectAccount(userId, unipileAccountId);
   }
-  async getUserLinkedInAccounts(userId) {
-    return linkedInAccountService.getUserLinkedInAccounts(userId);
+  async getUserLinkedInAccounts(tenantId) {
+    return linkedInAccountService.getUserLinkedInAccounts(tenantId);
   }
   async getAllConnectedAccounts() {
     return linkedInAccountService.getAllConnectedAccounts();
@@ -68,4 +68,4 @@ class LinkedInIntegrationService {
     return linkedInWebhookService.listWebhooks();
   }
 }
-module.exports = new LinkedInIntegrationService();
+module.exports = new LinkedInIntegrationService();

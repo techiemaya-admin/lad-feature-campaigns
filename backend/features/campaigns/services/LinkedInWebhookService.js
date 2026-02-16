@@ -59,5 +59,56 @@ class LinkedInWebhookService {
       return [];
     }
   }
+
+  /**
+   * Register account status webhook with Unipile
+   * Receives notifications when account checkpoint is resolved or status changes
+   * @param {string} webhookUrl - Full webhook URL (e.g., https://your-domain.com/api/webhooks/linkedin/webhooks/account-status)
+   * @returns {Object} Webhook registration result
+   */
+  async registerAccountStatusWebhook(webhookUrl) {
+    try {
+      if (!this.baseService.isConfigured()) {
+        throw new Error('Unipile is not configured');
+      }
+
+      // Unipile webhook events for account status (valid events per Unipile API):
+      // - credentials: When account credentials expire or are invalid
+      // - error: When account has errors
+      // - ok: When account status is OK (checkpoint resolved, reconnected)
+      // - permissions: When permissions are needed
+      const events = ['credentials', 'error', 'ok', 'permissions'];
+      
+      const baseUrl = this.baseService.getBaseUrl();
+      const headers = this.baseService.getAuthHeaders();
+      const webhookSecret = process.env.WEBHOOK_SECRET || 'lad-webhook-secret';
+
+      const payload = {
+        source: 'account_status',
+        request_url: webhookUrl,
+        events: events,
+        headers: [
+          {
+            key: 'Content-Type',
+            value: 'application/json'
+          },
+          {
+            key: 'X-Webhook-Secret',
+            value: webhookSecret
+          }
+        ]
+      };
+
+      const response = await axios.post(
+        `${baseUrl}/webhooks`,
+        payload,
+        { headers, timeout: 30000 }
+      );
+
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
+  }
 }
-module.exports = new LinkedInWebhookService();
+module.exports = new LinkedInWebhookService();

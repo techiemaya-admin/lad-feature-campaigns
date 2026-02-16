@@ -1,12 +1,18 @@
 /**
  * LinkedIn Account Service
- * Handles account management operations
+ * Handles account management business logic
+ * LAD Architecture: Service Layer (NO SQL - calls Repository)
  */
 const { pool } = require('../../../shared/database/connection');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const UnipileBaseService = require('./UnipileBaseService');
+const LinkedInAccountRepository = require('../repositories/LinkedInAccountRepository');
 const axios = require('axios');
-const { getUserLinkedInAccounts, findAccountByUnipileId } = require('./LinkedInAccountQueryService');
+const logger = require('../../../core/utils/logger');
+
+// Initialize repository
+const linkedInAccountRepository = new LinkedInAccountRepository(pool);
+
 class LinkedInAccountService {
   constructor() {
     this.baseService = new UnipileBaseService();
@@ -20,12 +26,23 @@ class LinkedInAccountService {
    */
   async disconnectAccount(tenantId, unipileAccountId) {
     try {
-      const schema = getSchema(req);
-      // Try TDD schema first (${schema}.linkedin_accounts)
-      const accountResult = await findAccountByUnipileId(tenantId, unipileAccountId);
+      const schema = getSchema();
+      logger.info('[LinkedInAccountService] Disconnecting account', {
+        tenantId: tenantId?.substring(0, 8),
+        unipileAccountId: unipileAccountId?.substring(0, 8)
+      });
+      
+      // Find account in social_linkedin_accounts table (use repository)
+      const accountResult = await linkedInAccountRepository.findAccountByTenantAndUnipileId(tenantId, unipileAccountId);
       if (!accountResult || !accountResult.account) {
+        logger.error('[LinkedInAccountService] Account not found', { tenantId, unipileAccountId });
         throw new Error('LinkedIn account not found for this tenant/user');
       }
+      
+      logger.info('[LinkedInAccountService] Account found', {
+        accountId: accountResult.account.id?.substring(0, 8),
+        schema: accountResult.schema
+      });
       const account = accountResult.account;
       // Use schema from accountResult if available, otherwise use the one we calculated
       const finalSchema = accountResult.schema || schema;
@@ -46,11 +63,13 @@ class LinkedInAccountService {
             const unipile = new UnipileClient(sdkBaseUrl, token);
             if (unipile.account && typeof unipile.account.delete === 'function') {
               await unipile.account.delete(unipileAccountId);
+              logger.info('[LinkedInAccountService] Account deleted from Unipile via SDK', { unipileAccountId });
             } else {
               throw new Error('SDK delete method not available');
             }
           }
         } catch (sdkError) {
+          logger.warn('[LinkedInAccountService] SDK delete failed, trying HTTP', { error: sdkError.message });
           // Fallback to HTTP API
           try {
             const baseUrl = this.baseService.getBaseUrl();
@@ -59,30 +78,48 @@ class LinkedInAccountService {
               `${baseUrl}/accounts/${unipileAccountId}`,
               { headers, timeout: 30000 }
             );
+            logger.info('[LinkedInAccountService] Account deleted from Unipile via HTTP', { unipileAccountId });
           } catch (httpError) {
+            logger.error('[LinkedInAccountService] Failed to delete from Unipile', { error: httpError.message });
           }
         }
       }
       // Mark as inactive/disconnected in database
-      if (accountResult.schema === 'tdd') {
+      if (accountResult.schema === 'social_linkedin_accounts') {
         await pool.query(
-          `UPDATE ${finalSchema}.linkedin_accounts
+          `UPDATE ${schema}.social_linkedin_accounts
+           SET status = 'inactive',
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1`,
+          [account.id]
+        );
+        logger.info('[LinkedInAccountService] Account marked as inactive in DB', { accountId: account.id });
+      } else if (accountResult.schema === 'tdd') {
+        await pool.query(
+          `UPDATE ${schema}.linkedin_accounts
            SET is_active = FALSE,
                updated_at = CURRENT_TIMESTAMP
            WHERE id = $1`,
           [account.id]
         );
+        logger.info('[LinkedInAccountService] Account marked inactive (TDD schema)', { accountId: account.id });
       } else {
         await pool.query(
-          `UPDATE ${finalSchema}.user_integrations_voiceagent
+          `UPDATE ${schema}.user_integrations_voiceagent
            SET is_connected = FALSE,
            updated_at = CURRENT_TIMESTAMP
            WHERE id = $1`,
           [account.id]
         );
+        logger.info('[LinkedInAccountService] Account marked disconnected (old schema)', { accountId: account.id });
       }
-      // Get remaining accounts
-      const remainingAccounts = await getUserLinkedInAccounts(tenantId);
+      // Get remaining accounts (use repository)
+      const remainingAccounts = await linkedInAccountRepository.getUserLinkedInAccounts(tenantId);
+      logger.info('[LinkedInAccountService] Disconnect completed', {
+        disconnectedAccountId: unipileAccountId,
+        remainingAccounts: remainingAccounts.length
+      });
+      
       return {
         success: true,
         disconnectedAccountId: unipileAccountId,
@@ -90,16 +127,22 @@ class LinkedInAccountService {
         remainingAccountsList: remainingAccounts
       };
     } catch (error) {
+      logger.error('[LinkedInAccountService] Disconnect failed', {
+        error: error.message,
+        tenantId,
+        unipileAccountId
+      });
       throw error;
     }
   }
   /**
-   * Get all connected LinkedIn accounts for a user
-   * @param {string} userId - User ID
+   * Get all connected LinkedIn accounts for a tenant
+   * LAD Architecture: Service calls repository
+   * @param {string} tenantId - Tenant ID (required for multi-tenancy)
    * @returns {Array} List of connected accounts
    */
-  async getUserLinkedInAccounts(userId) {
-    return await getUserLinkedInAccounts(userId);
+  async getUserLinkedInAccounts(tenantId) {
+    return await linkedInAccountRepository.getUserLinkedInAccounts(tenantId);
   }
   /**
    * Get all connected accounts across all users (for cron jobs)

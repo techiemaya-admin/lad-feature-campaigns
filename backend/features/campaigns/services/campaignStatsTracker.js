@@ -25,7 +25,12 @@ class CampaignStatsTracker {
       messageContent,
       status = 'success',
       errorMessage,
-      responseData
+      responseData,
+      tenantId,
+      accountName,
+      providerAccountId,
+      userId,  // ✅ User ID from social_linkedin_accounts
+      leadLinkedIn
     } = metadata;
     
     const schema = getSchema(null);
@@ -34,8 +39,8 @@ class CampaignStatsTracker {
       // Insert into campaign_analytics for real-time tracking using pool
       await pool.query(
         `INSERT INTO ${schema}.campaign_analytics 
-         (campaign_id, lead_id, action_type, platform, status, lead_name, lead_phone, lead_email, message_content, error_message, response_data, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())`,
+         (campaign_id, lead_id, action_type, platform, status, lead_name, lead_phone, lead_email, message_content, error_message, response_data, tenant_id, account_name, provider_account_id, user_id, lead_linkedin, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())`,
         [
           campaignId,
           leadId,
@@ -47,7 +52,12 @@ class CampaignStatsTracker {
           leadEmail,
           messageContent,
           errorMessage,
-          responseData ? JSON.stringify(responseData) : null
+          responseData ? JSON.stringify(responseData) : null,
+          tenantId,
+          accountName,
+          providerAccountId,
+          userId,  // ✅ Store user_id from social_linkedin_accounts
+          leadLinkedIn
         ]
       );
       
@@ -64,7 +74,9 @@ class CampaignStatsTracker {
       logger.error('[CampaignStatsTracker] Failed to track action', {
         campaignId,
         actionType,
-        error: error.message
+        error: error.message,
+        errorCode: error.code,
+        errorDetail: error.detail
       });
       // Don't throw - tracking failures shouldn't break the main flow
     }

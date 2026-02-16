@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS lad_dev.campaign_analytics (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     campaign_id UUID NOT NULL REFERENCES lad_dev.campaigns(id) ON DELETE CASCADE,
     lead_id UUID REFERENCES lad_dev.leads(id) ON DELETE SET NULL,
+    tenant_id UUID,
     
     -- Activity details
     action_type VARCHAR(50) NOT NULL, -- CONNECTION_SENT, MESSAGE_SENT, REPLY_RECEIVED, etc.
@@ -20,6 +21,9 @@ CREATE TABLE IF NOT EXISTS lad_dev.campaign_analytics (
     message_content TEXT,
     error_message TEXT,
     response_data JSONB,
+    account_name VARCHAR(255),
+    provider_account_id VARCHAR(255),
+    lead_linkedin VARCHAR(255),
     
     -- Timestamps
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -49,6 +53,14 @@ CREATE INDEX IF NOT EXISTS idx_campaign_analytics_status
 -- Create composite index for common queries
 CREATE INDEX IF NOT EXISTS idx_campaign_analytics_campaign_created 
     ON lad_dev.campaign_analytics(campaign_id, created_at DESC);
+
+-- Create index on tenant_id for multi-tenant queries
+CREATE INDEX IF NOT EXISTS idx_campaign_analytics_tenant_id 
+    ON lad_dev.campaign_analytics(tenant_id);
+
+-- Create composite index for campaign + tenant queries
+CREATE INDEX IF NOT EXISTS idx_campaign_analytics_campaign_tenant 
+    ON lad_dev.campaign_analytics(campaign_id, tenant_id);
 
 -- Add comment
 COMMENT ON TABLE lad_dev.campaign_analytics IS 'Real-time campaign activity tracking for live analytics dashboard';
