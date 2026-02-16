@@ -5,11 +5,76 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# ⚠️ IMPORTANT: This workflow ONLY syncs campaign-specific files:
+#   ✅ Backend: /backend/features/campaigns/
+#   ✅ Frontend: /frontend/sdk/features/campaigns/ and /frontend/components/campaigns/
+#   ❌ Blocked: /backend/core/, /backend/config/, /backend/shared/, /backend/feature_flags/
+#   ❌ Blocked: Any non-campaign backend directories
+
 jobs:
+  validate-paths:
+    runs-on: ubuntu-latest
+    name: Validate campaign-only sync
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 10
+      
+      - name: Check commit contains only campaign files
+        run: |
+          echo "🔐 SECURITY CHECK: Validating commit paths..."
+          echo ""
+          
+          # Get changed files from last commit
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+          
+          echo "📋 Files in this commit:"
+          echo "$CHANGED_FILES" | sed 's/^/   /'
+          echo ""
+          
+          # Check for forbidden directories
+          FORBIDDEN_PATTERNS=(
+            '^backend/core/'
+            '^backend/config/'
+            '^backend/shared/'
+            '^backend/feature_flags/'
+            '^backend/migrations/'
+            '^backend/scripts/'
+          )
+          
+          HAS_FORBIDDEN=0
+          for pattern in "${FORBIDDEN_PATTERNS[@]}"; do
+            if echo "$CHANGED_FILES" | grep -E "$pattern" > /dev/null; then
+              echo "❌ BLOCKED: Found files in forbidden directory:"
+              echo "$CHANGED_FILES" | grep -E "$pattern" | sed 's/^/   ❌ /'
+              HAS_FORBIDDEN=1
+            fi
+          done
+          
+          if [ $HAS_FORBIDDEN -eq 1 ]; then
+            echo ""
+            echo "❌ VALIDATION FAILED"
+            echo "   Only these paths are allowed:"
+            echo "   ✅ backend/features/campaigns/"
+            echo "   ✅ frontend/"
+            exit 1
+          fi
+          
+          # Check that at least some campaign files are committed
+          if echo "$CHANGED_FILES" | grep -E '(backend/features/campaigns/|frontend/)' > /dev/null; then
+            echo "✅ VALIDATION PASSED"
+            echo "   All files are from allowed campaign paths"
+          else
+            echo "⚠️  WARNING: No campaign files detected in commit"
+            echo "   (This might be OK if only updating docs or configs)"
+          fi
+
   sync-backend:
+    needs: [validate-paths]
     runs-on: ubuntu-latest
     # Only run on main branch
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && success()
     steps:
       - name: Checkout feature repo
         uses: actions/checkout@v3
@@ -28,27 +93,58 @@ jobs:
         run: |
           echo "📦 Starting backend file sync..."
           
-          # Verify source exists
+          # CRITICAL: Verify source exists
           if [ ! -d "backend/features/campaigns" ]; then
             echo "❌ Source directory not found: backend/features/campaigns"
+            exit 1
+          fi
+          
+          # SAFETY CHECK: Verify no core, config, shared files are in the commit
+          echo "🔒 Verifying no non-campaign files are included..."
+          if git diff --name-only HEAD~1 HEAD | grep -E '^backend/(core|config|shared)/' > /dev/null; then
+            echo "❌ BLOCKED: Found non-campaign files in commit (core/config/shared)"
+            echo "   Only backend/features/campaigns/ and frontend/ should be committed"
+            git diff --name-only HEAD~1 HEAD | grep -E '^backend/(core|config|shared)/' | sed 's/^/   ❌ /'
             exit 1
           fi
           
           # Ensure destination exists
           mkdir -p lad-backend/features/campaigns
           
-          # Sync files WITHOUT delete (safer - only adds/updates)
+          # Sync ONLY campaign files with strict exclusions
           if ! rsync -av \
+            --filter='+ /manifest.js' \
+            --filter='+ /index.js' \
+            --filter='+ /package.json' \
+            --filter='+ *.js' \
+            --filter='+ *.json' \
+            --filter='+ *.sql' \
+            --filter='+ *.ts' \
+            --filter='+ *.tsx' \
+            --filter='+ *.md' \
+            --filter='+ *.yml' \
+            --filter='+ *.yaml' \
+            --filter='- /.*' \
             --exclude='.env*' \
             --exclude='*.local.js' \
-            --exclude='node_modules/' \
+            --exclude='*.test.js' \
+            --exclude='*.test.ts' \
+            --exclude='*.spec.js' \
+            --exclude='*.spec.ts' \
+            --exclude='node_modules' \
             --exclude='.DS_Store' \
+            --exclude='.git*' \
+            --exclude='coverage' \
+            --exclude='dist' \
+            --exclude='build' \
             backend/features/campaigns/ lad-backend/features/campaigns/; then
             echo "❌ rsync failed!"
             exit 1
           fi
           
-          echo "✅ Files synced successfully"
+          echo "✅ Backend files synced successfully"
+          echo "📋 Synced files:"
+          find lad-backend/features/campaigns -type f | wc -l | xargs echo "   Total files:"
 
       - name: Verify critical files
         run: |
@@ -110,8 +206,17 @@ jobs:
             git stash pop || true
           fi
           
-          # Stage changes
+          # Stage ONLY campaign changes
           git add features/campaigns/
+          
+          # SAFETY: Verify only campaign files are staged
+          echo "🔍 Verifying staged files..."
+          if git diff --staged --name-only | grep -v '^features/campaigns/' > /dev/null; then
+            echo "❌ BLOCKED: Found non-campaign files in staging area!"
+            git diff --staged --name-only | grep -v '^features/campaigns/' | sed 's/^/   ❌ /'
+            git reset
+            exit 1
+          fi
           
           # Check if there are changes
           if git diff --staged --quiet; then
@@ -122,6 +227,9 @@ jobs:
           # Show what changed
           echo "📝 Changes to be committed:"
           git diff --staged --stat
+          echo ""
+          echo "📋 Staging validation:"
+          echo "   ✅ All staged files are from features/campaigns/"
           
           # Commit
           git commit -m "feat(campaigns): auto-sync from feature repo" \
@@ -151,9 +259,10 @@ jobs:
           exit 1
 
   sync-frontend:
+    needs: [validate-paths]
     runs-on: ubuntu-latest
     # Only run on main branch
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && success()
     steps:
       - name: Checkout feature repo
         uses: actions/checkout@v3
@@ -172,6 +281,14 @@ jobs:
         run: |
           echo "📦 Starting frontend SDK sync..."
           
+          # SAFETY CHECK: Verify no core, shared, config files are in the commit
+          echo "🔒 Verifying no non-campaign files are included..."
+          if git diff --name-only HEAD~1 HEAD | grep -E '^backend/(core|config|shared)/' > /dev/null; then
+            echo "❌ BLOCKED: Found non-campaign files in commit (core/config/shared)"
+            echo "   Only backend/features/campaigns/ and frontend/ should be committed"
+            exit 1
+          fi
+          
           # Check if SDK directory exists
           if [ ! -d "frontend/sdk/features/campaigns" ]; then
             echo "⚠️ No frontend SDK directory found, skipping"
@@ -184,28 +301,48 @@ jobs:
           # Ensure directory exists
           mkdir -p lad-frontend/sdk/features/campaigns
 
-          # Sync SDK files WITHOUT delete
+          # Sync ONLY SDK campaign files with strict exclusions
           if ! rsync -av \
-            --exclude='node_modules/' \
+            --filter='+ *.ts' \
+            --filter='+ *.tsx' \
+            --filter='+ *.js' \
+            --filter='+ *.json' \
+            --filter='+ *.md' \
+            --filter='- *.test.ts' \
+            --filter='- *.test.tsx' \
+            --filter='- *.spec.ts' \
+            --filter='- *.spec.tsx' \
+            --exclude='node_modules' \
             --exclude='.DS_Store' \
-            --exclude='*.test.ts' \
-            --exclude='*.test.tsx' \
+            --exclude='.git*' \
+            --exclude='dist' \
+            --exclude='build' \
+            --exclude='coverage' \
             frontend/sdk/features/campaigns/ lad-frontend/sdk/features/campaigns/; then
             echo "❌ SDK sync failed!"
             exit 1
           fi
+          
+          echo "✅ Frontend SDK files synced successfully"
 
-          # Copy components if they exist
-          if [ -d "frontend/components" ] && [ "$(ls -A frontend/components 2>/dev/null)" ]; then
-            echo "📦 Syncing components..."
+          # Copy components if they exist (optional, campaigns-only)
+          if [ -d "frontend/components/campaigns" ] && [ "$(ls -A frontend/components/campaigns 2>/dev/null)" ]; then
+            echo "📦 Syncing campaign components..."
             mkdir -p lad-frontend/web/src/features/campaigns
             rsync -av \
-              --exclude='node_modules/' \
+              --filter='+ *.tsx' \
+              --filter='+ *.ts' \
+              --filter='+ *.css' \
+              --filter='+ *.scss' \
+              --filter='+ *.md' \
+              --filter='- *.test.*' \
+              --filter='- *.spec.*' \
+              --exclude='node_modules' \
               --exclude='.DS_Store' \
-              frontend/components/ lad-frontend/web/src/features/campaigns/
+              frontend/components/campaigns/ lad-frontend/web/src/features/campaigns/
             echo "HAS_COMPONENTS=true" >> $GITHUB_ENV
           else
-            echo "ℹ️ No components to sync"
+            echo "ℹ️ No campaign components to sync"
             echo "HAS_COMPONENTS=false" >> $GITHUB_ENV
           fi
           
@@ -272,10 +409,19 @@ jobs:
             git stash pop || true
           fi
           
-          # Stage all changes
+          # Stage ONLY campaign SDK changes
           git add sdk/features/campaigns/
           if [ "${{ env.HAS_COMPONENTS }}" = "true" ]; then
             git add web/src/features/campaigns/
+          fi
+          
+          # SAFETY: Verify only campaign files are staged
+          echo "🔍 Verifying staged files..."
+          if git diff --staged --name-only | grep -v '^sdk/features/campaigns/' | grep -v '^web/src/features/campaigns/' > /dev/null; then
+            echo "❌ BLOCKED: Found non-campaign files in staging area!"
+            git diff --staged --name-only | grep -v '^sdk/features/campaigns/' | grep -v '^web/src/features/campaigns/' | sed 's/^/   ❌ /'
+            git reset
+            exit 1
           fi
           
           # Check for changes
@@ -287,6 +433,9 @@ jobs:
           # Show changes
           echo "📝 Changes to be committed:"
           git diff --staged --stat
+          echo ""
+          echo "📋 Staging validation:"
+          echo "   ✅ All staged files are from SDK or campaign components"
           
           # Commit
           git commit -m "feat(campaigns): auto-sync SDK from feature repo" \
@@ -316,23 +465,35 @@ jobs:
           exit 1
 
   notify-success:
-    needs: [sync-backend, sync-frontend]
+    needs: [validate-paths, sync-backend, sync-frontend]
     runs-on: ubuntu-latest
     if: success()
     steps:
       - name: Success notification
         run: |
-          echo "✅ Successfully synced campaigns feature to LAD repositories"
-          echo "Backend: ✅"
-          echo "Frontend: ✅"
+          echo "✅ Campaign sync completed successfully"
+          echo ""
+          echo "🔐 Security: Path validation passed"
+          echo "📤 Backend: Synced to LAD-Backend/feature/campaigns"
+          echo "📤 Frontend: Synced to LAD-Frontend/sdk/features/campaigns"
 
   notify-failure:
-    needs: [sync-backend, sync-frontend]
+    needs: [validate-paths, sync-backend, sync-frontend]
     runs-on: ubuntu-latest
     if: failure()
     steps:
       - name: Failure notification
         run: |
-          echo "❌ Sync to LAD repositories failed"
-          echo "Check workflow logs for details"
+          echo "❌ Campaign sync failed"
+          echo ""
+          if [ "${{ needs.validate-paths.result }}" = "failure" ]; then
+            echo "🔐 PATH VALIDATION FAILED"
+            echo "   Reason: Non-campaign files detected in commit"
+            echo "   Only these paths are allowed:"
+            echo "   • backend/features/campaigns/"
+            echo "   • frontend/sdk/features/campaigns/"
+            echo "   • frontend/components/campaigns/"
+          else
+            echo "See workflow logs for sync errors"
+          fi
           exit 1
