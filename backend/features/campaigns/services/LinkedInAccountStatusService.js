@@ -28,24 +28,54 @@ class LinkedInAccountStatusService {
     logger.info('[LinkedInAccountStatus] Processing account status update', {
       accountId: account_id,
       accountType: account_type,
-      status: accountStatus
+      status: accountStatus,
+      rawPayload: accountStatusPayload
     });
 
     try {
       // Map Unipile status to database status
+      // Add comprehensive mappings to keep accounts visible
       const statusMap = {
         'OK': 'active',
+        'ACTIVE': 'active',
+        'CONNECTED': 'active',
         'CREDENTIALS': 'credentials_expired',
         'ERROR': 'error',
         'STOPPED': 'stopped',
         'CONNECTING': 'connecting',
         'CREATION_SUCCESS': 'active',
         'RECONNECTED': 'active',
-        'SYNC_SUCCESS': 'active'
+        'SYNC_SUCCESS': 'active',
+        'SUCCESS': 'active',
+        'READY': 'active',
+        'VERIFIED': 'active',
+        'ONLINE': 'active',
+        'DELETED': 'inactive',
+        'INVALID': 'inactive',
+        'REMOVED': 'inactive',
+        'NOT_FOUND': 'inactive',
+        'INACTIVE': 'inactive'
       };
 
-      const dbStatus = statusMap[accountStatus] || 'unknown';
+      // Default to 'active' instead of 'unknown' to keep accounts visible
+      const dbStatus = statusMap[accountStatus] || 'active';
       const needsReconnect = accountStatus === 'CREDENTIALS';
+      
+      // Log unknown statuses so we can add them to the map
+      if (!statusMap[accountStatus]) {
+        logger.warn('[LinkedInAccountStatus] Unknown status received from Unipile', {
+          accountId: account_id,
+          status: accountStatus,
+          message: 'Defaulting to active - please add this status to statusMap if needed'
+        });
+      }
+      
+      logger.info('[LinkedInAccountStatus] Status mapping', {
+        accountId: account_id,
+        unipileStatus: accountStatus,
+        dbStatus: dbStatus,
+        needsReconnect: needsReconnect
+      });
 
       // Update account status via repository (LAD: Service → Repository)
       await linkedInAccountRepository.updateAccountStatus(
