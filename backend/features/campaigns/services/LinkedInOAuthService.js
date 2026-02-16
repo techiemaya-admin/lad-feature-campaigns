@@ -301,16 +301,35 @@ class LinkedInOAuthService {
             if (!li_at) {
               throw new Error('li_at cookie is required for cookies method');
             }
-            logger.info('[LinkedInOAuthService] Calling SDK connectLinkedin with cookies');
+            logger.info('[LinkedInOAuthService] Calling SDK connectLinkedinWithCookie (dedicated cookie method)');
             
             try {
-              const account = await unipile.account.connectLinkedin({
-                cookies: {
-                  li_at: li_at,
-                  li_a: li_a || undefined
-                },
-                user_agent: user_agent || 'your-app/1.0'
+              // Build cookie payload for the dedicated cookie method
+              // Note: connectLinkedinWithCookie expects different field names than connectLinkedin
+              const cookiePayload = {
+                access_token: li_at  // connectLinkedinWithCookie uses 'access_token' not 'li_at'
+              };
+              
+              // Only include li_a if provided
+              if (li_a) {
+                cookiePayload.premium_token = li_a;  // connectLinkedinWithCookie uses 'premium_token' not 'li_a'
+              }
+              
+              // Only include user_agent if provided
+              if (user_agent) {
+                cookiePayload.user_agent = user_agent;
+              }
+              
+              logger.info('[LinkedInOAuthService] Cookie payload prepared', { 
+                hasAccessToken: !!li_at,
+                hasPremiumToken: !!li_a,
+                hasUserAgent: !!user_agent,
+                cookiePayloadKeys: Object.keys(cookiePayload)
               });
+              
+              // Use the dedicated cookie method (NOT connectLinkedin)
+              const account = await unipile.account.connectLinkedinWithCookie(cookiePayload);
+              
               logger.info('[LinkedInOAuthService] SDK connectLinkedin returned', { 
                 hasAccount: !!account,
                 isCheckpoint: account?.object === 'Checkpoint'
@@ -326,8 +345,10 @@ class LinkedInOAuthService {
                 errorType: typeof connectError,
                 hasResponse: !!connectError.response,
                 responseStatus: connectError.response?.status,
-                responseData: connectError.response?.data,
-                body: connectError.body
+                responseData: JSON.stringify(connectError.response?.data || {}),
+                hasBody: !!connectError.body,
+                bodyContent: JSON.stringify(connectError.body || {}),
+                stack: connectError.stack?.substring(0, 500)
               });
               
               // Extract error details from SDK error body
@@ -382,17 +403,31 @@ class LinkedInOAuthService {
         // SDK not available, try HTTP API (fallback)
         const headers = this.baseService.getAuthHeaders();
         let payload = {};
+        
         if (method === 'credentials') {
-          payload = { username: email, password };
-        } else if (method === 'cookies') {
           payload = { 
             provider: 'LINKEDIN',
-            cookies: {
-              li_at: li_at,
-              li_a: li_a || undefined
-            },
-            user_agent: user_agent || 'your-app/1.0'
+            username: email, 
+            password 
           };
+        } else if (method === 'cookies') {
+          // Build cookie payload - HTTP API might use different structure than SDK
+          const cookiesPayload = {
+            access_token: li_at  // Use access_token like the SDK method
+          };
+          if (li_a) {
+            cookiesPayload.premium_token = li_a;  // Use premium_token like the SDK method
+          }
+          
+          payload = { 
+            provider: 'LINKEDIN',
+            cookies: cookiesPayload
+          };
+          
+          // Add user_agent if provided
+          if (user_agent) {
+            payload.user_agent = user_agent;
+          }
         }
         try {
           logger.info('[LinkedInOAuthService] Calling HTTP API');

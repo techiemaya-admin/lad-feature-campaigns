@@ -675,7 +675,10 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
           // Use enrichPersonDetails which returns full person data including name
           // Pass tenant context for credit deduction
           const mockReq = tenantId ? { tenant: { id: tenantId } } : null;
-          const enrichResult = await ApolloRevealService.enrichPersonDetails(personId, mockReq);
+          const enrichResult = await ApolloRevealService.enrichPersonDetails(personId, mockReq, {
+            campaignId: campaignId,
+            stepType: 'lead_generation'
+          });
           
           if (enrichResult.success && enrichResult.person) {
             // Merge enriched data with search data - capture ALL Apollo fields

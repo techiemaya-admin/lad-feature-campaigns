@@ -8,6 +8,11 @@ const { authenticateToken: jwtAuth } = require('../../../core/middleware/auth');
 const { getSchema } = require('../../../core/utils/schemaHelper');
 const linkedInIntegrationService = require('../services/LinkedInIntegrationService');
 const { pollingScheduler } = require('../services/pollingScheduler');
+
+// Message templates routes (mount before other routes to avoid conflicts)
+const messageTemplatesRoutes = require('./linkedinMessageTemplates');
+router.use('/message-templates', messageTemplatesRoutes);
+
 // GET /api/campaigns/linkedin/status - Check LinkedIn connection status
 router.get('/status', jwtAuth, async (req, res) => {
   try {

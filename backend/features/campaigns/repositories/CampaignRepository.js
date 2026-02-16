@@ -216,13 +216,13 @@ class CampaignRepository {
    */
   static async update(campaignId, tenantId, updates, req = null) {
     const schema = getSchema(req);
-    const allowedFields = ['name', 'status', 'config', 'execution_state', 'last_lead_check_at', 'next_run_at', 'last_execution_reason'];
+    const allowedFields = ['name', 'status', 'config', 'execution_state', 'last_lead_check_at', 'next_run_at', 'last_execution_reason', 'metadata'];
     const setClause = [];
     const values = [campaignId, tenantId];
     let paramIndex = 3;
     for (const [key, value] of Object.entries(updates)) {
       if (allowedFields.includes(key)) {
-        if (key === 'config') {
+        if (key === 'config' || key === 'metadata') {
           setClause.push(`${key} = $${paramIndex++}::jsonb`);
           values.push(JSON.stringify(value));
         } else if (key === 'last_lead_check_at' || key === 'next_run_at') {
