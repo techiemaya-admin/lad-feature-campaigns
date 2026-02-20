@@ -1,0 +1,19 @@
+{
+  "name": "@lad/shared-infrastructure",
+  "version": "1.0.0",
+  "description": "Shared infrastructure utilities for LAD platform",
+  "main": "index.js",
+  "keywords": [
+    "shared",
+    "infrastructure",
+    "cloud-tasks",
+    "clients"
+  ],
+  "dependencies": {
+    "@google-cloud/tasks": "^5.0.0",
+    "axios": "^1.6.0"
+  },
+  "author": "LAD Platform",
+  "license": "UNLICENSED",
+  "private": true
+}

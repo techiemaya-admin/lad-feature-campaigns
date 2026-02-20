@@ -129,6 +129,85 @@ async function getCampaignAnalytics(req, res) {
     const clickRate = openedCount > 0 ? (clickedCount / openedCount) * 100 : 0;
     const connectionRate = sentCount > 0 ? (connectedCount / sentCount) * 100 : 0;
     const replyRate = connectedCount > 0 ? (repliedCount / connectedCount) * 100 : 0;
+    // Fetch LinkedIn rate limit metrics for this tenant
+    let linkedinRateLimits = null;
+    try {
+      // Get max daily limit across all LinkedIn accounts
+      const dailyLimitQuery = `
+        SELECT 
+          COALESCE(MAX(default_daily_limit), 0) as max_daily_limit,
+          COALESCE(SUM(default_daily_limit), 0) as total_daily_limit,
+          COALESCE(MAX(default_weekly_limit), 0) as max_weekly_limit,
+          COALESCE(SUM(default_weekly_limit), 0) as total_weekly_limit,
+          COUNT(*) as account_count
+        FROM social_linkedin_accounts
+        WHERE tenant_id = $1 AND status = 'active' AND is_deleted = false
+      `;
+      const dailyLimitResult = await query(dailyLimitQuery, [campaign.tenant_id]);
+      const limitRow = dailyLimitResult.rows[0];
+
+      // Get last 7 days connection count
+      const sevenDaysQuery = `
+        SELECT 
+          COUNT(*) as sent_last_7_days,
+          DATE(created_at) as date
+        FROM campaign_analytics
+        WHERE 
+          tenant_id = $1 
+          AND action_type IN ('CONNECTION_SENT', 'CONNECTION_SENT_WITH_MESSAGE')
+          AND status = 'success'
+          AND created_at >= NOW() - INTERVAL '7 days'
+        GROUP BY DATE(created_at)
+        ORDER BY DATE(created_at) ASC
+      `;
+      const sevenDaysResult = await query(sevenDaysQuery, [campaign.tenant_id]);
+      
+      // Calculate daily breakdown for the last 7 days
+      const dailyBreakdown = sevenDaysResult.rows.map(row => ({
+        date: row.date,
+        sent: parseInt(row.sent_last_7_days)
+      }));
+
+      // Get total for last 7 days
+      const totalSevenDaysQuery = `
+        SELECT COUNT(*) as total_sent
+        FROM campaign_analytics
+        WHERE 
+          tenant_id = $1 
+          AND action_type IN ('CONNECTION_SENT', 'CONNECTION_SENT_WITH_MESSAGE')
+          AND status = 'success'
+          AND created_at >= NOW() - INTERVAL '7 days'
+      `;
+      const totalSevenDaysResult = await query(totalSevenDaysQuery, [campaign.tenant_id]);
+      const totalSentLast7Days = parseInt(totalSevenDaysResult.rows[0].total_sent) || 0;
+
+      linkedinRateLimits = {
+        daily: {
+          max: parseInt(limitRow.max_daily_limit) || 0,
+          total: parseInt(limitRow.total_daily_limit) || 0,
+          account_count: parseInt(limitRow.account_count) || 0
+        },
+        weekly: {
+          max: parseInt(limitRow.max_weekly_limit) || 0,
+          total: parseInt(limitRow.total_weekly_limit) || 0
+        },
+        usage: {
+          sent_last_7_days: totalSentLast7Days,
+          daily_breakdown: dailyBreakdown,
+          weekly_percentage: limitRow.total_weekly_limit > 0 
+            ? ((totalSentLast7Days / limitRow.total_weekly_limit) * 100).toFixed(1)
+            : 0
+        }
+      };
+    } catch (err) {
+      logger.warn('[getCampaignAnalytics] Failed to fetch LinkedIn rate limits', {
+        campaignId,
+        error: err.message
+      });
+      // Continue without rate limit data if query fails
+      linkedinRateLimits = null;
+    }
+
     // Build analytics response with required structure
     const analyticsData = {
       campaign: {
@@ -163,6 +242,7 @@ async function getCampaignAnalytics(req, res) {
         reply_rate: replyRate
       },
       platform_metrics: platformMetrics,
+      linkedin_rate_limits: linkedinRateLimits,
       timeline: [],
       activities: activitiesResult.rows,
       total: parseInt(countResult.rows[0].count),

@@ -24,7 +24,7 @@ async function streamCampaignStats(req, res) {
   // Send initial stats immediately
   try {
     logger.info('[SSE] Calling campaignStatsTracker.getStats', { campaignId });
-    const initialStats = await campaignStatsTracker.getStats(campaignId);
+    const initialStats = await campaignStatsTracker.getStats(campaignId, req.user?.tenant_id);
     logger.info('[SSE] Stats fetched successfully', { campaignId, stats: initialStats });
     
     const initialMessage = JSON.stringify({ 
@@ -96,7 +96,7 @@ async function streamCampaignStats(req, res) {
 async function getCampaignStats(req, res) {
   const { id: campaignId } = req.params;
   try {
-    const stats = await campaignStatsTracker.getStats(campaignId);
+    const stats = await campaignStatsTracker.getStats(campaignId, req.user?.tenant_id);
     res.json({ success: true, data: stats });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -109,7 +109,7 @@ async function getCampaignStats(req, res) {
 async function refreshCampaignStats(req, res) {
   const { id: campaignId } = req.params;
   try {
-    const stats = await campaignStatsTracker.getStats(campaignId);
+    const stats = await campaignStatsTracker.getStats(campaignId, req.user?.tenant_id);
     await campaignEventsService.publishStatsUpdate(campaignId, stats);
     res.json({ success: true, data: stats });
   } catch (error) {

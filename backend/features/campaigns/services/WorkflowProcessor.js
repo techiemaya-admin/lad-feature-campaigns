@@ -21,23 +21,42 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     // This ensures we don't re-execute steps that were already completed
     // LAD Architecture: Get schema from tenant context
     const schema = getSchema({ user: { tenant_id: tenantId } });
-    const lastSuccessfulActivityResult = await pool.query(
-      `SELECT step_id, status, created_at FROM ${schema}.campaign_lead_activities 
-       WHERE campaign_lead_id = $1 
-       AND status IN ('delivered', 'connected', 'replied')
-       ORDER BY created_at DESC LIMIT 1`,
-      [campaignLead.id]
+    
+    // Get all successfully executed steps from campaign_analytics
+    // This is the new source of truth for tracking executed actions
+    const executedStepsResult = await pool.query(
+      `SELECT DISTINCT action_type, created_at FROM ${schema}.campaign_analytics 
+       WHERE campaign_id = $1 
+       AND lead_id = $2 
+       AND status = 'success'
+       ORDER BY created_at DESC`,
+      [campaignLead.campaign_id, campaignLead.lead_id]
     );
+    
+    const executedActions = executedStepsResult.rows.map(row => row.action_type);
     let nextStepIndex = 0;
-    if (lastSuccessfulActivityResult.rows.length > 0) {
-      const lastSuccessfulActivity = lastSuccessfulActivityResult.rows[0];
-      const lastSuccessfulStepIndex = steps.findIndex(s => s.id === lastSuccessfulActivity.step_id);
-      if (lastSuccessfulStepIndex >= 0) {
-        // Advance to the step after the last successfully completed step
-        nextStepIndex = lastSuccessfulStepIndex + 1;
+    
+    // Map step types to their corresponding action types for deduplication
+    const stepTypeToActionType = {
+      'linkedin_visit_profile': 'PROFILE_VISITED',
+      'linkedin_connect': 'CONNECTION_SENT',
+      'linkedin_follow': 'PROFILE_FOLLOWED',
+      'linkedin_message': 'CONTACTED',
+      'linkedin_reaction': 'PROFILE_VISITED'  // Reaction counts as profile visit
+    };
+    
+    // Find the first step that hasn't been executed yet
+    for (let i = 0; i < steps.length; i++) {
+      const stepType = steps[i].step_type || steps[i].type;
+      const actionType = stepTypeToActionType[stepType];
+      
+      // If this step type has been successfully executed, skip it
+      if (actionType && executedActions.includes(actionType)) {
+        nextStepIndex = i + 1;
+      } else {
+        // Found first unexecuted step
+        break;
       }
-    } else {
-      // No successful activities yet, start from the beginning
     }
     if (nextStepIndex >= steps.length) {
       // All steps completed, mark lead as completed
@@ -51,28 +70,8 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
     const nextStep = steps[nextStepIndex];
     // CRITICAL: Normalize step type - database uses step_type, but code expects type
     const nextStepType = nextStep.step_type || nextStep.type;
-    // CRITICAL: Check if this step has already been successfully executed for this lead
-    // This prevents duplicate execution of steps like "Visit LinkedIn Profile" or "Send Connection Request"
-    // Per TDD: Use lad_dev schema
-    const existingActivityResult = await pool.query(
-      `SELECT id, status FROM ${schema}.campaign_lead_activities 
-       WHERE campaign_lead_id = $1 
-       AND step_id = $2 
-       AND status IN ('delivered', 'connected', 'replied')
-       ORDER BY created_at DESC LIMIT 1`,
-      [campaignLead.id, nextStep.id]
-    );
-    if (existingActivityResult.rows.length > 0) {
-      const existingActivity = existingActivityResult.rows[0];
-      // Step already completed successfully, advance to next step
-      const currentStepIndex = steps.findIndex(s => s.id === nextStep.id);
-      if (currentStepIndex >= 0 && currentStepIndex < steps.length - 1) {
-        // Recursively process the next step
-        const remainingSteps = steps.slice(currentStepIndex + 1);
-        await processLeadThroughWorkflow(campaign, remainingSteps, campaignLead, userId, tenantId, authToken);
-      }
-      return;
-    }
+    // No need to check campaign_lead_activities again - we already did this in the loop above
+    // by checking campaign_analytics for each step's action type
     // Validate step before execution - check if all required fields are filled by user
     const stepConfig = typeof nextStep.config === 'string' ? JSON.parse(nextStep.config) : nextStep.config;
     const validation = validateStepConfig(nextStepType, stepConfig);
@@ -115,8 +114,8 @@ async function processLeadThroughWorkflow(campaign, steps, campaignLead, userId,
       const delayDays = stepConfig.delay_days || stepConfig.delayDays || 0;
       const delayHours = stepConfig.delay_hours || stepConfig.delayHours || 0;
       // Check last activity time
-      if (lastSuccessfulActivityResult.rows.length > 0) {
-        const lastActivityTime = new Date(lastSuccessfulActivityResult.rows[0].created_at || campaignLead.created_at);
+      if (executedStepsResult.rows.length > 0) {
+        const lastActivityTime = new Date(executedStepsResult.rows[0].created_at);
         const now = new Date();
         const delayMs = (delayDays * 24 * 60 * 60 * 1000) + (delayHours * 60 * 60 * 1000);
         if (now - lastActivityTime < delayMs) {

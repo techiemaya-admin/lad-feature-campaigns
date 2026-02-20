@@ -485,6 +485,204 @@ class LinkedInAccountRepository {
       throw error;
     }
   }
+
+  /**
+   * Get total daily limit for all active LinkedIn accounts of a tenant
+   * Sums default_daily_limit from all active accounts
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} context - Request context
+   * @returns {Promise<number>} Total daily limit
+   */
+  async getTotalDailyLimitForTenant(tenantId, context = {}) {
+    if (!tenantId) {
+      logger.warn('[LinkedInAccountRepository] No tenantId provided for getTotalDailyLimitForTenant');
+      return 0;
+    }
+
+    const schema = getSchema(context);
+
+    try {
+      const query = `
+        SELECT COALESCE(SUM(default_daily_limit), 0) as total_daily_limit
+        FROM ${schema}.social_linkedin_accounts
+        WHERE tenant_id = $1 
+        AND status = 'active'
+        AND is_deleted = false
+        AND provider_account_id IS NOT NULL
+      `;
+      
+      const result = await this.pool.query(query, [tenantId]);
+      const totalDailyLimit = parseInt(result.rows[0]?.total_daily_limit || 0);
+
+      logger.debug('[LinkedInAccountRepository] Total daily limit retrieved', {
+        tenantId,
+        totalDailyLimit
+      });
+
+      return totalDailyLimit;
+    } catch (error) {
+      logger.error('[LinkedInAccountRepository] Error getting total daily limit', {
+        tenantId,
+        error: error.message
+      });
+      // Return 0 on error to allow graceful degradation
+      return 0;
+    }
+  }
+
+  /**
+   * Get today's connection request count for a tenant from campaign_analytics
+   * Counts successful CONNECTION_SENT and CONNECTION_SENT_WITH_MESSAGE actions
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} context - Request context
+   * @returns {Promise<number>} Count of connection requests sent today
+   */
+  async getTodayConnectionCount(tenantId, context = {}) {
+    if (!tenantId) {
+      logger.warn('[LinkedInAccountRepository] No tenantId provided for getTodayConnectionCount');
+      return 0;
+    }
+
+    const schema = getSchema(context);
+
+    try {
+      // Get today's date range (midnight to midnight)
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayStart = today.toISOString();
+      
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowStart = tomorrow.toISOString();
+
+      const query = `
+        SELECT COUNT(*) as total_actions
+        FROM ${schema}.campaign_analytics
+        WHERE tenant_id = $1
+        AND action_type IN ('CONNECTION_SENT', 'CONNECTION_SENT_WITH_MESSAGE')
+        AND status = 'success'
+        AND created_at >= $2
+        AND created_at < $3
+      `;
+      
+      const result = await this.pool.query(query, [tenantId, todayStart, tomorrowStart]);
+      const todayConnectionCount = parseInt(result.rows[0]?.total_actions || 0);
+
+      logger.debug('[LinkedInAccountRepository] Today connection count retrieved', {
+        tenantId,
+        todayConnectionCount,
+        dateRange: { from: todayStart, to: tomorrowStart }
+      });
+
+      return todayConnectionCount;
+    } catch (error) {
+      logger.error('[LinkedInAccountRepository] Error getting today connection count', {
+        tenantId,
+        error: error.message
+      });
+      // Return 0 on error to allow graceful degradation
+      return 0;
+    }
+  }
+
+  /**
+   * Get total weekly limit for all active LinkedIn accounts of a tenant
+   * Sums default_weekly_limit from all active accounts
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} context - Request context
+   * @returns {Promise<number>} Total weekly limit
+   */
+  async getTotalWeeklyLimitForTenant(tenantId, context = {}) {
+    if (!tenantId) {
+      logger.warn('[LinkedInAccountRepository] No tenantId provided for getTotalWeeklyLimitForTenant');
+      return 0;
+    }
+
+    const schema = getSchema(context);
+
+    try {
+      const query = `
+        SELECT COALESCE(SUM(default_weekly_limit), 0) as total_weekly_limit
+        FROM ${schema}.social_linkedin_accounts
+        WHERE tenant_id = $1 
+        AND status = 'active'
+        AND is_deleted = false
+        AND provider_account_id IS NOT NULL
+        AND default_weekly_limit IS NOT NULL
+      `;
+      
+      const result = await this.pool.query(query, [tenantId]);
+      const totalWeeklyLimit = parseInt(result.rows[0]?.total_weekly_limit || 0);
+
+      logger.debug('[LinkedInAccountRepository] Total weekly limit retrieved', {
+        tenantId,
+        totalWeeklyLimit
+      });
+
+      return totalWeeklyLimit;
+    } catch (error) {
+      logger.error('[LinkedInAccountRepository] Error getting total weekly limit', {
+        tenantId,
+        error: error.message
+      });
+      // Return 0 on error to allow graceful degradation
+      return 0;
+    }
+  }
+
+  /**
+   * Get last 7 days connection request count for a tenant (rolling window)
+   * Counts successful CONNECTION_SENT and CONNECTION_SENT_WITH_MESSAGE actions from last 7 days
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} context - Request context
+   * @returns {Promise<number>} Count of connection requests sent in last 7 days
+   */
+  async getLastSevenDaysConnectionCount(tenantId, context = {}) {
+    if (!tenantId) {
+      logger.warn('[LinkedInAccountRepository] No tenantId provided for getLastSevenDaysConnectionCount');
+      return 0;
+    }
+
+    const schema = getSchema(context);
+
+    try {
+      // Get last 7 days date range (7 days ago to now)
+      const now = new Date();
+      const sevenDaysAgo = new Date(now);
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      
+      const sevenDaysAgoStart = sevenDaysAgo.toISOString();
+      const nowEnd = now.toISOString();
+
+      const query = `
+        SELECT COUNT(*) as total_actions
+        FROM ${schema}.campaign_analytics
+        WHERE tenant_id = $1
+        AND action_type IN ('CONNECTION_SENT', 'CONNECTION_SENT_WITH_MESSAGE')
+        AND status = 'success'
+        AND created_at >= $2
+        AND created_at <= $3
+      `;
+      
+      const result = await this.pool.query(query, [tenantId, sevenDaysAgoStart, nowEnd]);
+      const lastSevenDaysCount = parseInt(result.rows[0]?.total_actions || 0);
+
+      logger.debug('[LinkedInAccountRepository] Last 7 days connection count retrieved', {
+        tenantId,
+        lastSevenDaysCount,
+        dateRange: { from: sevenDaysAgoStart, to: nowEnd }
+      });
+
+      return lastSevenDaysCount;
+    } catch (error) {
+      logger.error('[LinkedInAccountRepository] Error getting last 7 days connection count', {
+        tenantId,
+        error: error.message
+      });
+      // Return 0 on error to allow graceful degradation
+      return 0;
+    }
+  }
 }
 
 module.exports = LinkedInAccountRepository;

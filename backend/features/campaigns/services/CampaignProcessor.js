@@ -286,61 +286,99 @@ async function processCampaign(campaignId, tenantId, authToken = null) {
       executionState 
     });
     // Get campaign steps in order
-    // Per TDD: Use lad_dev schema and step_order column (fallback to order if step_order doesn't exist)
+    // Per TDD: Use lad_dev schema and retrieve steps with proper column handling
     let stepsResult;
-    try {
-      // First try with step_order and step_type, aliasing for compatibility
-      stepsResult = await pool.query(
-        `SELECT *, step_type as type FROM ${schema}.campaign_steps 
-         WHERE campaign_id = $1 AND tenant_id = $2
-         ORDER BY step_order ASC`,
-        [campaignId, tenantId]
-      );
-    } catch (error) {
-      // If step_order or step_type columns don't exist, try with order and type
-      if (error.message && (error.message.includes('step_order') || error.message.includes('step_type'))) {
-        try {
-          stepsResult = await pool.query(
-            `SELECT * FROM ${schema}.campaign_steps 
-             WHERE campaign_id = $1 AND tenant_id = $2
-             ORDER BY "order" ASC`,
-            [campaignId, tenantId]
-          );
-        } catch (orderError) {
-          // If order also fails, try without ordering
-          if (orderError.message && orderError.message.includes('order')) {
-            stepsResult = await pool.query(
-              `SELECT * FROM ${schema}.campaign_steps 
-               WHERE campaign_id = $1 AND tenant_id = $2`,
-              [campaignId, tenantId]
-            );
-          } else {
-            throw orderError;
-          }
-        }
-      } else {
-        throw error;
+    
+    // Try multiple column name combinations
+    const tryQueries = [
+      // Try 1: step_type and step_order columns (newest schema)
+      {
+        query: `SELECT id, tenant_id, campaign_id, step_type as type, step_order as "order", title, description, config, is_deleted, created_at, updated_at
+                FROM ${schema}.campaign_steps 
+                WHERE campaign_id = $1 AND tenant_id = $2
+                ORDER BY step_order ASC`,
+        name: 'step_type/step_order'
+      },
+      // Try 2: type and order columns (older schema)
+      {
+        query: `SELECT id, tenant_id, campaign_id, type, "order", title, description, config, is_deleted, created_at, updated_at
+                FROM ${schema}.campaign_steps 
+                WHERE campaign_id = $1 AND tenant_id = $2
+                ORDER BY "order" ASC`,
+        name: 'type/order'
+      },
+      // Try 3: Just select all and let JavaScript handle it
+      {
+        query: `SELECT * FROM ${schema}.campaign_steps 
+                WHERE campaign_id = $1 AND tenant_id = $2`,
+        name: 'SELECT *'
       }
+    ];
+    
+    let lastError = null;
+    for (const attempt of tryQueries) {
+      try {
+        logger.info('[CampaignProcessor] Attempting step query', { 
+          campaignId,
+          attempt: attempt.name 
+        });
+        
+        stepsResult = await pool.query(attempt.query, [campaignId, tenantId]);
+        logger.info('[CampaignProcessor] Step query succeeded', {
+          campaignId,
+          attempt: attempt.name,
+          rowsFound: stepsResult.rows.length
+        });
+        break; // Success, exit loop
+      } catch (error) {
+        lastError = error;
+        logger.debug('[CampaignProcessor] Step query attempt failed', {
+          attempt: attempt.name,
+          error: error.message
+        });
+        // Continue to next attempt
+      }
+    }
+    
+    // If all queries failed, throw the last error
+    if (!stepsResult) {
+      throw new Error(`Could not retrieve campaign steps: ${lastError?.message || 'Unknown error'}`);
     }
     const steps = stepsResult.rows;
     
     logger.info('[CampaignProcessor] Steps retrieved', { 
       campaignId, 
+      tenantId,
       stepsCount: steps.length,
-      stepTypes: steps.map(s => s.step_type || s.type)
+      stepTypes: steps.map(s => s.step_type || s.type),
+      queryParamsUsed: { campaignId, tenantId}
     });
     
     if (steps.length === 0) {
-      // Debug: Check if steps exist with different tenant_id
+      // Debug: Check if steps exist with different tenant_id or campaign_id
       try {
-        const debugResult = await pool.query(
-          `SELECT COUNT(*) as count, tenant_id FROM ${schema}.campaign_steps WHERE campaign_id = $1 GROUP BY tenant_id`,
+        // Check if there are ANY steps for this campaign at all (regardless of tenant)
+        const allStepsResult = await pool.query(
+          `SELECT id, campaign_id, tenant_id, step_type, type, title FROM ${schema}.campaign_steps WHERE campaign_id = $1 LIMIT 5`,
           [campaignId]
         );
-        if (debugResult.rows.length > 0) {
-        }
+        logger.info('[CampaignProcessor] Debug - All steps for campaign (any tenant)', {
+          campaignId,
+          foundSteps: allStepsResult.rows.length,
+          steps: allStepsResult.rows.map(s => ({ id: s.id, tenant_id: s.tenant_id, type: s.step_type || s.type, title: s.title }))
+        });
+        
+        // Also check by tenant_id what we have
+        const tenantStepsResult = await pool.query(
+          `SELECT id, campaign_id, tenant_id FROM ${schema}.campaign_steps WHERE tenant_id = $1 LIMIT 3`,
+          [tenantId]
+        );
+        logger.info('[CampaignProcessor] Debug - Steps for this tenant', {
+          tenantId,
+          stepCount: tenantStepsResult.rows.length
+        });
       } catch (debugError) {
-        // Ignore debug errors
+        logger.warn('[CampaignProcessor] Debug query failed', { error: debugError.message });
       }
       return { success: false, skipped: true, reason: 'Campaign has no steps', campaignId, leadCount: 0 };
     }

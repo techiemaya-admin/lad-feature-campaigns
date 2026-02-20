@@ -408,5 +408,235 @@ class CampaignLeadRepository {
     
     return result.rows[0];
   }
+
+  /**
+   * Find enriched leads from OTHER tenants by matching email, name, or Apollo person ID
+   * Cross-tenant enrichment caching strategy:
+   * STEP 1: Search OTHER tenants for enriched leads
+   * STEP 2: If found, check current tenant's previous campaigns and filter out matches
+   * STEP 3: Return only unmatched enriched leads (Apollo API will handle the rest)
+   * 
+   * @param {string} email - Email to search for
+   * @param {string} name - Full name to search for
+   * @param {string} companyName - Company name to search for
+   * @param {string} apolloPersonId - Apollo person ID to search for
+   * @param {string} currentTenantId - Current tenant ID to exclude
+   * @returns {Array} Array of enriched leads from other tenants (filtered to exclude current tenant matches)
+   */
+  static async findEnrichedLeadFromOtherTenants(email, name, companyName, apolloPersonId, currentTenantId, req = null) {
+    const logger = require('../../../core/utils/logger');
+    const schema = getSchema(req);
+    
+    try {
+      // STEP 1: Search OTHER tenants for enriched leads
+      const otherTenantResults = await this._searchEnrichedLeads(
+        schema,
+        currentTenantId,
+        email,
+        name,
+        companyName,
+        apolloPersonId,
+        false  // searchCurrentTenant = false (search OTHER tenants)
+      );
+      
+      if (!otherTenantResults || otherTenantResults.length === 0) {
+        logger.info('[CampaignLeadRepository] No enriched leads found in Database (will use Apollo API)', {
+          email: email ? email.substring(0, 20) + '...' : null,
+          name: name || null,
+          companyName: companyName || null,
+          currentTenantId: currentTenantId.substring(0, 8) + '...'
+        });
+        return [];
+      }
+      
+      logger.info('[CampaignLeadRepository] Found enriched leads in Database (cross-tenant cache HIT)', {
+        email: email ? email.substring(0, 20) + '...' : null,
+        resultsFound: otherTenantResults.length,
+        currentTenantId: currentTenantId.substring(0, 8) + '...'
+      });
+      
+      // STEP 2: Check current tenant's previous campaigns and filter out matches
+      const matchedLeads = [];
+      const unmatchedLeads = [];
+      
+      for (const cachedLead of otherTenantResults) {
+        const existingTenantLead = await this.checkIfTenantHasLead(
+          cachedLead.enriched_email,
+          cachedLead.snapshot?.first_name ? `${cachedLead.snapshot.first_name} ${cachedLead.snapshot.last_name || ''}`.trim() : null,
+          cachedLead.snapshot?.company_name,
+          currentTenantId,
+          req
+        );
+        
+        if (existingTenantLead) {
+          // This lead already exists in current tenant - SKIP
+          matchedLeads.push({
+            cachedLead: cachedLead,
+            existingLeadId: existingTenantLead.id,
+            reason: 'already_exists_in_current_tenant'
+          });
+        } else {
+          // This lead is NOT in current tenant - can be reused from cache
+          unmatchedLeads.push(cachedLead);
+        }
+      }
+      
+      logger.info('[CampaignLeadRepository] Filtered cross-tenant enriched leads', {
+        foundInOtherTenants: otherTenantResults.length,
+        alreadyInCurrentTenant: matchedLeads.length,
+        availableForReuse: unmatchedLeads.length,
+        currentTenantId: currentTenantId.substring(0, 8) + '...'
+      });
+      
+      // Return only unmatched leads (that can be reused)
+      return unmatchedLeads;
+    } catch (error) {
+      logger.error('[CampaignLeadRepository] Error finding enriched leads from other tenants', {
+        error: error.message,
+        email: email ? email.substring(0, 20) + '...' : null
+      });
+      return [];
+    }
+  }
+
+  /**
+   * Helper method to search for enriched leads
+   * @param {string} schema - Database schema
+   * @param {string} currentTenantId - Current tenant ID
+   * @param {string} email - Email to search
+   * @param {string} name - Name to search
+   * @param {string} companyName - Company name to search
+   * @param {string} apolloPersonId - Apollo person ID to search
+   * @param {boolean} searchCurrentTenant - Search current tenant (true) or other tenants (false)
+   * @returns {Promise<Array>} Enriched leads found
+   */
+  static async _searchEnrichedLeads(schema, currentTenantId, email, name, companyName, apolloPersonId, searchCurrentTenant) {
+    let query = `
+      SELECT 
+        id,
+        tenant_id,
+        lead_id,
+        enriched_email,
+        enriched_linkedin_url,
+        snapshot,
+        lead_data,
+        enriched_at
+      FROM ${schema}.campaign_leads
+      WHERE 
+        ${searchCurrentTenant ? `tenant_id = $1` : `tenant_id != $1`}
+        AND is_deleted = FALSE
+        AND enriched_email IS NOT NULL 
+        AND enriched_linkedin_url IS NOT NULL
+        AND enriched_at IS NOT NULL
+        AND (
+    `;
+    
+    const params = [currentTenantId];
+    let paramIndex = 2;
+    const conditions = [];
+    
+    // Priority 1: Search by Apollo person ID (most reliable unique identifier)
+    if (apolloPersonId) {
+      conditions.push(`lead_data->>'apollo_person_id' = $${paramIndex}`);
+      params.push(String(apolloPersonId));
+      paramIndex++;
+    }
+    
+    // Priority 2: Search by exact email match
+    if (email && email.trim()) {
+      conditions.push(`enriched_email = $${paramIndex}`);
+      params.push(email.toLowerCase().trim());
+      paramIndex++;
+    }
+    
+    // Priority 3: Search by first name (more lenient) + company
+    if (name && name.trim() && companyName && companyName.trim()) {
+      const firstName = name.split(' ')[0];
+      conditions.push(`(
+        snapshot->>'first_name' ILIKE $${paramIndex}
+        AND snapshot->>'company_name' ILIKE $${paramIndex + 1}
+      )`);
+      params.push(`%${firstName}%`, `%${companyName}%`);
+      paramIndex += 2;
+    }
+    
+    if (conditions.length === 0) {
+      return [];
+    }
+    
+    query += conditions.join(' OR ');
+    query += `)
+      ORDER BY 
+        CASE 
+          WHEN lead_data->>'apollo_person_id' IS NOT NULL THEN 0  -- Prioritize Apollo ID matches
+          WHEN enriched_email IS NOT NULL THEN 1                   -- Then email matches
+          ELSE 2                                                    -- Then name/company matches
+        END,
+        enriched_at DESC
+      LIMIT 5
+    `;
+    
+    const result = await pool.query(query, params);
+    return result.rows;
+  }
+
+  /**
+   * Check if current tenant already has a lead with matching email/name/company
+   * Used to avoid duplicating leads across campaigns
+   * @param {string} email - Email to check
+   * @param {string} name - Name to check
+   * @param {string} companyName - Company name to check
+   * @param {string} tenantId - Tenant ID
+   * @returns {Object|null} Existing lead or null
+   */
+  static async checkIfTenantHasLead(email, name, companyName, tenantId, req = null) {
+    const logger = require('../../../core/utils/logger');
+    const schema = getSchema(req);
+    
+    try {
+      let query = `
+        SELECT id, lead_id, enriched_email, enriched_linkedin_url
+        FROM ${schema}.campaign_leads
+        WHERE tenant_id = $1 AND is_deleted = FALSE AND (
+      `;
+      
+      const params = [tenantId];
+      let paramIndex = 2;
+      const conditions = [];
+      
+      if (email && email.trim()) {
+        conditions.push(`enriched_email = $${paramIndex}`);
+        params.push(email.toLowerCase().trim());
+        paramIndex++;
+      }
+      
+      if (name && name.trim() && companyName && companyName.trim()) {
+        const firstName = name.split(' ')[0];
+        const lastName = name.split(' ')[name.split(' ').length - 1];
+        conditions.push(`(
+          (snapshot->>'first_name' ILIKE $${paramIndex} OR snapshot->>'last_name' ILIKE $${paramIndex + 1})
+          AND snapshot->>'company_name' ILIKE $${paramIndex + 2}
+        )`);
+        params.push(`%${firstName}%`, `%${lastName}%`, `%${companyName}%`);
+        paramIndex += 3;
+      }
+      
+      if (conditions.length === 0) {
+        return null;
+      }
+      
+      query += conditions.join(' OR ');
+      query += `) LIMIT 1`;
+      
+      const result = await pool.query(query, params);
+      return result.rows[0] || null;
+    } catch (error) {
+      logger.error('[CampaignLeadRepository] Error checking if tenant has lead', {
+        error: error.message,
+        email: email ? email.substring(0, 20) + '...' : null
+      });
+      return null;
+    }
+  }
 }
 module.exports = CampaignLeadRepository;

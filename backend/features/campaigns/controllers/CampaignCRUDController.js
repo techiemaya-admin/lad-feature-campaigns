@@ -7,7 +7,7 @@ const CampaignStepModel = require('../models/CampaignStepModel');
 const CampaignExecutionService = require('../services/CampaignExecutionService');
 const { campaignStatsTracker } = require('../services/campaignStatsTracker');
 const { campaignEventsService } = require('../services/campaignEventsService');
-const { pool } = require('../../../shared/database/connection');
+const { pool, query } = require('../../../shared/database/connection');
 const logger = require('../../../core/utils/logger');
 const AIMessageDataService = require('../services/AIMessageDataFetcher');
 const CampaignScheduleUtil = require('../utils/campaignScheduleUtil');
@@ -37,7 +37,7 @@ class CampaignCRUDController {
             // Get real-time stats from campaign_analytics table
             let stats;
             try {
-              stats = await campaignStatsTracker.getStats(campaign.id);
+              stats = await campaignStatsTracker.getStats(campaign.id, tenantId);
             } catch (statsError) {
               stats = {
                 leads_count: parseInt(campaign.leads_count) || 0,
@@ -119,6 +119,81 @@ class CampaignCRUDController {
     try {
       const tenantId = req.user.tenantId;
       const stats = await CampaignModel.getStats(tenantId);
+      
+      // Fetch LinkedIn rate limits (aggregate across all campaigns)
+      let linkedinRateLimits = null;
+      try {
+        const limitQuery = `
+          SELECT 
+            MAX(default_daily_limit) as max_daily_limit,
+            SUM(default_daily_limit) as total_daily_limit,
+            MAX(default_weekly_limit) as max_weekly_limit,
+            SUM(default_weekly_limit) as total_weekly_limit,
+            COUNT(*) as account_count
+          FROM social_linkedin_accounts
+          WHERE tenant_id = $1 AND is_deleted = FALSE
+        `;
+        const limitResult = await query(limitQuery, [tenantId]);
+        const limitRow = limitResult.rows[0];
+        
+        // Get 7-day breakdown
+        const sevenDaysQuery = `
+          SELECT 
+            COUNT(*) as sent_last_7_days,
+            DATE(created_at) as date
+          FROM campaign_analytics
+          WHERE 
+            tenant_id = $1 
+            AND action_type IN ('CONNECTION_SENT', 'CONNECTION_SENT_WITH_MESSAGE')
+            AND status = 'success'
+            AND created_at >= NOW() - INTERVAL '7 days'
+          GROUP BY DATE(created_at)
+          ORDER BY DATE(created_at) ASC
+        `;
+        const sevenDaysResult = await query(sevenDaysQuery, [tenantId]);
+        
+        const dailyBreakdown = sevenDaysResult.rows.map(row => ({
+          date: row.date,
+          sent: parseInt(row.sent_last_7_days)
+        }));
+        
+        const totalSevenDaysQuery = `
+          SELECT COUNT(*) as total_sent
+          FROM campaign_analytics
+          WHERE 
+            tenant_id = $1 
+            AND action_type IN ('CONNECTION_SENT', 'CONNECTION_SENT_WITH_MESSAGE')
+            AND status = 'success'
+            AND created_at >= NOW() - INTERVAL '7 days'
+        `;
+        const totalSevenDaysResult = await query(totalSevenDaysQuery, [tenantId]);
+        const totalSentLast7Days = parseInt(totalSevenDaysResult.rows[0].total_sent) || 0;
+        
+        linkedinRateLimits = {
+          daily: {
+            max: parseInt(limitRow.max_daily_limit) || 0,
+            total: parseInt(limitRow.total_daily_limit) || 0,
+            account_count: parseInt(limitRow.account_count) || 0
+          },
+          weekly: {
+            max: parseInt(limitRow.max_weekly_limit) || 0,
+            total: parseInt(limitRow.total_weekly_limit) || 0
+          },
+          usage: {
+            sent_last_7_days: totalSentLast7Days,
+            daily_breakdown: dailyBreakdown,
+            weekly_percentage: limitRow.total_weekly_limit > 0 
+              ? ((totalSentLast7Days / limitRow.total_weekly_limit) * 100).toFixed(1)
+              : 0
+          }
+        };
+      } catch (err) {
+        logger.warn('[getCampaignStats] Failed to fetch LinkedIn rate limits', {
+          tenantId,
+          error: err.message
+        });
+      }
+      
       // Handle empty results from database (mock DB or no data)
       if (!stats) {
         return res.json({
@@ -130,7 +205,8 @@ class CampaignCRUDController {
             total_sent: 0,
             total_delivered: 0,
             total_connected: 0,
-            total_replied: 0
+            total_replied: 0,
+            linkedin_rate_limits: linkedinRateLimits
           }
         });
       }
@@ -143,7 +219,8 @@ class CampaignCRUDController {
           total_sent: parseInt(stats.total_sent) || 0,
           total_delivered: parseInt(stats.total_delivered) || 0,
           total_connected: parseInt(stats.total_connected) || 0,
-          total_replied: parseInt(stats.total_replied) || 0
+          total_replied: parseInt(stats.total_replied) || 0,
+          linkedin_rate_limits: linkedinRateLimits
         }
       });
     } catch (error) {
@@ -371,16 +448,24 @@ class CampaignCRUDController {
       if (steps && Array.isArray(steps) && steps.length > 0) {
         try {
           // Map step_type to type and step_order to order for database compatibility
-          const mappedSteps = steps.map(step => ({
-            ...step,
-            type: step.step_type || step.type,
-            order: step.step_order ?? step.order ?? 0
-          }));
+          const mappedSteps = steps.map(step => {
+            // Generate title from type if not provided
+            const stepType = step.step_type || step.type;
+            const title = step.title || this._generateStepTitle(stepType, step.config);
+            
+            return {
+              ...step,
+              type: stepType,
+              order: step.step_order ?? step.order ?? 0,
+              title: title
+            };
+          });
           
           logger.debug('[CampaignCreate] Creating campaign steps', { 
             campaignId: campaign.id,
             stepCount: mappedSteps.length,
-            stepTypes: mappedSteps.map(s => s.type)
+            stepTypes: mappedSteps.map(s => s.type),
+            stepTitles: mappedSteps.map(s => s.title)
           });
           createdSteps = await CampaignStepModel.bulkCreate(campaign.id, tenantId, mappedSteps);
           logger.info('[CampaignCreate] Steps created successfully', { 
@@ -481,7 +566,7 @@ class CampaignCRUDController {
             // ✅ ALWAYS emit SSE event after processCampaign completes (whether success, skipped, or error)
             // This ensures UI updates even if campaign was skipped or had no leads
             try {
-              const stats = await campaignStatsTracker.getStats(campaign.id);
+              const stats = await campaignStatsTracker.getStats(campaign.id, tenantId);
               await campaignEventsService.publishCampaignListUpdate(campaign.id, stats);
 
             } catch (sseError) {
@@ -496,7 +581,7 @@ class CampaignCRUDController {
             });
 
             // Even on error, try to emit SSE so UI shows current state
-            campaignStatsTracker.getStats(campaign.id)
+            campaignStatsTracker.getStats(campaign.id, tenantId)
               .then(stats => {
                 campaignEventsService.publishCampaignListUpdate(campaign.id, stats);
               })
@@ -505,7 +590,7 @@ class CampaignCRUDController {
       } else {
         // If campaign is NOT running, emit SSE immediately (no leads to wait for)
         try {
-          const stats = await campaignStatsTracker.getStats(campaign.id);
+          const stats = await campaignStatsTracker.getStats(campaign.id, tenantId);
           await campaignEventsService.publishCampaignListUpdate(campaign.id, stats);
         } catch (sseError) {
         }
@@ -582,5 +667,41 @@ class CampaignCRUDController {
       });
     }
   }
-}
+  /**
+   * Generate a human-readable title for a campaign step based on type and config
+   * @private
+   */
+  static _generateStepTitle(type, config = {}) {
+    const typeMap = {
+      'lead_generation': 'Lead Generation',
+      'enrichment': 'Lead Enrichment',
+      'email': 'Email Campaign',
+      'linkedin_message': 'LinkedIn Messaging',
+      'linkedin_outreach': 'LinkedIn Outreach',
+      'prospecting': 'Prospecting',
+      'filtering': 'Lead Filtering',
+      'validation': 'Data Validation'
+    };
+
+    let baseTitle = typeMap[type] || `${type.charAt(0).toUpperCase()}${type.slice(1).replace(/_/g, ' ')}`;
+    
+    // Add filter details if available
+    if (config && config.filters) {
+      const filterParts = [];
+      if (config.filters.industries) {
+        filterParts.push(`${Array.isArray(config.filters.industries) ? config.filters.industries.join(', ') : config.filters.industries}`);
+      }
+      if (config.filters.person_titles) {
+        filterParts.push(`${Array.isArray(config.filters.person_titles) ? config.filters.person_titles.join(', ') : config.filters.person_titles}`);
+      }
+      if (config.filters.organization_locations) {
+        filterParts.push(`${Array.isArray(config.filters.organization_locations) ? config.filters.organization_locations.join(', ') : config.filters.organization_locations}`);
+      }
+      if (filterParts.length > 0) {
+        baseTitle += ` (${filterParts.join(', ')})`;
+      }
+    }
+
+    return baseTitle;
+  }}
 module.exports = CampaignCRUDController;

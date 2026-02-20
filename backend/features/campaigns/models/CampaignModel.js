@@ -343,39 +343,53 @@ class CampaignModel {
   }
   /**
    * Get campaign statistics
+   * Aggregates stats across ALL campaigns for a tenant from campaign_analytics table
    */
   static async getStats(tenantId, req = null) {
     const schema = getSchema(req);
     const query = `
       SELECT
-        COUNT(DISTINCT c.id) as total_campaigns,
-        COUNT(DISTINCT CASE WHEN c.status = 'running' THEN c.id END) as active_campaigns,
-        COUNT(DISTINCT cl.id) as total_leads,
-        COUNT(DISTINCT CASE WHEN cla.status = 'sent' THEN cla.id END) as total_sent,
-        COUNT(DISTINCT CASE WHEN cla.status = 'delivered' THEN cla.id END) as total_delivered,
-        COUNT(DISTINCT CASE WHEN cla.status = 'connected' THEN cla.id END) as total_connected,
-        COUNT(DISTINCT CASE WHEN cla.status = 'replied' THEN cla.id END) as total_replied
+        COUNT(DISTINCT c.id)::INTEGER as total_campaigns,
+        COUNT(DISTINCT CASE WHEN c.status = 'running' THEN c.id END)::INTEGER as active_campaigns,
+        COUNT(DISTINCT cl.id)::INTEGER as total_leads,
+        COUNT(DISTINCT CASE WHEN ca.action_type = 'CONNECTION_SENT' AND ca.status = 'success' THEN ca.id END)::INTEGER as total_sent,
+        COUNT(DISTINCT CASE WHEN ca.action_type IN ('MESSAGE_SENT', 'EMAIL_SENT', 'WHATSAPP_SENT') AND ca.status = 'success' THEN ca.id END)::INTEGER as total_delivered,
+        COUNT(DISTINCT CASE WHEN ca.action_type = 'CONNECTION_ACCEPTED' AND ca.status = 'success' THEN ca.id END)::INTEGER as total_connected,
+        COUNT(DISTINCT CASE WHEN ca.action_type = 'REPLY_RECEIVED' AND ca.status = 'success' THEN ca.id END)::INTEGER as total_replied
       FROM ${schema}.campaigns c
       LEFT JOIN ${schema}.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1
-      LEFT JOIN ${schema}.campaign_lead_activities cla ON cl.id = cla.campaign_lead_id AND cla.tenant_id = $1
+      LEFT JOIN ${schema}.campaign_analytics ca ON ca.campaign_id = c.id AND ca.tenant_id = $1
       WHERE c.tenant_id = $1 AND c.is_deleted = FALSE
     `;
     try {
       const result = await pool.query(query, [tenantId]);
-      return result.rows[0];
+      const row = result.rows[0];
+      
+      // Calculate average rates if we have data
+      const totalLeads = row?.total_leads || 0;
+      const totalConnected = row?.total_connected || 0;
+      const totalReplied = row?.total_replied || 0;
+      
+      return {
+        ...row,
+        avg_connection_rate: totalLeads > 0 ? Math.round((totalConnected / totalLeads) * 100) : 0,
+        avg_reply_rate: totalLeads > 0 ? Math.round((totalReplied / totalLeads) * 100) : 0
+      };
     } catch (error) {
-      // If activities table doesn't exist, fallback to simpler query
+      // If campaign_analytics table doesn't exist, fallback to simpler query
       const errorMsg = error.message?.toLowerCase() || '';
-      if (errorMsg.includes('campaign_lead_activities') || errorMsg.includes('does not exist') || errorMsg.includes('relation') || errorMsg.includes('undefined table')) {
+      if (errorMsg.includes('campaign_analytics') || errorMsg.includes('does not exist') || errorMsg.includes('relation') || errorMsg.includes('undefined table')) {
         const fallbackQuery = `
           SELECT
-            COUNT(DISTINCT c.id) as total_campaigns,
-            COUNT(DISTINCT CASE WHEN c.status = 'running' THEN c.id END) as active_campaigns,
-            COUNT(DISTINCT cl.id) as total_leads,
+            COUNT(DISTINCT c.id)::INTEGER as total_campaigns,
+            COUNT(DISTINCT CASE WHEN c.status = 'running' THEN c.id END)::INTEGER as active_campaigns,
+            COUNT(DISTINCT cl.id)::INTEGER as total_leads,
             0 as total_sent,
             0 as total_delivered,
             0 as total_connected,
-            0 as total_replied
+            0 as total_replied,
+            0::INTEGER as avg_connection_rate,
+            0::INTEGER as avg_reply_rate
           FROM ${schema}.campaigns c
           LEFT JOIN ${schema}.campaign_leads cl ON c.id = cl.campaign_id AND cl.tenant_id = $1
           WHERE c.tenant_id = $1 AND c.is_deleted = FALSE

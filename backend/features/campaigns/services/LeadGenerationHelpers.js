@@ -115,16 +115,38 @@ async function saveLeadToCampaign(campaignId, tenantId, leadId, snapshot, leadDa
   const companyName = leadData.company_name || null;
   const title = leadData.title || null;
   const phone = leadData.phone || null;
+  const apolloPersonId = leadData.apollo_person_id || leadData.id || null;
   
+  // LAD ARCHITECTURE FIX: Use ON CONFLICT DO NOTHING to prevent race condition duplicates
+  // The unique index on (tenant_id, campaign_id, lead_data->>'apollo_person_id') prevents duplicates
   const insertResult = await pool.query(
     `INSERT INTO ${schema}.campaign_leads 
      (tenant_id, campaign_id, lead_id, status, snapshot, lead_data, 
       first_name, last_name, email, linkedin_url, company_name, title, phone, created_at)
      VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP)
+    ON CONFLICT DO NOTHING
      RETURNING id`,
     [tenantId, campaignId, leadId, snapshot, JSON.stringify(leadData),
      firstName, lastName, email, linkedinUrl, companyName, title, phone]
   );
+  
+  if (insertResult.rows.length === 0) {
+    // Duplicate detected by unique constraint - fetch existing record
+    logger.info('[saveLeadToCampaign] Duplicate prevented by unique constraint', {
+      apolloPersonId,
+      campaignId
+    });
+    const existingResult = await pool.query(
+      `SELECT id FROM ${schema}.campaign_leads 
+       WHERE tenant_id = $1 AND campaign_id = $2 
+         AND (lead_data->>'apollo_person_id' = $3 OR lead_data->>'id' = $3)
+         AND is_deleted = FALSE
+       LIMIT 1`,
+      [tenantId, campaignId, apolloPersonId]
+    );
+    return existingResult.rows[0]?.id;
+  }
+  
   return insertResult.rows[0].id;
 }
 /**
