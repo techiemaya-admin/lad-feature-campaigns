@@ -150,19 +150,34 @@ class CampaignStatsTracker {
    * @param {string} campaignId 
    * @returns {object} Campaign stats with platform_metrics
    */
-  async getStats(campaignId) {
+  async getStats(campaignId, tenantId = null) {
     const schema = getSchema(null);
     
+    // Get tenant_id from campaign if not provided
+    let campaignTenantId = tenantId;
+    if (!campaignTenantId) {
+      try {
+        const campaignResult = await pool.query(
+          `SELECT tenant_id FROM ${schema}.campaigns WHERE id = $1`,
+          [campaignId]
+        );
+        campaignTenantId = campaignResult.rows[0]?.tenant_id;
+      } catch (err) {
+        logger.warn('[CampaignStatsTracker] Failed to get campaign tenant_id', { error: err.message });
+      }
+    }
+    
     try {
-      // Get total leads count from campaign_leads table
+      // Get total leads count from campaign_leads table (with tenant_id filter)
       const leadsResult = await pool.query(
-        `SELECT COUNT(*) as count FROM ${schema}.campaign_leads WHERE campaign_id = $1`,
-        [campaignId]
+        `SELECT COUNT(*) as count FROM ${schema}.campaign_leads WHERE campaign_id = $1 AND tenant_id = $2`,
+        [campaignId, campaignTenantId]
       );
       const totalLeads = parseInt(leadsResult.rows[0]?.count || 0);
       
       // Get stats from campaign_analytics with platform breakdown
       // ✅ Only count successful actions (status = 'success')
+      // ✅ Filter by both campaign_id AND tenant_id for multi-tenant safety
       let analyticsStats = [];
       
       // Try campaign_analytics first
@@ -170,9 +185,9 @@ class CampaignStatsTracker {
         const analyticsResult = await pool.query(
           `SELECT action_type, platform, COUNT(*) as count 
            FROM ${schema}.campaign_analytics 
-           WHERE campaign_id = $1 AND status = $2 
+           WHERE campaign_id = $1 AND tenant_id = $2 AND status = $3 
            GROUP BY action_type, platform`,
-          [campaignId, 'success']
+          [campaignId, campaignTenantId, 'success']
         );
         analyticsStats = analyticsResult.rows;
       } catch (err) {
@@ -185,9 +200,9 @@ class CampaignStatsTracker {
           const activitiesResult = await pool.query(
             `SELECT action_type, channel as platform, COUNT(*) as count 
              FROM ${schema}.campaign_lead_activities 
-             WHERE campaign_id = $1 AND status = $2 AND is_deleted = false
+             WHERE campaign_id = $1 AND tenant_id = $2 AND status = $3 AND is_deleted = false
              GROUP BY action_type, channel`,
-            [campaignId, 'delivered']
+            [campaignId, campaignTenantId, 'delivered']
           );
           
           // Map activity types to analytics action types

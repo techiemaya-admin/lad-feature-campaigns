@@ -79,7 +79,7 @@ backend/features/<feature-key>/middleware/auth.js
 core/middleware/auth.js
 
 # Local development files (not for production)
-package.json
+# package.json  # Now tracking backend/package.json in feature branch
 
 # Documentation files
 *.md

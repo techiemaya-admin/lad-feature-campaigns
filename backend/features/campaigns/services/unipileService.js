@@ -55,6 +55,9 @@ class UnipileService {
     async sendLinkedInMessage(employee, messageText, accountId, options = {}) {
         return this.message.sendLinkedInMessage(employee, messageText, accountId, options);
     }
+    async sendFirstLinkedInMessage(accountId, recipientProviderId, messageText, options = {}) {
+        return this.message.sendFirstLinkedInMessage(accountId, recipientProviderId, messageText, options);
+    }
     // Profile service methods
     async followLinkedInProfile(employee, accountId) {
         return this.profile.followLinkedInProfile(employee, accountId);

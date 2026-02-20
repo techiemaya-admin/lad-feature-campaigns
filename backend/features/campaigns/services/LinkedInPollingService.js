@@ -623,9 +623,9 @@ class LinkedInPollingService {
         originalAccountId: senderAccountId
       });
       
-      // Step 1: Get the original account and its user_id
+      // Step 1: Get the original account info (may be inactive)
       const originalAccountQuery = `
-        SELECT id, account_name, provider_account_id, status, is_deleted, user_id
+        SELECT id, account_name, provider_account_id, status, is_deleted, user_id, metadata
         FROM ${schema}.social_linkedin_accounts
         WHERE tenant_id = $1
           AND provider_account_id = $2
@@ -646,75 +646,102 @@ class LinkedInPollingService {
       
       const originalAccount = originalAccountResult.rows[0];
       const userId = originalAccount.user_id;
+      const profileUrl = originalAccount.metadata?.profile_url;
       
       logger.info('[LinkedInPolling] Original account found', {
         accountName: originalAccount.account_name,
         userId: userId,
+        profileUrl: profileUrl,
         status: originalAccount.status,
         isDeleted: originalAccount.is_deleted
       });
       
-      // Step 2: Check if original account is active
+      // ⚠️ CRITICAL FIX: Account may have been reconnected with NEW provider_account_id
+      // Must check if account is active, and if not, find the reconnected version by profile_url
+      
       let accountData;
       let actualSenderAccountId;
       
       if (originalAccount.status === 'active' && originalAccount.is_deleted === false) {
-        // ✅ Original account is active - use it
+        // ✅ Original account is still active - use it
         accountData = originalAccount;
         actualSenderAccountId = senderAccountId;
         
-        logger.info('[LinkedInPolling] Using original account - it is active', {
+        logger.info('[LinkedInPolling] Using original account (still active)', {
           accountName: accountData.account_name,
           provider_account_id: actualSenderAccountId
         });
-      } else {
-        // ⚠️ Original account is NOT active - find another active account for same user_id
-        logger.warn('[LinkedInPolling] Original account is not active - searching for alternate active account', {
+      } else if (profileUrl) {
+        // ⚠️ Original account inactive - search for RECONNECTED version of SAME LinkedIn profile
+        logger.warn('[LinkedInPolling] Original account inactive - searching for reconnected version', {
           originalAccountName: originalAccount.account_name,
           originalStatus: originalAccount.status,
+          originalProviderId: senderAccountId,
+          profileUrl: profileUrl,
           userId: userId
         });
         
-        const alternateAccountQuery = `
-          SELECT id, account_name, provider_account_id, status, is_deleted, user_id
+        // Find active account with same profile_url AND same user_id
+        const reconnectedAccountQuery = `
+          SELECT id, account_name, provider_account_id, status, is_deleted, user_id, metadata
           FROM ${schema}.social_linkedin_accounts
           WHERE tenant_id = $1
             AND user_id = $2
             AND provider = 'unipile'
             AND status = 'active'
             AND is_deleted = false
+            AND metadata->>'profile_url' = $3
             AND provider_account_id IS NOT NULL
           ORDER BY created_at DESC
           LIMIT 1
         `;
         
-        const alternateAccountResult = await pool.query(alternateAccountQuery, [tenantId, userId]);
+        const reconnectedResult = await pool.query(reconnectedAccountQuery, [tenantId, userId, profileUrl]);
         
-        if (alternateAccountResult.rows.length === 0) {
-          logger.error('[LinkedInPolling] No active account found for this user', {
+        if (reconnectedResult.rows.length === 0) {
+          logger.error('[LinkedInPolling] SAME LinkedIn account not reconnected yet', {
             campaignId,
             leadId,
             tenantId,
             userId: userId,
+            profileUrl: profileUrl,
             originalAccountName: originalAccount.account_name,
             originalStatus: originalAccount.status
           });
           return { 
             success: false, 
-            error: `No active LinkedIn account found for user. Original account '${originalAccount.account_name}' is ${originalAccount.status}` 
+            error: `LinkedIn account '${originalAccount.account_name}' is ${originalAccount.status}. Please reconnect this LinkedIn profile to send messages.`,
+            requiresReconnection: true,
+            profileUrl: profileUrl
           };
         }
         
-        accountData = alternateAccountResult.rows[0];
+        accountData = reconnectedResult.rows[0];
         actualSenderAccountId = accountData.provider_account_id;
         
-        logger.info('[LinkedInPolling] ✅ Found alternate active account - using it instead', {
+        logger.info('[LinkedInPolling] ✅ Found RECONNECTED version of same LinkedIn account!', {
           originalAccount: originalAccount.account_name,
+          originalProviderId: senderAccountId,
           originalStatus: originalAccount.status,
-          alternateAccount: accountData.account_name,
-          alternateStatus: accountData.status,
-          provider_account_id: actualSenderAccountId
+          reconnectedAccount: accountData.account_name,
+          reconnectedProviderId: actualSenderAccountId,
+          reconnectedStatus: accountData.status,
+          profileUrl: profileUrl,
+          message: 'Using reconnected account with NEW provider_account_id'
         });
+      } else {
+        // No profile_url in metadata - cannot find reconnected account
+        logger.error('[LinkedInPolling] Account inactive and no profile_url in metadata', {
+          campaignId,
+          leadId,
+          accountName: originalAccount.account_name,
+          status: originalAccount.status
+        });
+        return {
+          success: false,
+          error: `LinkedIn account '${originalAccount.account_name}' is ${originalAccount.status}. Please reconnect this account.`,
+          requiresReconnection: true
+        };
       }
       
       logger.info('[LinkedInPolling] Account verification passed - starting immediate message sending', {
@@ -725,7 +752,8 @@ class LinkedInPollingService {
         userId: accountData.user_id,
         accountStatus: accountData.status,
         senderAccountId: actualSenderAccountId,
-        usingAlternate: actualSenderAccountId !== senderAccountId
+        isReconnected: actualSenderAccountId !== senderAccountId,
+        profileUrl: accountData.metadata?.profile_url
       });
       
       // Get campaign details and config
@@ -741,15 +769,15 @@ class LinkedInPollingService {
       
       const campaign = campaignResult.rows[0];
       
-      // Check if campaign has a connectionMessage configured
-      if (!campaign.config || !campaign.config.connectionMessage) {
-        logger.info('[LinkedInPolling] No connectionMessage configured in campaign', { campaignId });
-        return { success: false, error: 'No connectionMessage configured' };
+      // Check if campaign has a followupMessage configured (message sent AFTER connection acceptance)
+      if (!campaign.config || !campaign.config.followupMessage) {
+        logger.info('[LinkedInPolling] No followupMessage configured in campaign', { campaignId });
+        return { success: false, error: 'No followupMessage configured' };
       }
       
-      const messageTemplate = campaign.config.connectionMessage;
+      const messageTemplate = campaign.config.followupMessage;
       
-      logger.info('[LinkedInPolling] Found connectionMessage', {
+      logger.info('[LinkedInPolling] Found followupMessage', {
         campaignId,
         messagePreview: messageTemplate.substring(0, 50) + '...'
       });
@@ -875,14 +903,14 @@ class LinkedInPollingService {
           leadId: correctLeadId,
           recipientProviderId,
           accountName: accountData.account_name,
-          senderAccountId: actualSenderAccountId,  // ✅ Active account (original or alternate)
-          usingAlternate: actualSenderAccountId !== senderAccountId,
+          senderAccountId: actualSenderAccountId,  // ✅ Same LinkedIn profile (may have new provider_id if reconnected)
+          isReconnected: actualSenderAccountId !== senderAccountId,
           leadName: leadData.fullname || leadData.name || leadName
         });
         
-        // ✅ SMART: Use actualSenderAccountId (active account for user_id)
+        // ✅ SMART: Use actualSenderAccountId (same LinkedIn profile, handles reconnection)
         result = await unipileService.sendFirstLinkedInMessage(
-          actualSenderAccountId,  // ✅ Active account (automatic failover if original inactive)
+          actualSenderAccountId,  // ✅ Same LinkedIn account (automatically handles new provider_id after reconnection)
           recipientProviderId,
           personalizedMessage,
           { tenantId, campaignId, leadId: correctLeadId }
@@ -903,8 +931,8 @@ class LinkedInPollingService {
           campaignId,
           leadId: correctLeadId,
           accountName: accountData.account_name,
-          senderAccountId: actualSenderAccountId,  // ✅ Active account (original or alternate)
-          usingAlternate: actualSenderAccountId !== senderAccountId,
+          senderAccountId: actualSenderAccountId,  // ✅ Same LinkedIn profile (may have new provider_id if reconnected)
+          isReconnected: actualSenderAccountId !== senderAccountId,
           linkedInUrl
         });
         
@@ -918,11 +946,11 @@ class LinkedInPollingService {
           ...leadData
         };
         
-        // ✅ SMART: Use actualSenderAccountId (active account for user_id)
+        // ✅ SMART: Use actualSenderAccountId (same LinkedIn profile, handles reconnection)
         result = await unipileService.sendLinkedInMessage(
           employee,
           personalizedMessage,
-          actualSenderAccountId,  // ✅ Active account (automatic failover if original inactive)
+          actualSenderAccountId,  // ✅ Same LinkedIn account (automatically handles new provider_id after reconnection)
           { tenantId, campaignId, leadId: correctLeadId }
         );
       }
@@ -937,8 +965,8 @@ class LinkedInPollingService {
         leadName: finalLeadName,
         messageContent: personalizedMessage,
         tenantId: tenantId,
-        accountName: accountData.account_name,  // ✅ Current account name (may be alternate)
-        providerAccountId: actualSenderAccountId,  // ✅ ACTUALLY USED account ID (original or alternate)
+        accountName: accountData.account_name,  // ✅ Current account name (may be reconnected version)
+        providerAccountId: actualSenderAccountId,  // ✅ ACTUALLY USED account ID (may be new ID after reconnection)
         userId: userId,  // ✅ User ID from social_linkedin_accounts
         leadLinkedIn: leadData.linkedin || linkedInUrl
       };

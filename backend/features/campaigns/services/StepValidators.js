@@ -88,8 +88,8 @@ function validateStepConfig(stepType, stepConfig) {
   }
   // Special handling for lead_generation - uses leadGenerationFilters and leads_per_day from campaign config
   if (stepType === 'lead_generation') {
-    // Parse filters if it's a string
-    let filters = stepConfig.leadGenerationFilters;
+    // Parse filters - accept both leadGenerationFilters and filters field names
+    let filters = stepConfig.leadGenerationFilters || stepConfig.filters;
     if (filters && typeof filters === 'string') {
       try {
         filters = JSON.parse(filters);

@@ -9,6 +9,7 @@ const UnipileApolloAdapterService = require('../../apollo-leads/services/Unipile
 const logger = require('../../../core/utils/logger');
 const CampaignRepository = require('../repositories/CampaignRepository');
 const CampaignLeadRepository = require('../repositories/CampaignLeadRepository');
+const LinkedInAccountRepository = require('../../social-integration/repositories/LinkedInAccountRepository');
 
 // TODO: ARCHITECTURE EXCEPTION - Direct cross-feature import
 // This creates tight coupling between campaigns and apollo-leads features.
@@ -217,6 +218,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     // Parse lead generation config
     let filters = {};
     
+    // Accept both leadGenerationFilters and filters field names for flexibility
     if (stepConfig.leadGenerationFilters) {
       if (typeof stepConfig.leadGenerationFilters === 'string') {
         try {
@@ -236,6 +238,27 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
         }
       } else if (typeof stepConfig.leadGenerationFilters === 'object') {
         filters = stepConfig.leadGenerationFilters;
+      }
+    } else if (stepConfig.filters) {
+      // Also accept stepConfig.filters as alternative field name
+      if (typeof stepConfig.filters === 'string') {
+        try {
+          filters = JSON.parse(stepConfig.filters);
+          logger.info('[executeLeadGeneration] Parsed filters from string (filters field)', {
+            campaignId,
+            originalString: stepConfig.filters,
+            parsedFilters: filters
+          });
+        } catch (e) {
+          logger.error('[executeLeadGeneration] Failed to parse filters', {
+            campaignId,
+            error: e.message,
+            filterValue: stepConfig.filters
+          });
+          filters = {};
+        }
+      } else if (typeof stepConfig.filters === 'object') {
+        filters = stepConfig.filters;
       }
     }
     
@@ -288,7 +311,42 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     // We always fetch 100 results from database/Apollo for efficiency
     // But only process the USER-SELECTED number (leadsPerDay) per day
     const fetchLimit = 100; // Always fetch 100 results (we cache the rest for next days)
-    const dailyLimit = leadsPerDay; // Process exactly this many per day (USER-SELECTED value)
+    let dailyLimit = leadsPerDay; // Process exactly this many per day (USER-SELECTED value)
+
+    // Override dailyLimit with default_daily_limit from social_linkedin_accounts if it's less
+    // This ensures we respect account-level rate limits
+    try {
+      const linkedInAccounts = await LinkedInAccountRepository.findByTenant(null, tenantId);
+      if (linkedInAccounts && linkedInAccounts.length > 0) {
+        // Get the minimum default_daily_limit from all active accounts
+        const validDefaults = linkedInAccounts
+          .filter(acc => acc.default_daily_limit && acc.default_daily_limit > 0)
+          .map(acc => acc.default_daily_limit);
+        
+        if (validDefaults.length > 0) {
+          const minDefaultLimit = Math.min(...validDefaults);
+          // Override dailyLimit if default_daily_limit is less than the user-selected dailyLimit
+          if (minDefaultLimit < dailyLimit) {
+            logger.info('[executeLeadGeneration] Overriding dailyLimit with default_daily_limit', {
+              campaignId,
+              tenantId,
+              userSelectedLimit: dailyLimit,
+              minDefaultLimit: minDefaultLimit,
+              accountsCount: linkedInAccounts.length
+            });
+            dailyLimit = minDefaultLimit;
+          }
+        }
+      }
+    } catch (limiterr) {
+      logger.warn('[executeLeadGeneration] Failed to fetch default_daily_limit, using user-selected limit', {
+        error: limiterr.message,
+        campaignId,
+        tenantId,
+        userSelectedLimit: dailyLimit
+      });
+    }
+
     // Calculate which page and offset within that page we need
     // Example: offset 0 = page 1, items 0-24 (25 leads)
     // Example: offset 25 = page 1, items 25-49 (25 leads)
@@ -825,7 +883,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     });
     
     // Save enriched leads to campaign_leads table (only the daily limit)
-    const { savedCount, firstGeneratedLeadId } = await saveLeadsToCampaign(
+    const { savedCount, firstGeneratedLeadId, skippedCount, skippedReasons } = await saveLeadsToCampaign(
       campaignId,
       tenantId,
       enrichedEmployees,
@@ -834,7 +892,10 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     
     logger.info('[executeLeadGeneration] Leads saved', {
       campaignId,
-      savedCount,
+      totalProcessed: enrichedEmployees.length,
+      saved: savedCount,
+      skipped: skippedCount,
+      skippedBreakdown: skippedReasons,
       firstGeneratedLeadId
     });
     
@@ -909,6 +970,37 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
         // Don't fail the whole process if activity creation fails
       }
     }
+    
+    // Comprehensive end-to-end summary log
+    logger.info('[executeLeadGeneration] FINAL SUMMARY', {
+      campaignId,
+      pipelineStage: 'Lead Generation',
+      totalImported: diverseEmployees.length,
+      validationStats: {
+        imported: diverseEmployees.length,
+        enrichmentAttempted: enrichmentStats.attempted,
+        enrichmentSucceeded: enrichmentStats.succeeded,
+        enrichmentFailed: enrichmentStats.failed,
+        enrichmentSkipped: enrichmentStats.skipped
+      },
+      savingStats: {
+        totalProcessed: enrichedEmployees.length,
+        saved: savedCount,
+        skipped: skippedCount || 0,
+        skippedReasons: skippedReasons || {}
+      },
+      dailyProgress: {
+        target: dailyLimit,
+        achieved: dailyLeadsGenerated,
+        limitReached: dailyLeadsGenerated >= dailyLimit
+      },
+      nextState: dailyLeadsGenerated >= dailyLimit ? 'sleeping_until_next_day' : 'active',
+      offset: {
+        previous: currentOffset,
+        updated: newOffset
+      }
+    });
+    
     return { 
       success: true, 
       leadsFound: diverseEmployees.length,

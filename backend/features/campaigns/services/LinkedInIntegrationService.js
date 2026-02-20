@@ -60,6 +60,9 @@ class LinkedInIntegrationService {
   async verifyOTP(unipileAccountId, otp) {
     return linkedInCheckpointService.verifyOTP(unipileAccountId, otp);
   }
+  async verifyOTPAndSaveAccount(unipileAccountId, otp, userId, tenantId, email, schema) {
+    return linkedInCheckpointService.verifyOTPAndSaveAccount(unipileAccountId, otp, userId, tenantId, email, schema);
+  }
   // Webhook methods - delegate to LinkedInWebhookService
   async registerWebhook(webhookUrl, events, source) {
     return linkedInWebhookService.registerWebhook(webhookUrl, events, source);

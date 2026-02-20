@@ -2,6 +2,7 @@
  * LinkedIn Step Executor
  * Handles all LinkedIn-related step executions
  */
+const { pool } = require('../../../shared/database/connection');
 const unipileService = require('./unipileService');
 const { getLeadData } = require('./StepExecutors');
 const {
@@ -54,12 +55,48 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
     return leadData;
   }
   
-  // Check if already enriched (has both email and linkedin_url)
+  // LAD ARCHITECTURE FIX: Check if THIS campaign_lead was already enriched
+  // Don't just check memory - check database enriched_at timestamp
+  if (databaseLeadId) {
+    const CampaignLeadRepository = require('../repositories/CampaignLeadRepository');
+    const { getSchema } = require('../../../core/utils/schemaHelper');
+    const schema = getSchema(null);
+    
+    const enrichmentCheck = await pool.query(
+      `SELECT enriched_email, enriched_linkedin_url, enriched_at
+       FROM ${schema}.campaign_leads
+       WHERE lead_id = $1 AND tenant_id = $2 AND is_deleted = FALSE
+       ORDER BY enriched_at DESC NULLS LAST
+       LIMIT 1`,
+      [databaseLeadId, tenantId]
+    );
+    
+    if (enrichmentCheck.rows.length > 0 && enrichmentCheck.rows[0].enriched_at) {
+      const cached = enrichmentCheck.rows[0];
+      logger.info('[LinkedInStepExecutor] Lead already enriched (from database), skipping', {
+        leadId: databaseLeadId,
+        enrichedAt: cached.enriched_at,
+        hasEmail: !!cached.enriched_email,
+        hasLinkedIn: !!cached.enriched_linkedin_url,
+        creditsSaved: 2
+      });
+      
+      // Return cached enriched data
+      return {
+        ...leadData,
+        email: cached.enriched_email || leadData.email,
+        linkedin_url: cached.enriched_linkedin_url || leadData.linkedin_url,
+        already_enriched: true
+      };
+    }
+  }
+  
+  // Check if already enriched (has both email and linkedin_url in memory)
   const hasEmail = leadData.email || leadData.personal_emails?.[0];
   const hasLinkedIn = leadData.linkedin_url || leadData.employee_linkedin_url;
   
   if (hasEmail && hasLinkedIn) {
-    logger.info('[LinkedInStepExecutor] Lead already enriched', {
+    logger.info('[LinkedInStepExecutor] Lead already enriched (from memory)', {
       leadId: leadData.id,
       hasEmail: !!hasEmail,
       hasLinkedIn: !!hasLinkedIn
@@ -76,12 +113,105 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
       needsLinkedIn: !hasLinkedIn
     });
     
-    // Pass tenant context for credit deduction
-    const mockReq = tenantId ? { tenant: { id: tenantId } } : null;
-    const enrichResult = await ApolloRevealService.enrichPersonDetails(personId, mockReq, {
-      campaignId: campaignId,
-      leadId: databaseLeadId
+    // CROSS-TENANT ENRICHMENT CACHE: Check for existing enriched data from other tenants first
+    let enrichedFromCache = null;
+    const CampaignLeadRepository = require('../repositories/CampaignLeadRepository');
+    
+    const cacheSearchEmail = leadData.email || leadData.personal_emails?.[0];
+    const cacheSearchName = leadData.name || `${leadData.first_name || ''} ${leadData.last_name || ''}`.trim();
+    const cacheSearchCompany = leadData.company_name;
+    
+    logger.info('[LinkedInStepExecutor] Searching for enriched leads from database', {
+      searchEmail: cacheSearchEmail ? cacheSearchEmail.substring(0, 15) + '...' : null,
+      searchName: cacheSearchName || null,
+      searchCompany: cacheSearchCompany || null,
+      currentTenantId: tenantId.substring(0, 8) + '...'
     });
+    
+    const cachedLeads = await CampaignLeadRepository.findEnrichedLeadFromOtherTenants(
+      cacheSearchEmail,
+      cacheSearchName,
+      cacheSearchCompany,
+      personId,
+      tenantId
+    );
+    
+    if (cachedLeads && cachedLeads.length > 0) {
+      const cachedLead = cachedLeads[0];
+      
+      // Use enriched data from cross-tenant cache (already filtered for current tenant)
+      enrichedFromCache = {
+        email: cachedLead.enriched_email,
+        linkedin_url: cachedLead.enriched_linkedin_url,
+        from_cache: true,
+        source_tenant_id: cachedLead.tenant_id,
+        cached_at: cachedLead.enriched_at
+      };
+      
+      logger.info('[LinkedInStepExecutor] Found enriched data from CROSS-TENANT CACHE (reusing)', {
+        leadId: leadData.id,
+        cacheEmail: cachedLead.enriched_email ? cachedLead.enriched_email.substring(0, 15) + '...' : null,
+        hasLinkedInUrl: !!cachedLead.enriched_linkedin_url,
+        sourceTenantId: cachedLead.tenant_id.substring(0, 8) + '...',
+        enrichedDaysAgo: cachedLead.enriched_at ? 
+          Math.floor((Date.now() - new Date(cachedLead.enriched_at).getTime()) / (1000 * 60 * 60 * 24)) : null
+      });
+    } else {
+      logger.info('[LinkedInStepExecutor] No enriched leads found in cross-tenant cache (CACHE MISS) - will call Apollo API', {
+        leadId: leadData.id,
+        searchEmail: cacheSearchEmail ? cacheSearchEmail.substring(0, 15) + '...' : null,
+        searchName: cacheSearchName || null,
+        searchCompany: cacheSearchCompany || null
+      });
+    }
+    
+    // Use cached data from cross-tenant if available, otherwise call Apollo API
+    let enrichResult;
+    let enrichmentSource = 'none';
+    
+    if (enrichedFromCache) {
+      // Reuse enriched data from another tenant (cross-tenant cache hit)
+      enrichmentSource = 'cross_tenant_cache';
+      enrichResult = {
+        email: enrichedFromCache.email,
+        linkedin_url: enrichedFromCache.linkedin_url,
+        from_cache: true,
+        success: true,
+        source: enrichmentSource,
+        person: {
+          email: enrichedFromCache.email,
+          linkedin_url: enrichedFromCache.linkedin_url,
+          first_name: leadData.first_name,
+          last_name: leadData.last_name,
+          name: leadData.name
+        }
+      };
+      
+      logger.info('[LinkedInStepExecutor] Using enriched data from cross-tenant cache', {
+        leadId: leadData.id,
+        source: enrichmentSource,
+        creditsSpared: 2,
+        sourceTenantId: enrichedFromCache.source_tenant_id.substring(0, 8) + '...'
+      });
+    } else {
+      // No cross-tenant cache hit - call Apollo API to enrich
+      enrichmentSource = 'apollo_api';
+      const mockReq = tenantId ? { tenant: { id: tenantId } } : null;
+      enrichResult = await ApolloRevealService.enrichPersonDetails(personId, mockReq, {
+        campaignId: campaignId,
+        leadId: databaseLeadId
+      });
+      
+      if (enrichResult && enrichResult.success) {
+        logger.info('[LinkedInStepExecutor] Enriched from Apollo API (cross-tenant cache miss)', {
+          leadId: databaseLeadId,
+          personId: personId,
+          hasEmail: !!enrichResult.person?.email,
+          hasLinkedIn: !!enrichResult.person?.linkedin_url,
+          creditsUsed: enrichResult.credits_used || 2
+        });
+      }
+    }
     
     if (enrichResult && enrichResult.success && enrichResult.person) {
       const enrichedPerson = enrichResult.person;
@@ -103,7 +233,8 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
         databaseLeadId,
         revealedEmail: !!enrichedPerson.email,
         revealedLinkedIn: !!enrichedPerson.linkedin_url,
-        revealedName: !!enrichedPerson.first_name
+        revealedName: !!enrichedPerson.first_name,
+        source: enrichResult.from_cache ? 'cache' : 'apollo_api'
       });
       
       // Also update leadData with name from enrichment
@@ -121,8 +252,6 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
       // Use databaseLeadId (UUID) for the leads table, not the Apollo person ID
       if (databaseLeadId) {
         try {
-          const CampaignLeadRepository = require('../repositories/CampaignLeadRepository');
-          
           await CampaignLeadRepository.updateLeadEnrichmentData(
             databaseLeadId,
             tenantId,
@@ -136,7 +265,8 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
           
           logger.info('[LinkedInStepExecutor] Updated lead in database with enriched data', {
             leadId: databaseLeadId,
-            firstName: enrichedPerson.first_name
+            firstName: enrichedPerson.first_name,
+            source: enrichResult.from_cache ? 'cache' : 'apollo_api'
           });
         } catch (updateErr) {
           logger.warn('[LinkedInStepExecutor] Failed to update lead with enriched data', {
@@ -300,6 +430,38 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
       const allAccounts = await getAllLinkedInAccountsForTenant(tenantId, userId);
       // Try connection request with smart fallback logic
       // Pass tenantId for credit deduction on success
+
+      // Validate daily and weekly limits before sending connection request
+      const dailyLimitExceeded = await checkTenantDailyLimit(tenantId, campaignLead.campaign_id);
+      const weeklyLimitExceeded = await checkTenantWeeklyLimit(tenantId, campaignLead.campaign_id);
+      
+      if (dailyLimitExceeded) {
+        logger.warn('[LinkedInStepExecutor] Daily connection limit reached for tenant', {
+          tenantId,
+          campaignId: campaignLead.campaign_id,
+          stepType
+        });
+        return {
+          success: false,
+          error: 'Daily LinkedIn connection limit reached for your account. The limit will reset tomorrow.',
+          userAction: 'Wait for daily limit reset'
+        };
+      }
+
+      if (weeklyLimitExceeded) {
+        logger.warn('[LinkedInStepExecutor] Weekly connection limit reached for tenant', {
+          tenantId,
+          campaignId: campaignLead.campaign_id,
+          stepType
+        });
+        return {
+          success: false,
+          error: 'Weekly LinkedIn connection limit reached for your account. The limit will reset in 7 days.',
+          userAction: 'Wait for weekly limit reset'
+        };
+      }
+
+      // Proceed with connection request if limits are not exceeded
       result = await sendConnectionRequestWithFallback(
         employee,
         message,
@@ -578,6 +740,207 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
     return { success: false, error: error.message };
   }
 }
+
+/**
+ * Check if tenant has exceeded daily LinkedIn connection limit
+ * @param {string} tenantId - Tenant ID
+ * @param {string} campaignId - Campaign ID for logging
+ * @returns {Promise<boolean>} - True if daily limit exceeded, false if not exceeded
+ */
+async function checkTenantDailyLimit(tenantId, campaignId) {
+  const logger = require('../../../core/utils/logger');
+  const LinkedInAccountRepository = require('../repositories/LinkedInAccountRepository');
+  
+  try {
+    // Initialize repository with pool
+    const repository = new LinkedInAccountRepository(pool);
+
+    // Step 1: Get total daily limit for all LinkedIn accounts of the tenant
+    const totalDailyLimit = await repository.getTotalDailyLimitForTenant(tenantId);
+
+    logger.info('[checkTenantDailyLimit] Total daily limit calculated', {
+      tenantId,
+      campaignId,
+      totalDailyLimit
+    });
+
+    if (totalDailyLimit <= 0) {
+      logger.warn('[checkTenantDailyLimit] No connected LinkedIn accounts or zero daily limit', {
+        tenantId,
+        campaignId
+      });
+      return true; // Block if no valid accounts
+    }
+
+    // Step 2: Get today's connection count from campaign_analytics
+    const todayConnectionCount = await repository.getTodayConnectionCount(tenantId);
+
+    logger.info('[checkTenantDailyLimit] Today connection count retrieved', {
+      tenantId,
+      campaignId,
+      totalDailyLimit,
+      todayConnectionCount
+    });
+
+    // Step 3: Compare counts
+    const isLimitExceeded = todayConnectionCount >= totalDailyLimit;
+
+    logger.info('[checkTenantDailyLimit] Limit validation result', {
+      tenantId,
+      campaignId,
+      totalDailyLimit,
+      todayConnectionCount,
+      isLimitExceeded,
+      remainingLimit: Math.max(0, totalDailyLimit - todayConnectionCount)
+    });
+
+    return isLimitExceeded;
+  } catch (err) {
+    logger.error('[checkTenantDailyLimit] Error checking daily limit', {
+      tenantId,
+      campaignId,
+      error: err.message,
+      stack: err.stack
+    });
+
+    // On error, allow operation to proceed (fail open)
+    // This prevents campaign execution from breaking if schema/table doesn't exist yet
+    return false;
+  }
+}
+
+/**
+ * Check if tenant's 7-day rolling weekly limit for LinkedIn connections is exceeded
+ * Compares last 7 days connection count against total weekly limit across all accounts
+ * @param {string} tenantId - Tenant ID
+ * @param {string} campaignId - Campaign ID (for logging)
+ * @returns {Promise<boolean>} true if limit exceeded, false otherwise
+ */
+async function checkTenantWeeklyLimit(tenantId, campaignId) {
+  const logger = require('../../../core/utils/logger');
+  const LinkedInAccountRepository = require('../repositories/LinkedInAccountRepository');
+  
+  try {
+    // Initialize repository with pool
+    const repository = new LinkedInAccountRepository(pool);
+
+    // Step 1: Get total weekly limit for all LinkedIn accounts of the tenant
+    const totalWeeklyLimit = await repository.getTotalWeeklyLimitForTenant(tenantId);
+
+    logger.info('[checkTenantWeeklyLimit] Total weekly limit calculated', {
+      tenantId,
+      campaignId,
+      totalWeeklyLimit
+    });
+
+    if (totalWeeklyLimit <= 0) {
+      logger.debug('[checkTenantWeeklyLimit] No weekly limit set for tenant (not enforced)', {
+        tenantId,
+        campaignId
+      });
+      return false; // No weekly limit configured, allow operation
+    }
+
+    // Step 2: Get last 7 days connection count from campaign_analytics (rolling window)
+    const lastSevenDaysCount = await repository.getLastSevenDaysConnectionCount(tenantId);
+
+    logger.info('[checkTenantWeeklyLimit] Last 7 days connection count retrieved', {
+      tenantId,
+      campaignId,
+      totalWeeklyLimit,
+      lastSevenDaysCount
+    });
+
+    // Step 3: Compare counts
+    const isLimitExceeded = lastSevenDaysCount >= totalWeeklyLimit;
+
+    logger.info('[checkTenantWeeklyLimit] Weekly limit validation result', {
+      tenantId,
+      campaignId,
+      totalWeeklyLimit,
+      lastSevenDaysCount,
+      isLimitExceeded,
+      remainingLimit: Math.max(0, totalWeeklyLimit - lastSevenDaysCount),
+      rollingWindow: '7 days'
+    });
+
+    return isLimitExceeded;
+  } catch (err) {
+    logger.error('[checkTenantWeeklyLimit] Error checking weekly limit', {
+      tenantId,
+      campaignId,
+      error: err.message,
+      stack: err.stack
+    });
+
+    // On error, allow operation to proceed (fail open)
+    // This prevents campaign execution from breaking if schema/table doesn't exist yet
+    return false;
+  }
+}
+
+async function checkTenantDailyLimit(tenantId, campaignId) {
+  const logger = require('../../../core/utils/logger');
+  const LinkedInAccountRepository = require('../repositories/LinkedInAccountRepository');
+  
+  try {
+    // Initialize repository with pool
+    const repository = new LinkedInAccountRepository(pool);
+
+    // Step 1: Get total daily limit for all LinkedIn accounts of the tenant
+    const totalDailyLimit = await repository.getTotalDailyLimitForTenant(tenantId);
+
+    logger.info('[checkTenantDailyLimit] Total daily limit calculated', {
+      tenantId,
+      campaignId,
+      totalDailyLimit
+    });
+
+    if (totalDailyLimit <= 0) {
+      logger.warn('[checkTenantDailyLimit] No connected LinkedIn accounts or zero daily limit', {
+        tenantId,
+        campaignId
+      });
+      return true; // Block if no valid accounts
+    }
+
+    // Step 2: Get today's connection count from campaign_analytics
+    const todayConnectionCount = await repository.getTodayConnectionCount(tenantId);
+
+    logger.info('[checkTenantDailyLimit] Today connection count retrieved', {
+      tenantId,
+      campaignId,
+      totalDailyLimit,
+      todayConnectionCount
+    });
+
+    // Step 3: Compare counts
+    const isLimitExceeded = todayConnectionCount >= totalDailyLimit;
+
+    logger.info('[checkTenantDailyLimit] Limit validation result', {
+      tenantId,
+      campaignId,
+      totalDailyLimit,
+      todayConnectionCount,
+      isLimitExceeded,
+      remainingLimit: Math.max(0, totalDailyLimit - todayConnectionCount)
+    });
+
+    return isLimitExceeded;
+  } catch (err) {
+    logger.error('[checkTenantDailyLimit] Error checking daily limit', {
+      tenantId,
+      campaignId,
+      error: err.message,
+      stack: err.stack
+    });
+
+    // On error, allow operation to proceed (fail open)
+    // This prevents campaign execution from breaking if schema/table doesn't exist yet
+    return false;
+  }
+}
+
 module.exports = {
   executeLinkedInStep
 };

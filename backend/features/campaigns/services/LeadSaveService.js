@@ -30,6 +30,15 @@ async function saveLeadsToCampaign(campaignId, tenantId, employees, platform = n
   
   let savedCount = 0;
   let firstGeneratedLeadId = null;
+  let skippedCount = 0;
+  let skippedReasons = {
+    noSourceId: 0,
+    uuidFormat: 0,
+    alreadyExists: 0,
+    processingError: 0
+  };
+  let skippedDetails = [];
+
   for (const employee of employees) {
     // DETECT SOURCE: Use provided platform, or check if this lead came from Unipile/Apollo
     // Priority: 1) provided platform, 2) employee._source, 3) default 'apollo_io'
@@ -48,10 +57,24 @@ async function saveLeadsToCampaign(campaignId, tenantId, employees, platform = n
     try {
       if (!sourceId || sourceId === 'unknown') {
         logger.warn('[saveLeadsToCampaign] Skipping lead - no sourceId', { employee: employee.name });
+        skippedCount++;
+        skippedReasons.noSourceId++;
+        skippedDetails.push({
+          name: employee.name || 'Unknown',
+          reason: 'No sourceId (Apollo person ID or Unipile ID)',
+          source
+        });
         continue;
       }
       if (isUUIDFormat) {
         logger.warn('[saveLeadsToCampaign] Skipping lead - UUID format sourceId', { sourceId });
+        skippedCount++;
+        skippedReasons.uuidFormat++;
+        skippedDetails.push({
+          name: employee.name || 'Unknown',
+          reason: 'UUID format sourceId (data corruption)',
+          sourceId
+        });
         continue;
       }
       // Check if lead already exists
@@ -187,8 +210,21 @@ async function saveLeadsToCampaign(campaignId, tenantId, employees, platform = n
           // Continue to next lead instead of throwing
         }
       } else {
+        // Lead already exists, skip it
+        skippedCount++;
+        skippedReasons.alreadyExists++;
+        logger.info('[saveLeadsToCampaign] Lead already exists in campaign, skipping', {
+          sourceId,
+          name: employee.name
+        });
       }
     } catch (err) {
+      skippedCount++;
+      skippedReasons.processingError++;
+      skippedDetails.push({
+        name: employee.name || 'Unknown',
+        reason: err.message
+      });
       logger.error('[saveLeadsToCampaign] Failed to process lead', {
         employee: employee.name,
         error: err.message,
@@ -197,7 +233,25 @@ async function saveLeadsToCampaign(campaignId, tenantId, employees, platform = n
       // Continue to next lead instead of stopping
     }
   }
-  return { savedCount, firstGeneratedLeadId };
+
+  // Log comprehensive summary
+  logger.info('[saveLeadsToCampaign] Summary', {
+    campaignId,
+    totalProcessed: employees.length,
+    saved: savedCount,
+    skipped: skippedCount,
+    skippedBreakdown: skippedReasons,
+    firstGeneratedLeadId
+  });
+
+  if (skippedDetails.length > 0 && skippedDetails.length <= 10) {
+    logger.warn('[saveLeadsToCampaign] Skipped leads details', {
+      count: skippedDetails.length,
+      details: skippedDetails
+    });
+  }
+
+  return { savedCount, firstGeneratedLeadId, skippedCount, skippedReasons };
 }
 /**
  * Find or create lead in leads table
@@ -313,6 +367,7 @@ async function findOrCreateLead(tenantId, sourceId, fields, leadData, source = '
   }
   return leadId;
 }
+
 module.exports = {
   saveLeadsToCampaign,
   findOrCreateLead
