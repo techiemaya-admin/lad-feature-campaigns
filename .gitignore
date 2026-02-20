@@ -72,7 +72,7 @@ get-token.js
 TEST_INSTRUCTIONS.md
 
 # Local development server (production uses sts-service)
-server.js
+# server.js  # Now tracking server.js in feature branch
 
 # Ignore local auth middleware changes
 backend/features/<feature-key>/middleware/auth.js
@@ -109,4 +109,4 @@ test-*.js
 *.sql
 
 # Backend utilities (provided by parent STS service in microservice deployments)
-backend/core/
+# backend/core/  # Now tracking core in feature branch
