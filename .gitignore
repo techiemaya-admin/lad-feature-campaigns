@@ -3,6 +3,9 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+# Track lock files for reproducible installs
+!package-lock.json
+!backend/package-lock.json
 
 # Build outputs
 dist/
