@@ -23,10 +23,10 @@ class LinkedInAccountRepository {
     }
 
     const schema = getSchema(context);
-    
+
     try {
       const query = `
-        SELECT id, tenant_id, account_name, provider_account_id, status, user_id
+        SELECT id, tenant_id, account_name, provider_account_id, status, user_id, default_daily_limit
         FROM ${schema}.social_linkedin_accounts
         WHERE tenant_id = $1 
         AND status = 'active'
@@ -35,12 +35,13 @@ class LinkedInAccountRepository {
         ORDER BY created_at DESC
       `;
       const result = await this.pool.query(query, [tenantId]);
-      
+
       return result.rows.map(row => ({
         id: row.id,
         unipile_account_id: row.provider_account_id,
         account_name: row.account_name,
-        user_id: row.user_id
+        user_id: row.user_id,
+        default_daily_limit: row.default_daily_limit
       }));
     } catch (error) {
       logger.error('[LinkedInAccountRepository] Error getting accounts for tenant', {
@@ -64,10 +65,10 @@ class LinkedInAccountRepository {
     }
 
     const schema = getSchema(context);
-    
+
     try {
       const query = `
-        SELECT id, provider_account_id, account_name, user_id 
+        SELECT id, provider_account_id, account_name, user_id, default_daily_limit
         FROM ${schema}.social_linkedin_accounts
         WHERE tenant_id = $1 
         AND status = 'active'
@@ -77,7 +78,7 @@ class LinkedInAccountRepository {
         LIMIT 1
       `;
       const result = await this.pool.query(query, [tenantId]);
-      
+
       if (result.rows.length === 0) {
         return null;
       }
@@ -87,7 +88,8 @@ class LinkedInAccountRepository {
         id: account.id,
         provider_account_id: account.provider_account_id,
         account_name: account.account_name || 'LinkedIn Account',
-        user_id: account.user_id
+        user_id: account.user_id,
+        default_daily_limit: account.default_daily_limit
       };
     } catch (error) {
       logger.error('[LinkedInAccountRepository] Error getting primary account', {
@@ -106,7 +108,7 @@ class LinkedInAccountRepository {
    */
   async checkAccountStatus(unipileAccountId, context = {}) {
     const schema = getSchema(context);
-    
+
     try {
       const result = await this.pool.query(
         `SELECT id, status, updated_at 
@@ -116,7 +118,7 @@ class LinkedInAccountRepository {
          LIMIT 1`,
         [unipileAccountId]
       );
-      
+
       if (result.rows.length === 0) {
         return { exists: false };
       }
@@ -142,7 +144,7 @@ class LinkedInAccountRepository {
    */
   async getCheckpointMetadata(req, { unipileAccountId, tenantId }) {
     const schema = getSchema(req);
-    
+
     const result = await this.pool.query(
       `SELECT metadata
        FROM ${schema}.linkedin_accounts
@@ -174,7 +176,7 @@ class LinkedInAccountRepository {
    */
   async updateAccountStatus(unipileAccountId, status, needsReconnect, context = {}) {
     const schema = getSchema(context);
-    
+
     try {
       // Update social_linkedin_accounts table (TDD)
       await this.pool.query(
@@ -231,7 +233,7 @@ class LinkedInAccountRepository {
    */
   async getAccountByUnipileId(unipileAccountId, context = {}) {
     const schema = getSchema(context);
-    
+
     try {
       const result = await this.pool.query(
         `SELECT 
@@ -279,7 +281,7 @@ class LinkedInAccountRepository {
    */
   async getUserLinkedInAccounts(tenantId, context = {}) {
     const schema = getSchema(context);
-    
+
     try {
       const query = `
         SELECT 
@@ -296,13 +298,13 @@ class LinkedInAccountRepository {
           AND status = 'active'
         ORDER BY created_at DESC
       `;
-      
+
       const result = await this.pool.query(query, [tenantId]);
-      
+
       if (!result || result.rows.length === 0) {
         return [];
       }
-      
+
       // Map results to consistent format
       return result.rows.map(row => ({
         id: row.id,
@@ -338,7 +340,7 @@ class LinkedInAccountRepository {
    */
   async findAccountByTenantAndUnipileId(tenantId, unipileAccountId, context = {}) {
     const schema = getSchema(context);
-    
+
     try {
       const result = await this.pool.query(
         `SELECT 
@@ -354,14 +356,14 @@ class LinkedInAccountRepository {
          LIMIT 1`,
         [tenantId, unipileAccountId]
       );
-      
+
       if (result.rows.length > 0) {
-        return { 
-          account: result.rows[0], 
-          schema: 'social_linkedin_accounts' 
+        return {
+          account: result.rows[0],
+          schema: 'social_linkedin_accounts'
         };
       }
-      
+
       return null;
     } catch (error) {
       logger.error('[LinkedInAccountRepository] Error finding account by tenant and unipile ID', {
@@ -384,7 +386,7 @@ class LinkedInAccountRepository {
    */
   async checkExistingAccount(userId, tenantId, unipileAccountId, context = {}) {
     const schema = getSchema(context);
-    
+
     try {
       const result = await this.pool.query(
         `SELECT id, status FROM ${schema}.social_linkedin_accounts
@@ -392,7 +394,7 @@ class LinkedInAccountRepository {
          LIMIT 1`,
         [userId, tenantId, unipileAccountId]
       );
-      
+
       return result.rows.length > 0 ? result.rows[0] : null;
     } catch (error) {
       logger.error('[LinkedInAccountRepository] Error checking existing account', {
@@ -406,6 +408,39 @@ class LinkedInAccountRepository {
   }
 
   /**
+   * Check if an account already exists for the tenant matching by LinkedIn profile_url
+   * @param {string} tenantId - Tenant ID
+   * @param {string} profileUrl - LinkedIn profile URL (from metadata)
+   * @param {Object} context - Request context
+   * @returns {Promise<Object|null>} Existing account limits or null
+   */
+  async checkAccountByProfileUrl(tenantId, profileUrl, context = {}) {
+    if (!profileUrl) return null;
+    const schema = getSchema(context);
+
+    try {
+      const result = await this.pool.query(
+        `SELECT id, status, provider_account_id, default_daily_limit, default_weekly_limit 
+         FROM ${schema}.social_linkedin_accounts
+         WHERE tenant_id = $1 
+         AND metadata->>'profile_url' = $2
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [tenantId, profileUrl]
+      );
+
+      return result.rows.length > 0 ? result.rows[0] : null;
+    } catch (error) {
+      logger.error('[LinkedInAccountRepository] Error checking existing account by profile_url', {
+        error: error.message,
+        tenantId,
+        profileUrl
+      });
+      return null;
+    }
+  }
+
+  /**
    * Insert new LinkedIn account
    * LAD Architecture: Repository layer - SQL only
    * @param {Object} accountData - Account data
@@ -414,24 +449,26 @@ class LinkedInAccountRepository {
    */
   async insertAccount(accountData, context = {}) {
     const schema = getSchema(context);
-    const { userId, tenantId, unipileAccountId, accountName, metadata } = accountData;
-    
+    const { userId, tenantId, unipileAccountId, accountName, metadata, dailyLimit, weeklyLimit } = accountData;
+
     try {
       const result = await this.pool.query(
         `INSERT INTO ${schema}.social_linkedin_accounts
-          (user_id, tenant_id, provider_account_id, account_name, status, metadata, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-         RETURNING id, provider_account_id, account_name, status`,
+          (user_id, tenant_id, provider_account_id, account_name, status, metadata, default_daily_limit, default_weekly_limit, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         RETURNING id, provider_account_id, account_name, status, default_daily_limit, default_weekly_limit`,
         [
           userId,
           tenantId,
           unipileAccountId,
           accountName,
           'active',
-          JSON.stringify(metadata)
+          JSON.stringify(metadata),
+          dailyLimit !== undefined ? dailyLimit : 10,
+          weeklyLimit !== undefined ? weeklyLimit : 70
         ]
       );
-      
+
       return result.rows[0];
     } catch (error) {
       logger.error('[LinkedInAccountRepository] Error inserting account', {
@@ -453,8 +490,8 @@ class LinkedInAccountRepository {
    */
   async updateAccount(accountData, context = {}) {
     const schema = getSchema(context);
-    const { userId, tenantId, unipileAccountId, accountName, metadata } = accountData;
-    
+    const { userId, tenantId, unipileAccountId, accountName, metadata, dailyLimit, weeklyLimit } = accountData;
+
     try {
       const result = await this.pool.query(
         `UPDATE ${schema}.social_linkedin_accounts
@@ -462,18 +499,22 @@ class LinkedInAccountRepository {
            account_name = $4,
            status = 'active',
            metadata = $5::jsonb,
+           default_daily_limit = COALESCE($6, default_daily_limit),
+           default_weekly_limit = COALESCE($7, default_weekly_limit),
            updated_at = CURRENT_TIMESTAMP
          WHERE user_id = $1 AND tenant_id = $2 AND provider_account_id = $3
-         RETURNING id, provider_account_id, account_name, status`,
+         RETURNING id, provider_account_id, account_name, status, default_daily_limit, default_weekly_limit`,
         [
           userId,
           tenantId,
           unipileAccountId,
           accountName,
-          JSON.stringify(metadata)
+          JSON.stringify(metadata),
+          dailyLimit,
+          weeklyLimit
         ]
       );
-      
+
       return result.rows[0];
     } catch (error) {
       logger.error('[LinkedInAccountRepository] Error updating account', {
@@ -510,7 +551,7 @@ class LinkedInAccountRepository {
         AND is_deleted = false
         AND provider_account_id IS NOT NULL
       `;
-      
+
       const result = await this.pool.query(query, [tenantId]);
       const totalDailyLimit = parseInt(result.rows[0]?.total_daily_limit || 0);
 
@@ -550,7 +591,7 @@ class LinkedInAccountRepository {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const todayStart = today.toISOString();
-      
+
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
       const tomorrowStart = tomorrow.toISOString();
@@ -564,7 +605,7 @@ class LinkedInAccountRepository {
         AND created_at >= $2
         AND created_at < $3
       `;
-      
+
       const result = await this.pool.query(query, [tenantId, todayStart, tomorrowStart]);
       const todayConnectionCount = parseInt(result.rows[0]?.total_actions || 0);
 
@@ -581,6 +622,52 @@ class LinkedInAccountRepository {
         error: error.message
       });
       // Return 0 on error to allow graceful degradation
+      return 0;
+    }
+  }
+
+  /**
+   * Get today's connection request count for a specific account
+   * @param {string} tenantId - Tenant ID
+   * @param {string} providerAccountId - Provider Account ID
+   * @param {Object} context - Request context
+   * @returns {Promise<number>} Count of connection requests sent today
+   */
+  async getTodayConnectionCountForAccount(tenantId, providerAccountId, context = {}) {
+    if (!tenantId || !providerAccountId) {
+      return 0;
+    }
+
+    const schema = getSchema(context);
+
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayStart = today.toISOString();
+
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowStart = tomorrow.toISOString();
+
+      const query = `
+        SELECT COUNT(*) as total_actions
+        FROM ${schema}.campaign_analytics
+        WHERE tenant_id = $1
+        AND provider_account_id = $2
+        AND action_type IN ('CONNECTION_SENT', 'CONNECTION_SENT_WITH_MESSAGE')
+        AND status = 'success'
+        AND created_at >= $3
+        AND created_at < $4
+      `;
+
+      const result = await this.pool.query(query, [tenantId, providerAccountId, todayStart, tomorrowStart]);
+      return parseInt(result.rows[0]?.total_actions || 0);
+    } catch (error) {
+      logger.error('[LinkedInAccountRepository] Error getting today connection count for account', {
+        tenantId,
+        providerAccountId,
+        error: error.message
+      });
       return 0;
     }
   }
@@ -610,7 +697,7 @@ class LinkedInAccountRepository {
         AND provider_account_id IS NOT NULL
         AND default_weekly_limit IS NOT NULL
       `;
-      
+
       const result = await this.pool.query(query, [tenantId]);
       const totalWeeklyLimit = parseInt(result.rows[0]?.total_weekly_limit || 0);
 
@@ -650,7 +737,7 @@ class LinkedInAccountRepository {
       const now = new Date();
       const sevenDaysAgo = new Date(now);
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      
+
       const sevenDaysAgoStart = sevenDaysAgo.toISOString();
       const nowEnd = now.toISOString();
 
@@ -663,7 +750,7 @@ class LinkedInAccountRepository {
         AND created_at >= $2
         AND created_at <= $3
       `;
-      
+
       const result = await this.pool.query(query, [tenantId, sevenDaysAgoStart, nowEnd]);
       const lastSevenDaysCount = parseInt(result.rows[0]?.total_actions || 0);
 

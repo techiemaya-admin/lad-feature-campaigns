@@ -22,19 +22,19 @@ async function getAllLinkedInAccountsForTenant(tenantId, userId) {
   try {
     // Use tenantId directly (LAD standard - no organization_id conversion needed)
     const resolvedTenantId = tenantId || userId;
-    
+
     // CRITICAL: Always filter by tenant_id for tenant isolation
     if (!tenantId) {
       logger.warn('[LinkedInAccountHelper] No tenantId provided - cannot retrieve accounts');
       return [];
     }
-    
+
     // Call repository to get accounts (repository handles SQL)
     const accounts = await linkedInAccountRepository.getAllAccountsForTenant(
-      tenantId, 
+      tenantId,
       { user: { tenant_id: resolvedTenantId } }
     );
-    
+
     if (accounts.length > 0) {
       logger.info('[LinkedInAccountHelper] Found LinkedIn accounts for tenant', {
         tenantId,
@@ -46,9 +46,9 @@ async function getAllLinkedInAccountsForTenant(tenantId, userId) {
         tenantId
       });
     }
-    
+
     return accounts;
-    
+
   } catch (error) {
     logger.error('[LinkedInAccountHelper] Error in getAllLinkedInAccountsForTenant', {
       tenantId,
@@ -78,8 +78,8 @@ async function verifyAccountHealth(unipileAccountId) {
     const accountData = response.data?.data || response.data || {};
     // Check if account has checkpoint (needs re-authentication)
     if (accountData.checkpoint) {
-      return { 
-        valid: false, 
+      return {
+        valid: false,
         error: 'Account requires checkpoint resolution',
         hasCheckpoint: true,
         checkpointType: accountData.checkpoint.type
@@ -141,7 +141,7 @@ async function sendConnectionRequestWithFallback(
   options = {}
 ) {
   const { tenantId } = options;
-  
+
   logger.info('[LinkedInAccountHelper] sendConnectionRequestWithFallback called', {
     employeeUrl: employee.profile_url,
     employeeName: employee.fullname,
@@ -151,11 +151,16 @@ async function sendConnectionRequestWithFallback(
     totalAccounts: allAccounts?.length || 0,
     tenantId
   });
-  
-  // Filter out the primary account from fallback list
+
   const fallbackAccounts = allAccounts.filter(acc => acc.unipile_account_id !== primaryAccountId);
+  const primaryAccountDetails = allAccounts.find(acc => acc.unipile_account_id === primaryAccountId) || {};
+
   const accountsToTry = [
-    { unipile_account_id: primaryAccountId, account_name: 'Primary Account' },
+    {
+      unipile_account_id: primaryAccountId,
+      account_name: primaryAccountDetails.account_name || 'Primary Account',
+      default_daily_limit: primaryAccountDetails.default_daily_limit || 0
+    },
     ...fallbackAccounts
   ];
   // Track which strategies we've tried and error patterns
@@ -165,49 +170,65 @@ async function sendConnectionRequestWithFallback(
   let credentialErrors = 0; // Count credential-related errors
   let otherErrors = 0; // Count other errors
   let lastAttemptedAccount = null; // Track last account tried for error reporting
-  
+
   for (const account of accountsToTry) {
     const accountId = account.unipile_account_id;
     const accountName = account.account_name || 'LinkedIn Account';
+    const accountDailyLimit = parseInt(account.default_daily_limit || 0);
     accountErrors[accountId] = [];
-    
+
     // Track this as the last attempted account
     lastAttemptedAccount = {
       account_name: accountName,
       provider_account_id: accountId
     };
+
+    // Check account-specific daily limit
+    if (accountDailyLimit > 0 && tenantId) {
+      const todayCount = await linkedInAccountRepository.getTodayConnectionCountForAccount(tenantId, accountId);
+      if (todayCount >= accountDailyLimit) {
+        logger.info('[LinkedInAccountHelper] Account reached its individual daily limit, skipping', {
+          accountId,
+          accountName,
+          todayCount,
+          accountDailyLimit
+        });
+        continue;
+      }
+    }
+
     // Strategy 1: If user wants message, try with message first
     if (userWantsMessage && message && !triedStrategies.has(`${accountId}:with_message`)) {
       triedStrategies.add(`${accountId}:with_message`);
-      
+
       logger.info('[LinkedInAccountHelper] Trying connection with message', {
         accountId,
         accountName,
         employeeName: employee.fullname
       });
-      
+
       const result = await unipileService.sendConnectionRequest(employee, message, accountId, { tenantId });
-      
+
       logger.info('[LinkedInAccountHelper] Connection with message result', {
         accountId,
         success: result.success,
         error: result.error,
         isRateLimit: result.isRateLimit
       });
-      
+
       if (result.success) {
         logger.info('[LinkedInAccountHelper] Connection request successful with message', {
           accountName,
           employeeName: employee.fullname
         });
-        return { 
-          ...result, 
-          accountUsed: accountName, 
+        return {
+          ...result,
+          accountUsed: accountName,
           accountInfo: {
             account_name: accountName,
             provider_account_id: accountId
           },
-          strategy: 'with_message' 
+          strategy: 'with_message'
         };
       }
       // Track the error reason
@@ -217,19 +238,19 @@ async function sendConnectionRequestWithFallback(
         isRateLimit: result.isRateLimit
       });
       // Check if it's a rate limit error (monthly limit for messages)
-      if (result.isRateLimit || 
-          (result.error && (
-            result.error.includes('limit') || 
-            result.error.includes('cannot_resend_yet') ||
-            result.error.includes('provider limit')
-          ))) {
+      if (result.isRateLimit ||
+        (result.error && (
+          result.error.includes('limit') ||
+          result.error.includes('cannot_resend_yet') ||
+          result.error.includes('provider limit')
+        ))) {
         actualRateLimitErrors++;
         // Continue to Strategy 2 (without message)
       } else {
         // Other error (not rate limit) - try next account
         // Classify error type
         if (result.error && (
-          result.error.includes('credentials') || 
+          result.error.includes('credentials') ||
           result.error.includes('expired') ||
           result.error.includes('checkpoint') ||
           result.error.includes('Account not found') ||
@@ -245,22 +266,22 @@ async function sendConnectionRequestWithFallback(
     // Strategy 2: Try without message (unlimited)
     if (!triedStrategies.has(`${accountId}:without_message`)) {
       triedStrategies.add(`${accountId}:without_message`);
-      
+
       logger.info('[LinkedInAccountHelper] Trying connection without message', {
         accountId,
         accountName,
         employeeName: employee.fullname
       });
-      
+
       const result = await unipileService.sendConnectionRequest(employee, null, accountId, { tenantId });
-      
+
       logger.info('[LinkedInAccountHelper] Connection without message result', {
         accountId,
         success: result.success,
         error: result.error,
         isRateLimit: result.isRateLimit
       });
-      
+
       if (result.success) {
         const strategy = userWantsMessage ? 'fallback_to_without_message' : 'without_message';
         logger.info('[LinkedInAccountHelper] Connection request successful without message', {
@@ -268,8 +289,8 @@ async function sendConnectionRequestWithFallback(
           employeeName: employee.fullname,
           strategy
         });
-        return { 
-          ...result, 
+        return {
+          ...result,
           accountUsed: accountName,
           accountInfo: {
             account_name: accountName,
@@ -286,21 +307,21 @@ async function sendConnectionRequestWithFallback(
         isRateLimit: result.isRateLimit
       });
       // Check if it's a rate limit error
-      if (result.isRateLimit || 
-          (result.error && (
-            result.error.includes('limit') || 
-            result.error.includes('cannot_resend_yet') ||
-            result.error.includes('provider limit') ||
-            result.error.includes('weekly limit') ||
-            result.error.includes('monthly limit')
-          ))) {
+      if (result.isRateLimit ||
+        (result.error && (
+          result.error.includes('limit') ||
+          result.error.includes('cannot_resend_yet') ||
+          result.error.includes('provider limit') ||
+          result.error.includes('weekly limit') ||
+          result.error.includes('monthly limit')
+        ))) {
         actualRateLimitErrors++;
         continue; // Try next account
       } else {
         // Other error - try next account
         // Classify error type
         if (result.error && (
-          result.error.includes('credentials') || 
+          result.error.includes('credentials') ||
           result.error.includes('expired') ||
           result.error.includes('checkpoint') ||
           result.error.includes('Account not found') ||
@@ -315,7 +336,7 @@ async function sendConnectionRequestWithFallback(
     }
   }
   // All accounts and strategies exhausted - determine root cause
-  
+
   // Determine the most accurate error message based on what we encountered
   let errorMessage = '';
   let errorType = '';
