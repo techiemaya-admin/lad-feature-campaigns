@@ -39,29 +39,29 @@ try {
  */
 async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, campaignId = null) {
   const logger = require('../../../core/utils/logger');
-  
+
   if (!ApolloRevealService) {
     logger.warn('[LinkedInStepExecutor] ApolloRevealService not available - skipping enrichment');
     return leadData;
   }
-  
+
   // Get Apollo person ID from lead data (for API call)
   const personId = leadData.apollo_person_id || leadData.source_id || leadData.id;
-  
+
   if (!personId) {
     logger.warn('[LinkedInStepExecutor] No Apollo person ID found for enrichment', {
       leadId: leadData.id
     });
     return leadData;
   }
-  
+
   // LAD ARCHITECTURE FIX: Check if THIS campaign_lead was already enriched
   // Don't just check memory - check database enriched_at timestamp
   if (databaseLeadId) {
     const CampaignLeadRepository = require('../repositories/CampaignLeadRepository');
     const { getSchema } = require('../../../core/utils/schemaHelper');
     const schema = getSchema(null);
-    
+
     const enrichmentCheck = await pool.query(
       `SELECT enriched_email, enriched_linkedin_url, enriched_at
        FROM ${schema}.campaign_leads
@@ -70,7 +70,7 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
        LIMIT 1`,
       [databaseLeadId, tenantId]
     );
-    
+
     if (enrichmentCheck.rows.length > 0 && enrichmentCheck.rows[0].enriched_at) {
       const cached = enrichmentCheck.rows[0];
       logger.info('[LinkedInStepExecutor] Lead already enriched (from database), skipping', {
@@ -80,7 +80,7 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
         hasLinkedIn: !!cached.enriched_linkedin_url,
         creditsSaved: 2
       });
-      
+
       // Return cached enriched data
       return {
         ...leadData,
@@ -90,11 +90,11 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
       };
     }
   }
-  
+
   // Check if already enriched (has both email and linkedin_url in memory)
   const hasEmail = leadData.email || leadData.personal_emails?.[0];
   const hasLinkedIn = leadData.linkedin_url || leadData.employee_linkedin_url;
-  
+
   if (hasEmail && hasLinkedIn) {
     logger.info('[LinkedInStepExecutor] Lead already enriched (from memory)', {
       leadId: leadData.id,
@@ -103,7 +103,7 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
     });
     return leadData;
   }
-  
+
   try {
     logger.info('[LinkedInStepExecutor] Enriching lead for LinkedIn visit', {
       leadId: leadData.id,
@@ -112,22 +112,22 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
       needsEmail: !hasEmail,
       needsLinkedIn: !hasLinkedIn
     });
-    
+
     // CROSS-TENANT ENRICHMENT CACHE: Check for existing enriched data from other tenants first
     let enrichedFromCache = null;
     const CampaignLeadRepository = require('../repositories/CampaignLeadRepository');
-    
+
     const cacheSearchEmail = leadData.email || leadData.personal_emails?.[0];
     const cacheSearchName = leadData.name || `${leadData.first_name || ''} ${leadData.last_name || ''}`.trim();
     const cacheSearchCompany = leadData.company_name;
-    
+
     logger.info('[LinkedInStepExecutor] Searching for enriched leads from database', {
       searchEmail: cacheSearchEmail ? cacheSearchEmail.substring(0, 15) + '...' : null,
       searchName: cacheSearchName || null,
       searchCompany: cacheSearchCompany || null,
       currentTenantId: tenantId.substring(0, 8) + '...'
     });
-    
+
     const cachedLeads = await CampaignLeadRepository.findEnrichedLeadFromOtherTenants(
       cacheSearchEmail,
       cacheSearchName,
@@ -135,10 +135,10 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
       personId,
       tenantId
     );
-    
+
     if (cachedLeads && cachedLeads.length > 0) {
       const cachedLead = cachedLeads[0];
-      
+
       // Use enriched data from cross-tenant cache (already filtered for current tenant)
       enrichedFromCache = {
         email: cachedLead.enriched_email,
@@ -147,13 +147,13 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
         source_tenant_id: cachedLead.tenant_id,
         cached_at: cachedLead.enriched_at
       };
-      
+
       logger.info('[LinkedInStepExecutor] Found enriched data from CROSS-TENANT CACHE (reusing)', {
         leadId: leadData.id,
         cacheEmail: cachedLead.enriched_email ? cachedLead.enriched_email.substring(0, 15) + '...' : null,
         hasLinkedInUrl: !!cachedLead.enriched_linkedin_url,
         sourceTenantId: cachedLead.tenant_id.substring(0, 8) + '...',
-        enrichedDaysAgo: cachedLead.enriched_at ? 
+        enrichedDaysAgo: cachedLead.enriched_at ?
           Math.floor((Date.now() - new Date(cachedLead.enriched_at).getTime()) / (1000 * 60 * 60 * 24)) : null
       });
     } else {
@@ -164,11 +164,11 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
         searchCompany: cacheSearchCompany || null
       });
     }
-    
+
     // Use cached data from cross-tenant if available, otherwise call Apollo API
     let enrichResult;
     let enrichmentSource = 'none';
-    
+
     if (enrichedFromCache) {
       // Reuse enriched data from another tenant (cross-tenant cache hit)
       enrichmentSource = 'cross_tenant_cache';
@@ -186,7 +186,7 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
           name: leadData.name
         }
       };
-      
+
       logger.info('[LinkedInStepExecutor] Using enriched data from cross-tenant cache', {
         leadId: leadData.id,
         source: enrichmentSource,
@@ -201,7 +201,7 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
         campaignId: campaignId,
         leadId: databaseLeadId
       });
-      
+
       if (enrichResult && enrichResult.success) {
         logger.info('[LinkedInStepExecutor] Enriched from Apollo API (cross-tenant cache miss)', {
           leadId: databaseLeadId,
@@ -212,10 +212,10 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
         });
       }
     }
-    
+
     if (enrichResult && enrichResult.success && enrichResult.person) {
       const enrichedPerson = enrichResult.person;
-      
+
       // Merge enriched data into leadData
       if (enrichedPerson.email && !hasEmail) {
         leadData.email = enrichedPerson.email;
@@ -227,7 +227,7 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
       if (enrichedPerson.personal_emails && enrichedPerson.personal_emails.length > 0 && !hasEmail) {
         leadData.email = enrichedPerson.personal_emails[0];
       }
-      
+
       logger.info('[LinkedInStepExecutor] Lead enriched successfully', {
         leadId: leadData.id,
         databaseLeadId,
@@ -236,7 +236,7 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
         revealedName: !!enrichedPerson.first_name,
         source: enrichResult.from_cache ? 'cache' : 'apollo_api'
       });
-      
+
       // Also update leadData with name from enrichment
       if (enrichedPerson.first_name) {
         leadData.first_name = enrichedPerson.first_name;
@@ -247,7 +247,7 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
       if (enrichedPerson.name) {
         leadData.name = enrichedPerson.name;
       }
-      
+
       // Update lead in database with enriched data (using repository - LAD Architecture)
       // Use databaseLeadId (UUID) for the leads table, not the Apollo person ID
       if (databaseLeadId) {
@@ -262,7 +262,7 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
               last_name: enrichedPerson.last_name || null
             }
           );
-          
+
           logger.info('[LinkedInStepExecutor] Updated lead in database with enriched data', {
             leadId: databaseLeadId,
             firstName: enrichedPerson.first_name,
@@ -289,7 +289,7 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
       error: enrichErr.message
     });
   }
-  
+
   return leadData;
 }
 
@@ -299,10 +299,10 @@ async function enrichLeadForLinkedIn(leadData, tenantId, databaseLeadId = null, 
 async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, tenantId) {
   try {
     const logger = require('../../../core/utils/logger');
-    
+
     // Get lead data - CRITICAL: Pass tenantId for proper tenant scoping
     let leadData = await getLeadData(campaignLead.id, null, tenantId);
-    
+
     logger.info('[LinkedInStepExecutor] Got leadData', {
       campaignLeadId: campaignLead.id,
       hasLeadData: !!leadData,
@@ -311,21 +311,21 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
       employee_linkedin_url: leadData?.employee_linkedin_url,
       hasEmployeeData: !!leadData?.employee_data
     });
-    
+
     if (!leadData) {
       return { success: false, error: 'Lead not found' };
     }
-    
+
     // AUTO-ENRICHMENT: For linkedin_visit, linkedin_connect, linkedin_message steps
     // Automatically enrich lead to reveal email and LinkedIn URL if not available
     const linkedInStepsNeedingEnrichment = ['linkedin_visit', 'linkedin_connect', 'linkedin_message'];
     if (linkedInStepsNeedingEnrichment.includes(stepType)) {
-      const hasLinkedIn = leadData.linkedin_url 
+      const hasLinkedIn = leadData.linkedin_url
         || leadData.employee_linkedin_url
         || leadData.employee_data?.linkedin_url
         || leadData.employee_data?.linkedin
         || leadData.employee_data?.profile_url;
-      
+
       if (!hasLinkedIn) {
         logger.info('[LinkedInStepExecutor] LinkedIn URL not found - triggering auto-enrichment', {
           stepType,
@@ -338,12 +338,12 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
         leadData = await enrichLeadForLinkedIn(leadData, tenantId, campaignLead.lead_id, campaignLead.campaign_id);
       }
     }
-    
-    const linkedinUrl = leadData.linkedin_url 
+
+    const linkedinUrl = leadData.linkedin_url
       || leadData.employee_linkedin_url
-      || (leadData.employee_data && typeof leadData.employee_data === 'string' 
-          ? JSON.parse(leadData.employee_data).linkedin_url 
-          : leadData.employee_data?.linkedin_url)
+      || (leadData.employee_data && typeof leadData.employee_data === 'string'
+        ? JSON.parse(leadData.employee_data).linkedin_url
+        : leadData.employee_data?.linkedin_url)
       || (leadData.employee_data && leadData.employee_data.linkedin)
       || (leadData.employee_data && leadData.employee_data.profile_url);
     if (!linkedinUrl) {
@@ -354,7 +354,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
     const linkedinAccountId = linkedinAccount?.provider_account_id || null;
     const linkedinAccountName = linkedinAccount?.account_name || 'LinkedIn Account';
     const linkedinAccountUserId = linkedinAccount?.user_id || userId;  // User ID from social_linkedin_accounts
-    
+
     logger.info('[LinkedInStepExecutor] LinkedIn account check', {
       stepType,
       tenantId,
@@ -363,7 +363,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
       linkedinAccountId,
       linkedinAccountName
     });
-    
+
     if (!linkedinAccountId) {
       logger.warn('[LinkedInStepExecutor] No LinkedIn account found', {
         stepType,
@@ -371,13 +371,13 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
         userId,
         error: 'No active LinkedIn account connected'
       });
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: 'No active LinkedIn account connected. Please connect a LinkedIn account in Settings → LinkedIn Integration to enable LinkedIn campaign steps.',
         userAction: 'Connect LinkedIn account in Settings'
       };
     }
-    
+
     // Format employee for Unipile
     const employee = {
       profile_url: linkedinUrl,
@@ -393,23 +393,23 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
       const CampaignModel = require('../models/CampaignModel');
       const campaign = await CampaignModel.getById(campaignLead.campaign_id, tenantId);
       const campaignConnectionMessage = campaign?.config?.connectionMessage || null;
-      
+
       // LinkedIn allows unlimited connection requests WITHOUT messages
       // But only 4-5 connection requests WITH messages per month
       // User can select "send with message" in UI - if limit exceeded, fallback to without message
       let message = stepConfig.message || stepConfig.connectionMessage || campaignConnectionMessage || null;
-      
+
       // FIX: Enhanced message validation with trim
       // Clean up message - trim whitespace and convert empty strings to null
       const trimmedMessage = message && typeof message === 'string' ? message.trim() : message;
       const hasMessage = trimmedMessage && trimmedMessage !== '';
-      
+
       // Replace message with trimmed version (or null if empty)
       message = hasMessage ? trimmedMessage : null;
-      
+
       // User wants message if: explicitly requested OR message content exists
       const userWantsMessage = !!hasMessage;
-      
+
       // Replace variables in message if message exists
       if (message) {
         const firstName = (leadData.name || leadData.employee_name || 'there').split(' ')[0];
@@ -417,7 +417,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
         const title = leadData.title || leadData.employee_data?.title || '';
         const companyName = leadData.company_name || leadData.organization || leadData.company || leadData.employee_data?.organization?.name || '';
         const industry = leadData.employee_data?.organization?.industry || '';
-        
+
         message = message
           .replace(/\{\{first_name\}\}/g, firstName)
           .replace(/\{\{last_name\}\}/g, lastName)
@@ -434,7 +434,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
       // Validate daily and weekly limits before sending connection request
       const dailyLimitExceeded = await checkTenantDailyLimit(tenantId, campaignLead.campaign_id);
       const weeklyLimitExceeded = await checkTenantWeeklyLimit(tenantId, campaignLead.campaign_id);
-      
+
       if (dailyLimitExceeded) {
         logger.warn('[LinkedInStepExecutor] Daily connection limit reached for tenant', {
           tenantId,
@@ -470,7 +470,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
         allAccounts,
         { tenantId }
       );
-      
+
       logger.info('[LinkedInStepExecutor] Connection request result', {
         stepType,
         success: result.success,
@@ -479,13 +479,13 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
         error: result.error,
         employeeName: employee.fullname
       });
-      
+
       // Track connection request in campaign_analytics for Live Activity Feed
       // Differentiate between connection with message vs without message
-      const actionType = result.strategy === 'with_message' 
-        ? 'CONNECTION_SENT_WITH_MESSAGE' 
+      const actionType = result.strategy === 'with_message'
+        ? 'CONNECTION_SENT_WITH_MESSAGE'
         : 'CONNECTION_SENT';
-      
+
       try {
         await campaignStatsTracker.trackAction(campaignLead.campaign_id, actionType, {
           leadId: campaignLead.lead_id || campaignLead.id,
@@ -508,14 +508,14 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
       await new Promise(resolve => setTimeout(resolve, 10000));
     } else if (stepType === 'linkedin_message') {
       let message = stepConfig.message || stepConfig.body || 'Hello!';
-      
+
       // Replace variables in message
       const firstName = (leadData.name || leadData.employee_name || 'there').split(' ')[0];
       const lastName = (leadData.name || leadData.employee_name || '').split(' ').slice(1).join(' ');
       const title = leadData.title || leadData.employee_data?.title || '';
       const companyName = leadData.company_name || leadData.organization || leadData.company || leadData.employee_data?.organization?.name || '';
       const industry = leadData.employee_data?.organization?.industry || '';
-      
+
       message = message
         .replace(/\{\{first_name\}\}/g, firstName)
         .replace(/\{\{last_name\}\}/g, lastName)
@@ -523,31 +523,31 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
         .replace(/\{\{company_name\}\}/g, companyName)
         .replace(/\{\{company\}\}/g, companyName)
         .replace(/\{\{industry\}\}/g, industry);
-      
+
       // ✅ Check if connection was accepted before sending message
       // Get the lead_id from campaign_leads (the actual lead UUID, not campaign_lead ID)
       let actualLeadId = campaignLead.lead_id || campaignLead.id;
-      
+
       try {
         logger.info('[LinkedInStepExecutor] Checking connection acceptance', {
           stepType,
           campaignId: campaignLead.campaign_id,
           leadId: actualLeadId
         });
-        
+
         // Call repository to check connection status (repository handles SQL)
         const isConnectionAccepted = await linkedInPollingRepository.isConnectionAccepted(
           campaignLead.campaign_id,
           actualLeadId,
           { user: { tenant_id: tenantId } }
         );
-          
+
         if (!isConnectionAccepted) {
           logger.info('[LinkedInStepExecutor] Connection not accepted yet - skipping message', {
             campaignId: campaignLead.campaign_id,
             leadId: actualLeadId
           });
-          
+
           // Track as skipped (not failed, just waiting for acceptance)
           await campaignStatsTracker.trackAction(campaignLead.campaign_id, 'MESSAGE_SKIPPED', {
             leadId: actualLeadId,
@@ -562,14 +562,14 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
             userId: linkedinAccountUserId,  // User ID from social_linkedin_accounts
             leadLinkedIn: linkedinUrl
           });
-          
+
           return {
             success: false,
             error: 'Connection not accepted yet - message will be sent after acceptance',
             skipped: true
           };
         }
-        
+
         logger.info('[LinkedInStepExecutor] Connection accepted - proceeding with message', {
           campaignId: campaignLead.campaign_id,
           leadId: actualLeadId
@@ -634,19 +634,19 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
         result = { success: false, error: 'LinkedIn service is not configured' };
         return result;
       }
-      
+
       logger.info('[LinkedInStepExecutor] Executing linkedin_visit step', {
         linkedinUrl,
         linkedinAccountId,
         employeeName: employee.fullname
       });
-      
+
       // Use Unipile profile lookup as a real "visit" and to hydrate contact info
       try {
         const startTime = Date.now();
         const profileResult = await unipileService.getLinkedInContactDetails(linkedinUrl, linkedinAccountId);
         const duration = Date.now() - startTime;
-        
+
         logger.info('[LinkedInStepExecutor] linkedin_visit profile result', {
           success: profileResult?.success !== false,
           accountExpired: profileResult?.accountExpired,
@@ -750,7 +750,7 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
 async function checkTenantDailyLimit(tenantId, campaignId) {
   const logger = require('../../../core/utils/logger');
   const LinkedInAccountRepository = require('../repositories/LinkedInAccountRepository');
-  
+
   try {
     // Initialize repository with pool
     const repository = new LinkedInAccountRepository(pool);
@@ -819,7 +819,7 @@ async function checkTenantDailyLimit(tenantId, campaignId) {
 async function checkTenantWeeklyLimit(tenantId, campaignId) {
   const logger = require('../../../core/utils/logger');
   const LinkedInAccountRepository = require('../repositories/LinkedInAccountRepository');
-  
+
   try {
     // Initialize repository with pool
     const repository = new LinkedInAccountRepository(pool);
@@ -882,7 +882,7 @@ async function checkTenantWeeklyLimit(tenantId, campaignId) {
 async function checkTenantDailyLimit(tenantId, campaignId) {
   const logger = require('../../../core/utils/logger');
   const LinkedInAccountRepository = require('../repositories/LinkedInAccountRepository');
-  
+
   try {
     // Initialize repository with pool
     const repository = new LinkedInAccountRepository(pool);

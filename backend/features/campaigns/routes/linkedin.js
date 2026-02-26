@@ -47,7 +47,7 @@ router.get('/status', jwtAuth, async (req, res) => {
     });
     const hasConnected = connections.some(conn => conn.connected);
     const primaryStatus = connections.length > 0 ? connections[0].status : 'disconnected';
-    
+
     // Return format matching frontend expectations (like pluto_campaigns)
     res.json({
       connected: hasConnected,
@@ -68,43 +68,74 @@ router.get('/status', jwtAuth, async (req, res) => {
     });
   }
 });
+// GET /api/campaigns/linkedin/limits - Get daily limits based on connected accounts
+router.get('/limits', jwtAuth, async (req, res) => {
+  try {
+    const tenantId = req.user.tenantId || req.user.userId;
+    const { pool } = require('../../../shared/database/connection');
+    const LinkedInAccountRepository = require('../repositories/LinkedInAccountRepository');
+    const repo = new LinkedInAccountRepository(pool);
+
+    // Fallback schema context if needed
+    const context = { user: req.user };
+    const totalDailyLimit = await repo.getTotalDailyLimitForTenant(tenantId, context);
+    const consumedDailyLimit = await repo.getTodayConnectionCount(tenantId, context);
+    const activeAccounts = await repo.getAllAccountsForTenant(tenantId, context);
+
+    const remainingDailyLimit = Math.max(0, totalDailyLimit - consumedDailyLimit);
+
+    res.json({
+      success: true,
+      totalDailyLimit,
+      consumedDailyLimit,
+      remainingDailyLimit,
+      activeAccountsCount: activeAccounts.length
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // POST /api/campaigns/linkedin/connect - Connect LinkedIn account (OAuth or credentials)
 router.post('/connect', jwtAuth, async (req, res) => {
   const logger = require('../../../core/utils/logger');
   try {
     const { method, email, password, redirectUri, li_at, li_a, user_agent } = req.body;
-    
-    logger.info('[LinkedIn Connect] Request received', { 
-      method, 
+
+    logger.info('[LinkedIn Connect] Request received', {
+      method,
       hasEmail: !!email,
       hasPassword: !!password,
       hasLiAt: !!li_at,
       hasRedirectUri: !!redirectUri,
       userId: req.user?.userId?.substring(0, 8)
     });
-    
+
     // If method is provided (credentials or cookies), use credentials-based connection
     if (method && (method === 'credentials' || method === 'cookies')) {
       logger.info('[LinkedIn Connect] Using credentials/cookies method', { method });
       const LinkedInAuthController = require('../controllers/LinkedInAuthController');
       return LinkedInAuthController.connect(req, res);
     }
-    
+
     // Otherwise, use OAuth flow (backward compatibility)
     logger.info('[LinkedIn Connect] Using OAuth flow');
     const userId = req.user.userId;
     const result = await linkedInIntegrationService.startLinkedInConnection(userId, redirectUri);
-    
+
     logger.info('[LinkedIn Connect] OAuth URL generated', { hasUrl: !!result });
-    
+
     res.json({
       success: true,
       data: result
     });
   } catch (error) {
-    logger.error('[LinkedIn Connect] Error', { 
+    logger.error('[LinkedIn Connect] Error', {
       error: error.message,
-      stack: error.stack 
+      stack: error.stack
     });
     res.status(500).json({
       success: false,
@@ -157,24 +188,24 @@ router.post('/disconnect', jwtAuth, async (req, res) => {
   try {
     // Use tenantId per TDD (linkedin_accounts table uses tenant_id)
     const tenantId = req.user.tenantId || req.user.userId;
-    
+
     logger.info('[LinkedIn Disconnect] Request received', {
       tenantId: tenantId?.substring(0, 8),
       body: req.body,
       query: req.query
     });
-    
+
     // Support multiple parameter names (like pluto_campaigns)
     // UI might send: connection_id (database id), unipileAccountId, or accountId
     // Frontend sends accountId as the database UUID
     const connectionId = req.body.connection_id || req.query.connection_id || req.body.connectionId || req.query.connectionId;
     const accountId = req.body.accountId || req.query.accountId || req.headers['x-account-id'];
     const unipileAccountId = req.body.unipileAccountId || req.query.unipileAccountId || req.body.unipile_account_id || req.headers['x-unipile-account-id'];
-    
+
     // accountId or connectionId are database IDs - need to look up provider_account_id
     const databaseId = accountId || connectionId;
     let targetUnipileAccountId = unipileAccountId;
-    
+
     if (databaseId && !targetUnipileAccountId) {
       try {
         const { pool } = require('../../../shared/database/connection');
@@ -225,9 +256,9 @@ router.post('/disconnect', jwtAuth, async (req, res) => {
           }
         }
       } catch (lookupError) {
-        logger.error('[LinkedIn Disconnect] Error looking up account', { 
+        logger.error('[LinkedIn Disconnect] Error looking up account', {
           error: lookupError.message,
-          databaseId 
+          databaseId
         });
         // Continue - we'll try to use databaseId as unipileAccountId
       }
@@ -256,16 +287,16 @@ router.post('/disconnect', jwtAuth, async (req, res) => {
         });
       }
     }
-    
+
     logger.info('[LinkedIn Disconnect] Calling disconnect service', {
       tenantId: tenantId?.substring(0, 8),
       targetUnipileAccountId: targetUnipileAccountId?.substring(0, 8)
     });
-    
+
     await linkedInIntegrationService.disconnectAccount(tenantId, targetUnipileAccountId);
-    
+
     logger.info('[LinkedIn Disconnect] Disconnect successful');
-    
+
     res.json({
       success: true,
       message: 'LinkedIn account disconnected successfully'
