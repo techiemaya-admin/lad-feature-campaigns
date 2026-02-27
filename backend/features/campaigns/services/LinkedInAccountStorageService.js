@@ -59,8 +59,8 @@ class LinkedInAccountStorageService {
         'LinkedIn Account';
 
       // Attempt to retrieve existing limits if this account was connected before under a different Unipile ID
-      let dailyLimit = 10;
-      let weeklyLimit = 70;
+      let dailyLimit = 20;
+      let weeklyLimit = 140;
       const profileUrl = credentials.profile_url || credentials.public_identifier ?
         (credentials.profile_url || `https://www.linkedin.com/in/${credentials.public_identifier}`) : null;
 

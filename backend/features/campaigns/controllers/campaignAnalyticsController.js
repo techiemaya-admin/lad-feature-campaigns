@@ -132,7 +132,7 @@ async function getCampaignAnalytics(req, res) {
     // Fetch LinkedIn rate limit metrics for this tenant
     let linkedinRateLimits = null;
     try {
-      // Get max daily limit across all LinkedIn accounts
+      const schema = process.env.DB_SCHEMA || 'lad_dev';
       const dailyLimitQuery = `
         SELECT 
           COALESCE(MAX(default_daily_limit), 0) as max_daily_limit,
@@ -140,7 +140,7 @@ async function getCampaignAnalytics(req, res) {
           COALESCE(MAX(default_weekly_limit), 0) as max_weekly_limit,
           COALESCE(SUM(default_weekly_limit), 0) as total_weekly_limit,
           COUNT(*) as account_count
-        FROM social_linkedin_accounts
+        FROM ${schema}.social_linkedin_accounts
         WHERE tenant_id = $1 AND status = 'active' AND is_deleted = false
       `;
       const dailyLimitResult = await query(dailyLimitQuery, [campaign.tenant_id]);
@@ -151,7 +151,7 @@ async function getCampaignAnalytics(req, res) {
         SELECT 
           COUNT(*) as sent_last_7_days,
           DATE(created_at) as date
-        FROM campaign_analytics
+        FROM ${schema}.campaign_analytics
         WHERE 
           tenant_id = $1 
           AND action_type IN ('CONNECTION_SENT', 'CONNECTION_SENT_WITH_MESSAGE')
@@ -161,7 +161,7 @@ async function getCampaignAnalytics(req, res) {
         ORDER BY DATE(created_at) ASC
       `;
       const sevenDaysResult = await query(sevenDaysQuery, [campaign.tenant_id]);
-      
+
       // Calculate daily breakdown for the last 7 days
       const dailyBreakdown = sevenDaysResult.rows.map(row => ({
         date: row.date,
@@ -171,7 +171,7 @@ async function getCampaignAnalytics(req, res) {
       // Get total for last 7 days
       const totalSevenDaysQuery = `
         SELECT COUNT(*) as total_sent
-        FROM campaign_analytics
+        FROM ${schema}.campaign_analytics
         WHERE 
           tenant_id = $1 
           AND action_type IN ('CONNECTION_SENT', 'CONNECTION_SENT_WITH_MESSAGE')
@@ -194,7 +194,7 @@ async function getCampaignAnalytics(req, res) {
         usage: {
           sent_last_7_days: totalSentLast7Days,
           daily_breakdown: dailyBreakdown,
-          weekly_percentage: limitRow.total_weekly_limit > 0 
+          weekly_percentage: limitRow.total_weekly_limit > 0
             ? ((totalSentLast7Days / limitRow.total_weekly_limit) * 100).toFixed(1)
             : 0
         }
