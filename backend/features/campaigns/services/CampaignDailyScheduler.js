@@ -106,11 +106,13 @@ class CampaignDailyScheduler {
           taskName: taskInfo.taskName,
         });
       } else {
-        logger.info('[CampaignDailyScheduler] No more tasks to schedule', {
+        // Last day has run — auto-complete the campaign
+        logger.info('[CampaignDailyScheduler] Last day completed — marking campaign as completed', {
           campaignId,
           tenantId,
           reason: 'end_date_reached',
         });
+        await this.completeCampaign(schema, campaignId, tenantId);
       }
 
       return {
