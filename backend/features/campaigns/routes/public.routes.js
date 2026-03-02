@@ -26,7 +26,7 @@ router.use((req, res, next) => {
  */
 const validateCloudTasksAuth = (req, res, next) => {
   const cloudTasksSecret = process.env.CLOUD_TASKS_SECRET;
-  
+
   // Log incoming request for debugging
   logger.info('[CloudTasksAuth] Validating request', {
     hasSecret: !!cloudTasksSecret,
@@ -34,7 +34,7 @@ const validateCloudTasksAuth = (req, res, next) => {
     hasCloudTasksSecret: !!req.headers['x-cloudtasks-secret'],
     path: req.path
   });
-  
+
   // If OIDC is configured, validate JWT token
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -85,5 +85,13 @@ router.post('/run-daily', validateCloudTasksAuth, (req, res) => CampaignDailyCon
  */
 const LinkedInWebhookController = require('../controllers/LinkedInWebhookController');
 router.post('/linkedin/webhooks/account-status', LinkedInWebhookController.handleAccountStatusWebhook);
+
+/**
+ * POST /api/campaigns/linkedin/webhooks/messages
+ * Unipile webhook endpoint for LinkedIn direct messages
+ * 
+ * NO JWT AUTH - External service webhook (Auth via X-Webhook-Secret / unipile-auth)
+ */
+router.post('/linkedin/webhooks/messages', LinkedInWebhookController.handleMessageWebhook);
 
 module.exports = router;

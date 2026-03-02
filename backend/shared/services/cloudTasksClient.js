@@ -21,7 +21,7 @@ class CloudTasksService {
       this.queuePath = this.client.queuePath(PROJECT_ID, LOCATION, QUEUE_NAME);
       this.isConfigured = true;
       this.queueExists = null; // Will be checked on first task creation
-      
+
       if (IS_LOCAL_DEV) {
         logger.warn('[CloudTasks] Running in local development mode - tasks will be simulated');
       }
@@ -110,7 +110,7 @@ class CloudTasksService {
     }
 
     const url = `${SERVICE_URL}/api/campaigns/run-daily`;
-    
+
     const payload = {
       campaignId,
       tenantId,
@@ -214,9 +214,23 @@ class CloudTasksService {
   shouldContinueScheduling(campaign, currentDate = new Date()) {
     if (!campaign) return false;
     if (campaign.status !== 'running' && campaign.status !== 'active') return false;
-    if (!campaign.end_date) return true; // No end date, continue indefinitely
-    
-    const endDate = new Date(campaign.end_date);
+
+    // Check end date — DB column is campaign_end_date, also support legacy field end_date
+    const endDateStr = campaign.campaign_end_date || campaign.end_date;
+
+    if (!endDateStr) {
+      // No explicit end date — check campaign_duration_days as fallback
+      if (campaign.campaign_duration_days && campaign.campaign_start_date) {
+        const startDate = new Date(campaign.campaign_start_date);
+        const computedEnd = new Date(startDate);
+        computedEnd.setDate(computedEnd.getDate() + campaign.campaign_duration_days - 1);
+        return currentDate <= computedEnd;
+      }
+      // No end date and no duration — run indefinitely
+      return true;
+    }
+
+    const endDate = new Date(endDateStr);
     return currentDate <= endDate;
   }
 }

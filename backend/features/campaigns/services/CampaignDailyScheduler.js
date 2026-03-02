@@ -61,12 +61,13 @@ class CampaignDailyScheduler {
           campaignId,
           tenantId,
           status: campaign.status,
-          endDate: campaign.end_date,
+          endDate: campaign.campaign_end_date || campaign.end_date,
           currentDate: currentDate.toISOString(),
         });
 
         // Mark campaign as completed if past end date
-        if (campaign.end_date && currentDate > new Date(campaign.end_date)) {
+        const endDate = campaign.campaign_end_date || campaign.end_date;
+        if (endDate && currentDate > new Date(endDate)) {
           await this.completeCampaign(schema, campaignId, tenantId);
         }
 
@@ -90,7 +91,7 @@ class CampaignDailyScheduler {
 
       // 6. Schedule next day task (self-rescheduling)
       const nextDayTime = cloudTasksClient.calculateNextDayTime(currentDate);
-      
+
       if (cloudTasksClient.shouldContinueScheduling(campaign, nextDayTime)) {
         const taskInfo = await cloudTasksClient.scheduleNextDayTask(
           campaignId,
@@ -181,7 +182,7 @@ class CampaignDailyScheduler {
       // Use the actual CampaignProcessor to execute the campaign
       const CampaignProcessor = require('./CampaignProcessor');
       const result = await CampaignProcessor.processCampaign(campaign.id, campaign.tenant_id);
-      
+
       return {
         success: result.success,
         leadCount: result.leadCount || 0,
@@ -194,7 +195,7 @@ class CampaignDailyScheduler {
         error: error.message,
         stack: error.stack,
       });
-      
+
       // Return failure but don't throw - let scheduler continue
       return {
         success: false,
@@ -218,7 +219,7 @@ class CampaignDailyScheduler {
     `;
 
     const result = await pool.query(query, [runDate, campaignId, tenantId]);
-    
+
     logger.info('[CampaignDailyScheduler] Updated last_run_date', {
       campaignId,
       tenantId,
@@ -275,10 +276,10 @@ class CampaignDailyScheduler {
    * Schedule initial task when campaign is created
    */
   async scheduleInitialTask(campaign) {
-    const { 
-      id: campaignId, 
-      tenant_id: tenantId, 
-      campaign_start_date: startDate 
+    const {
+      id: campaignId,
+      tenant_id: tenantId,
+      campaign_start_date: startDate
     } = campaign;
 
     if (!startDate) {

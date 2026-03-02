@@ -39,68 +39,75 @@ class CampaignSchedulingService {
     const failedTasks = [];
     let queueMissing = false;
 
-    for (let i = 0; i < scheduleDates.length; i++) {
-      const scheduleDate = scheduleDates[i];
-      
-      try {
-        const taskInfo = await cloudTasksClient.scheduleNextDayTask(
-          campaignId,
-          tenantId,
-          scheduleDate,
-          0 // retryCount
-        );
+    // ✅ Process tasks in parallel batches of 10 — much faster for long campaigns
+    // Sequential: 90 days × ~300ms per API call = 27 seconds to create
+    // Batched (10 parallel at a time): ~3 seconds total
+    const BATCH_SIZE = 10;
 
-        scheduledTasks.push({
-          scheduleDate: scheduleDate.toISOString(),
-          taskName: taskInfo.taskName,
-          dayNumber: i + 1
-        });
+    for (let batchStart = 0; batchStart < scheduleDates.length; batchStart += BATCH_SIZE) {
+      if (queueMissing) break;
 
-        logger.info('[CampaignSchedulingService] Task scheduled', {
-          campaignId,
-          tenantId,
-          dayNumber: i + 1,
-          scheduleDate: scheduleDate.toISOString(),
-          taskName: taskInfo.taskName
-        });
-      } catch (error) {
-        // Check if error is due to missing queue
-        if (error.message.includes('does not exist') || error.message.includes('NOT_FOUND')) {
-          queueMissing = true;
-          logger.warn('[CampaignSchedulingService] Queue missing - stopping further attempts', {
-            campaignId,
-            tenantId,
-            error: error.message
+      const batch = scheduleDates.slice(batchStart, batchStart + BATCH_SIZE);
+
+      // Run batch in parallel with Promise.allSettled so one failure doesn't cancel others
+      const batchResults = await Promise.allSettled(
+        batch.map((scheduleDate, batchIndex) => {
+          const dayNumber = batchStart + batchIndex + 1;
+          return cloudTasksClient.scheduleNextDayTask(campaignId, tenantId, scheduleDate, 0)
+            .then(taskInfo => ({ success: true, scheduleDate, taskName: taskInfo.taskName, dayNumber }))
+            .catch(error => ({ success: false, scheduleDate, error: error.message, dayNumber }));
+        })
+      );
+
+      for (const settled of batchResults) {
+        // allSettled always fulfills; our inner .catch() handles errors as values
+        const val = settled.value;
+        if (val.success) {
+          scheduledTasks.push({
+            scheduleDate: val.scheduleDate.toISOString(),
+            taskName: val.taskName,
+            dayNumber: val.dayNumber
           });
-        }
-        
-        logger.error('[CampaignSchedulingService] Failed to schedule task', {
-          campaignId,
-          tenantId,
-          dayNumber: i + 1,
-          scheduleDate: scheduleDate.toISOString(),
-          error: error.message,
-          isQueueMissing: queueMissing
-        });
-
-        failedTasks.push({
-          scheduleDate: scheduleDate.toISOString(),
-          dayNumber: i + 1,
-          error: error.message
-        });
-        
-        // If queue is missing, no point trying remaining tasks
-        if (queueMissing) {
-          // Add remaining dates to failed tasks
-          for (let j = i + 1; j < scheduleDates.length; j++) {
-            failedTasks.push({
-              scheduleDate: scheduleDates[j].toISOString(),
-              dayNumber: j + 1,
-              error: 'Skipped due to missing queue'
+          logger.info('[CampaignSchedulingService] Task scheduled', {
+            campaignId, tenantId,
+            dayNumber: val.dayNumber,
+            scheduleDate: val.scheduleDate.toISOString(),
+            taskName: val.taskName
+          });
+        } else {
+          if (val.error.includes('does not exist') || val.error.includes('NOT_FOUND')) {
+            queueMissing = true;
+            logger.warn('[CampaignSchedulingService] Queue missing - stopping further batches', {
+              campaignId, tenantId, error: val.error
             });
           }
-          break;
+          failedTasks.push({
+            scheduleDate: val.scheduleDate.toISOString(),
+            dayNumber: val.dayNumber,
+            error: val.error
+          });
+          logger.error('[CampaignSchedulingService] Failed to schedule task', {
+            campaignId, tenantId, dayNumber: val.dayNumber,
+            scheduleDate: val.scheduleDate.toISOString(), error: val.error
+          });
         }
+      }
+
+      // If queue is missing, mark all remaining un-attempted dates as failed
+      if (queueMissing) {
+        for (let j = batchStart + BATCH_SIZE; j < scheduleDates.length; j++) {
+          failedTasks.push({
+            scheduleDate: scheduleDates[j].toISOString(),
+            dayNumber: j + 1,
+            error: 'Skipped due to missing queue'
+          });
+        }
+        break;
+      }
+
+      // 100ms pause between batches to avoid Cloud Tasks API rate limits
+      if (batchStart + BATCH_SIZE < scheduleDates.length) {
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
 
@@ -113,9 +120,7 @@ class CampaignSchedulingService {
     };
 
     logger.info('[CampaignSchedulingService] Scheduling completed', {
-      campaignId,
-      tenantId,
-      ...result
+      campaignId, tenantId, ...result
     });
 
     return result;

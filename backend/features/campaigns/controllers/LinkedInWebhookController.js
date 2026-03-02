@@ -11,10 +11,10 @@ class LinkedInWebhookController {
   static async registerWebhook(req, res) {
     try {
       const { webhook_url, events, source } = req.body;
-      const webhookUrl = webhook_url || 
-                        process.env.UNIPILE_WEBHOOK_URL || 
-                        process.env.WEBHOOK_URL ||
-                        (process.env.BACKEND_URL ? `${process.env.BACKEND_URL}/api/campaigns/linkedin/webhook` : null);
+      const webhookUrl = webhook_url ||
+        process.env.UNIPILE_WEBHOOK_URL ||
+        process.env.WEBHOOK_URL ||
+        (process.env.BACKEND_URL ? `${process.env.BACKEND_URL}/api/campaigns/linkedin/webhook` : null);
       if (!webhookUrl) {
         throw new Error('Webhook URL configuration is missing. Please contact support.');
       }
@@ -72,6 +72,46 @@ class LinkedInWebhookController {
   }
 
   /**
+   * Handle incoming message webhook from Unipile (for chat replies)
+   * POST /api/campaigns/linkedin/webhooks/messages
+   */
+  static async handleMessageWebhook(req, res) {
+    try {
+      const logger = require('../../../core/utils/logger');
+      const linkedInWebhookService = require('../services/LinkedInWebhookService');
+
+      // Unipile sends auth either in 'X-Webhook-Secret' or custom header 'unipile-auth' based on setup.
+      // We check our configured secret or fallback.
+      const receivedSecret = req.headers['unipile-auth'] || req.headers['x-webhook-secret'];
+      const currentSecret = process.env.WEBHOOK_SECRET || 'lad-webhook-secret';
+
+      if (receivedSecret && currentSecret && receivedSecret !== currentSecret) {
+        logger.warn('[LinkedInWebhook] Invalid webhook secret for messages');
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const msg = req.body;
+      logger.info('[LinkedInWebhook] Received message webhook', {
+        msgId: msg.id,
+        direction: msg.direction,
+        chatId: msg.chat_id,
+        accountId: msg.account_id
+      });
+
+      // We only care about replies from the lead (INCOMING)
+      if (msg.direction === 'INCOMING') {
+        await linkedInWebhookService.processIncomingMessage(msg);
+      }
+
+      return res.status(200).json({ ok: true });
+    } catch (error) {
+      const logger = require('../../../core/utils/logger');
+      logger.error('[LinkedInWebhook] Error processing message webhook', error);
+      return res.status(200).json({ success: false, error: error.message });
+    }
+  }
+
+  /**
    * Handle account status webhook from Unipile (real-time updates)
    * POST /api/campaigns/linkedin/webhooks/account-status
    * LAD Architecture: Controller handles HTTP only, calls Service for business logic
@@ -90,7 +130,7 @@ class LinkedInWebhookController {
       }
 
       const { AccountStatus } = req.body;
-      
+
       if (!AccountStatus) {
         logger.warn('[LinkedInWebhook] Missing AccountStatus in payload');
         return res.status(400).json({ error: 'Invalid payload' });
@@ -103,7 +143,7 @@ class LinkedInWebhookController {
       );
 
       // Must respond with 200 within 30 seconds for Unipile
-      return res.status(200).json({ 
+      return res.status(200).json({
         success: result.success,
         message: result.success ? 'Account status updated' : result.error
       });
@@ -114,7 +154,7 @@ class LinkedInWebhookController {
         error: error.message,
         stack: error.stack
       });
-      
+
       // Still return 200 to prevent Unipile retries for processing errors
       return res.status(200).json({ success: false, error: error.message });
     }
@@ -127,9 +167,9 @@ class LinkedInWebhookController {
   static async registerAccountStatusWebhook(req, res) {
     try {
       const linkedInWebhookService = require('../services/LinkedInWebhookService');
-      
+
       const { webhookUrl } = req.body;
-      const finalWebhookUrl = webhookUrl || 
+      const finalWebhookUrl = webhookUrl ||
         (process.env.BACKEND_URL ? `${process.env.BACKEND_URL}/api/campaigns/linkedin/webhooks/account-status` : null);
 
       if (!finalWebhookUrl) {
