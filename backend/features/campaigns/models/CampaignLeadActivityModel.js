@@ -3,6 +3,7 @@
  * Handles database operations for campaign lead activities (tracking actions)
  */
 const { pool } = require('../../../shared/database/connection');
+const { getSchema } = require('../../../core/utils/schemaHelper');
 class CampaignLeadActivityModel {
   /**
    * Create a new activity
@@ -158,7 +159,11 @@ class CampaignLeadActivityModel {
     const { status, stepType, limit = 1000, offset = 0 } = filters;
     // Per TDD: Use lad_dev schema
     let query = `
-      SELECT cla.* FROM ${schema}.campaign_lead_activities cla
+      SELECT cla.*,
+             TRIM(CONCAT(cl.first_name, ' ', COALESCE(cl.last_name, ''))) as lead_name,
+             cl.linkedin_url as lead_linkedin,
+             cl.phone as lead_phone
+      FROM ${schema}.campaign_lead_activities cla
       INNER JOIN ${schema}.campaign_leads cl ON cla.campaign_lead_id = cl.id
       WHERE cl.campaign_id = $1 AND cla.tenant_id = $2 AND cla.is_deleted = FALSE
     `;
@@ -216,4 +221,4 @@ class CampaignLeadActivityModel {
     return result.rows;
   }
 }
-module.exports = CampaignLeadActivityModel;
+module.exports = CampaignLeadActivityModel;

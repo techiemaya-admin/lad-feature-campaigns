@@ -211,16 +211,28 @@ class CampaignCRUDController {
           }
         });
       }
+      const totalSent = parseInt(stats.total_sent) || 0;
+      const totalReplied = parseInt(stats.total_replied) || 0;
+      const totalConnected = parseInt(stats.total_connected) || 0;
+      const avgReplyRate = totalSent > 0 ? ((totalReplied / totalSent) * 100) : 0;
+      const connectionRate = totalSent > 0 ? ((totalConnected / totalSent) * 100) : 0;
+
       res.json({
         success: true,
         data: {
           total_campaigns: parseInt(stats.total_campaigns) || 0,
           active_campaigns: parseInt(stats.active_campaigns) || 0,
           total_leads: parseInt(stats.total_leads) || 0,
-          total_sent: parseInt(stats.total_sent) || 0,
+          total_sent: totalSent,
           total_delivered: parseInt(stats.total_delivered) || 0,
-          total_connected: parseInt(stats.total_connected) || 0,
-          total_replied: parseInt(stats.total_replied) || 0,
+          total_connected: totalConnected,
+          total_replied: totalReplied,
+          // Computed rates for UI cards
+          avg_reply_rate: parseFloat(avgReplyRate.toFixed(1)),
+          connection_rate: parseFloat(connectionRate.toFixed(1)),
+          instagram_connection_rate: 0,
+          whatsapp_connection_rate: 0,
+          voice_agent_connection_rate: 0,
           linkedin_rate_limits: linkedinRateLimits
         }
       });
