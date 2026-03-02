@@ -16,8 +16,8 @@ class CampaignStatsTracker {
    * @param {object} metadata - { leadId, channel: 'linkedin'|'email'|'whatsapp'|'voice'|'instagram', leadName, leadPhone, leadEmail, messageContent, status }
    */
   async trackAction(campaignId, actionType, metadata = {}) {
-    const { 
-      leadId, 
+    const {
+      leadId,
       channel = 'linkedin',
       leadName,
       leadPhone,
@@ -32,9 +32,9 @@ class CampaignStatsTracker {
       userId,  // ✅ User ID from social_linkedin_accounts
       leadLinkedIn
     } = metadata;
-    
+
     const schema = getSchema(null);
-    
+
     try {
       // Insert into campaign_analytics for real-time tracking using pool
       await pool.query(
@@ -60,14 +60,14 @@ class CampaignStatsTracker {
           leadLinkedIn
         ]
       );
-      
+
       logger.info('[CampaignStatsTracker] Action tracked', {
         campaignId: campaignId?.substring(0, 8),
         actionType,
         status,
         channel
       });
-      
+
       // Emit stats update event
       await this._emitStatsUpdate(campaignId);
     } catch (error) {
@@ -94,7 +94,7 @@ class CampaignStatsTracker {
       acc[action.campaignId].push(action);
       return acc;
     }, {});
-    
+
     for (const [campaignId, campaignActions] of Object.entries(groupedByCampaign)) {
       try {
         // Insert each action individually
@@ -107,7 +107,7 @@ class CampaignStatsTracker {
       }
     }
   }
-  
+
   /**
    * Handle external async events (like replies from webhooks)
    * Ensures idempotency to prevent duplicate counting
@@ -118,7 +118,7 @@ class CampaignStatsTracker {
    */
   async trackReply(campaignId, leadId, channel, externalId) {
     const schema = getSchema(null);
-    
+
     try {
       // Check if this reply was already processed
       const existing = await pool.query(
@@ -126,25 +126,25 @@ class CampaignStatsTracker {
          WHERE campaign_id = $1 AND lead_id = $2 AND action_type = $3`,
         [campaignId, leadId, 'REPLY_RECEIVED']
       );
-      
+
       if (existing.rows.length > 0) {
         logger.info('[CampaignStatsTracker] Reply already tracked, skipping', { campaignId, leadId });
         return;
       }
-      
+
       // Track the reply
       await this.trackAction(campaignId, 'REPLY_RECEIVED', {
         leadId,
         channel,
         status: 'success'
       });
-      
+
       await this._emitStatsUpdate(campaignId);
     } catch (error) {
       logger.error('[CampaignStatsTracker] Failed to track reply', { campaignId, error: error.message });
     }
   }
-  
+
   /**
    * Get current stats for a campaign with per-platform breakdown
    * @param {string} campaignId 
@@ -152,7 +152,7 @@ class CampaignStatsTracker {
    */
   async getStats(campaignId, tenantId = null) {
     const schema = getSchema(null);
-    
+
     // Get tenant_id from campaign if not provided
     let campaignTenantId = tenantId;
     if (!campaignTenantId) {
@@ -166,7 +166,7 @@ class CampaignStatsTracker {
         logger.warn('[CampaignStatsTracker] Failed to get campaign tenant_id', { error: err.message });
       }
     }
-    
+
     try {
       // Get total leads count from campaign_leads table (with tenant_id filter)
       const leadsResult = await pool.query(
@@ -174,12 +174,12 @@ class CampaignStatsTracker {
         [campaignId, campaignTenantId]
       );
       const totalLeads = parseInt(leadsResult.rows[0]?.count || 0);
-      
+
       // Get stats from campaign_analytics with platform breakdown
       // ✅ Only count successful actions (status = 'success')
       // ✅ Filter by both campaign_id AND tenant_id for multi-tenant safety
       let analyticsStats = [];
-      
+
       // Try campaign_analytics first
       try {
         const analyticsResult = await pool.query(
@@ -193,7 +193,7 @@ class CampaignStatsTracker {
       } catch (err) {
         logger.warn('[CampaignStatsTracker] campaign_analytics query failed', { error: err.message });
       }
-      
+
       // If no stats from campaign_analytics, try campaign_lead_activities
       if (analyticsStats.length === 0) {
         try {
@@ -204,7 +204,7 @@ class CampaignStatsTracker {
              GROUP BY action_type, channel`,
             [campaignId, campaignTenantId, 'delivered']
           );
-          
+
           // Map activity types to analytics action types
           analyticsStats = activitiesResult.rows.map(row => {
             let mappedActionType = row.action_type;
@@ -218,14 +218,14 @@ class CampaignStatsTracker {
               'send_message': 'MESSAGE_SENT'
             };
             mappedActionType = actionTypeMap[row.action_type] || row.action_type.toUpperCase();
-            
+
             return {
               action_type: mappedActionType,
               platform: row.platform || 'linkedin',
               count: row.count
             };
           });
-          
+
           logger.info('[CampaignStatsTracker] Using campaign_lead_activities fallback', {
             campaignId: campaignId?.substring(0, 8),
             statsCount: analyticsStats.length
@@ -262,6 +262,7 @@ class CampaignStatsTracker {
         // Update aggregate stats
         switch (actionType) {
           case 'CONNECTION_SENT':
+          case 'CONNECTION_SENT_WITH_MESSAGE':
           case 'MESSAGE_SENT':
           case 'EMAIL_SENT':
           case 'WHATSAPP_SENT':
@@ -317,6 +318,7 @@ class CampaignStatsTracker {
   _getStatsField(actionType) {
     const mapping = {
       'CONNECTION_SENT': 'sent_count',
+      'CONNECTION_SENT_WITH_MESSAGE': 'sent_count',
       'CONNECTION_ACCEPTED': 'connected_count',
       'MESSAGE_SENT': 'sent_count',
       'MESSAGE_DELIVERED': 'delivered_count',
@@ -324,6 +326,7 @@ class CampaignStatsTracker {
       'MESSAGE_CLICKED': 'clicked_count',
       'REPLY_RECEIVED': 'replied_count',
       'PROFILE_VISITED': null, // Don't count as sent
+      'MESSAGE_SKIPPED': null, // Don't count - connection not accepted yet
       'EMAIL_SENT': 'sent_count',
       'EMAIL_OPENED': 'opened_count',
       'WHATSAPP_SENT': 'sent_count',

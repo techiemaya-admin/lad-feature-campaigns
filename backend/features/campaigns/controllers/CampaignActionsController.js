@@ -20,7 +20,7 @@ class CampaignActionsController {
       const { id } = req.params;
       // Update campaign status to running and reset execution_state to active
       // This ensures immediate lead generation when campaign is started
-      const campaign = await CampaignModel.update(id, tenantId, { 
+      const campaign = await CampaignModel.update(id, tenantId, {
         status: 'running',
         execution_state: 'active' // Reset to active when manually started
       });
@@ -43,22 +43,50 @@ class CampaignActionsController {
       // This ensures leads are scraped right away when campaign is started
       // Extract auth token from request to pass to processCampaign
       // The token is available via req.headers.authorization (Bearer token)
-      const authToken = req.headers.authorization 
+      const authToken = req.headers.authorization
         ? req.headers.authorization.replace('Bearer ', '').trim()
         : null;
+      // ✅ Detect 1-day campaign: duration_days=1, or same start/end date, or no dates at all
+      const durationDays = campaign.campaign_duration_days;
+      let isOneDayCampaign = durationDays === 1 || !campaign.campaign_start_date;
+      if (!isOneDayCampaign && campaign.campaign_start_date && campaign.campaign_end_date) {
+        const start = new Date(campaign.campaign_start_date);
+        const end = new Date(campaign.campaign_end_date);
+        const diffDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+        isOneDayCampaign = diffDays <= 1;
+      }
+
       // IMPORTANT: Wrap in try-catch to catch synchronous errors
       try {
         CampaignExecutionService.processCampaign(id, tenantId, authToken)
           .then(async (result) => {
+            // ✅ 1-day campaigns: auto-complete after execution finishes
+            if (isOneDayCampaign) {
+              try {
+                await CampaignModel.update(id, tenantId, { status: 'completed' });
+                logger.info('[CampaignActions] 1-day campaign auto-completed after execution', {
+                  campaignId: id,
+                  tenantId,
+                  durationDays
+                });
+              } catch (completeErr) {
+                logger.error('[CampaignActions] Failed to auto-complete 1-day campaign', {
+                  campaignId: id,
+                  error: completeErr.message
+                });
+              }
+            }
+
             // Emit SSE event so frontend updates in real-time
             try {
               const stats = await campaignStatsTracker.getStats(id);
               await campaignEventsService.publishCampaignListUpdate(id, stats);
               logger.info('Campaign started - SSE event published', {
-                campaignId: id, 
-                leads: stats.leads_count, 
+                campaignId: id,
+                leads: stats.leads_count,
                 sent: stats.sent_count,
-                connected: stats.connected_count 
+                connected: stats.connected_count,
+                isOneDayCampaign
               });
             } catch (sseError) {
               logger.error('Failed to publish SSE event', { error: sseError.message });
@@ -97,7 +125,7 @@ class CampaignActionsController {
             campaign_start_date: campaign.campaign_start_date,
             campaign_end_date: campaign.campaign_end_date
           });
-          
+
           logger.info('[CampaignActions] Cloud Task scheduled for daily execution', {
             campaignId: id,
             taskName: taskInfo.taskName,
