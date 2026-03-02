@@ -505,8 +505,15 @@ class CampaignCRUDController {
       // NOTE: Inbound leads are already linked by CampaignModel.create() when inbound_lead_ids is passed
       // No need to link them again here to avoid duplicates
 
-      // Schedule Cloud Tasks if we have calculated dates from message_data
-      if (calculatedDates && calculatedDates.scheduleDates && calculatedDates.scheduleDates.length > 0) {
+      // ✅ 1-day campaigns: skip Cloud Tasks entirely — immediate execution on creation IS the full run
+      // A campaign is 1-day if: duration_days=1 OR only 1 scheduled date OR no dates at all (manual start)
+      const isOneDayCampaign =
+        campaignDurationDays === 1 ||
+        calculatedDates?.scheduleDates?.length === 1 ||
+        !calculatedDates; // No dates = single immediate run
+
+      // Schedule Cloud Tasks only for multi-day campaigns
+      if (!isOneDayCampaign && calculatedDates && calculatedDates.scheduleDates && calculatedDates.scheduleDates.length > 1) {
         try {
           logger.info('[CampaignCreate] Scheduling Cloud Tasks for calculated dates', {
             campaignId: campaign.id,
@@ -521,11 +528,6 @@ class CampaignCRUDController {
             calculatedDates.scheduleDates
           );
 
-          logger.info('🔍 [DEBUG BACKEND] Cloud Tasks scheduled:', {
-            totalScheduled: schedulingResult.totalScheduled,
-            totalFailed: schedulingResult.totalFailed
-          });
-
           logger.info('[CampaignCreate] Cloud Tasks scheduling completed', {
             campaignId: campaign.id,
             tenantId,
@@ -533,7 +535,6 @@ class CampaignCRUDController {
             totalFailed: schedulingResult.totalFailed
           });
 
-          // Store scheduling result in campaign config for reference
           await CampaignModel.update(campaign.id, tenantId, {
             config: {
               ...campaignConfig,
@@ -551,8 +552,13 @@ class CampaignCRUDController {
             error: schedulingError.message,
             stack: schedulingError.stack
           });
-          // Continue anyway - campaign is created, tasks can be rescheduled later
         }
+      } else if (isOneDayCampaign) {
+        logger.info('[CampaignCreate] 1-day campaign — no Cloud Tasks needed, immediate execution handles everything', {
+          campaignId: campaign.id,
+          tenantId,
+          reason: campaignDurationDays === 1 ? 'duration_days=1' : (!calculatedDates ? 'no_dates' : '1_schedule_date')
+        });
       }
 
       // If campaign is created with status='running' (mapped from 'active'), trigger immediate lead generation
@@ -576,12 +582,27 @@ class CampaignCRUDController {
         CampaignExecutionService.processCampaign(campaign.id, tenantId, authToken)
           .then(async (result) => {
 
-            // ✅ ALWAYS emit SSE event after processCampaign completes (whether success, skipped, or error)
-            // This ensures UI updates even if campaign was skipped or had no leads
+            // ✅ 1-day campaigns: auto-complete immediately after execution finishes
+            // Leads scraped + steps executed = campaign is done. No further runs needed.
+            if (isOneDayCampaign) {
+              try {
+                await CampaignModel.update(campaign.id, tenantId, { status: 'completed' });
+                logger.info('[CampaignCreate] 1-day campaign auto-completed after execution', {
+                  campaignId: campaign.id,
+                  tenantId
+                });
+              } catch (completeErr) {
+                logger.error('[CampaignCreate] Failed to auto-complete 1-day campaign', {
+                  campaignId: campaign.id,
+                  error: completeErr.message
+                });
+              }
+            }
+
+            // ✅ Emit SSE so UI refreshes to show completed/updated state
             try {
               const stats = await campaignStatsTracker.getStats(campaign.id, tenantId);
               await campaignEventsService.publishCampaignListUpdate(campaign.id, stats);
-
             } catch (sseError) {
             }
           })

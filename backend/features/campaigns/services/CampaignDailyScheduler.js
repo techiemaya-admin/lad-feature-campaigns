@@ -106,7 +106,7 @@ class CampaignDailyScheduler {
           taskName: taskInfo.taskName,
         });
       } else {
-        // Last day has run — auto-complete the campaign
+        // ✅ Last day has run — auto-complete the campaign
         logger.info('[CampaignDailyScheduler] Last day completed — marking campaign as completed', {
           campaignId,
           tenantId,
