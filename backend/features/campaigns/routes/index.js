@@ -24,7 +24,7 @@ const {
 // Cloud Tasks authentication middleware
 const validateCloudTasksAuth = (req, res, next) => {
   const cloudTasksSecret = process.env.CLOUD_TASKS_SECRET;
-  
+
   // If OIDC is configured, validate JWT token
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -72,6 +72,7 @@ router.post('/:id/leads/:leadId/reveal-linkedin', jwtAuth, validateUuidParam('id
 // Campaign analytics (new campaign_analytics table)
 router.get('/:id/analytics', jwtAuth, validateUuidParam('id'), CampaignAnalyticsController.getCampaignAnalytics);
 router.get('/:id/analytics/summary', jwtAuth, validateUuidParam('id'), CampaignAnalyticsController.getCampaignAnalyticsSummary);
+router.get('/:id/analytics/export', jwtAuth, validateUuidParam('id'), CampaignAnalyticsController.exportLeads);
 // Campaign stats (SSE and REST)
 router.get('/:id/events', sseAuth, validateUuidParam('id'), CampaignStatsController.streamCampaignStats);
 router.get('/:id/stats', jwtAuth, validateUuidParam('id'), CampaignStatsController.getCampaignStats);
