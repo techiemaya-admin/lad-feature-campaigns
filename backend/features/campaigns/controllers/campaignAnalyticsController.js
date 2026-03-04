@@ -314,7 +314,123 @@ async function getCampaignAnalyticsSummary(req, res) {
     });
   }
 }
+/**
+ * Export campaign leads based on their status
+ * GET /api/campaigns/:id/analytics/export
+ */
+async function exportLeads(req, res) {
+  const { id: campaignId } = req.params;
+  const { filter = 'all' } = req.query;
+
+  try {
+    const tenantId = req.user?.tenantId || req.user?.tenant_id;
+
+    // Verify the campaign exists (with tenant check if available)
+    let campaignCheckResult;
+    if (tenantId) {
+      campaignCheckResult = await query('SELECT id, tenant_id FROM campaigns WHERE id = $1 AND tenant_id = $2', [campaignId, tenantId]);
+    } else {
+      campaignCheckResult = await query('SELECT id, tenant_id FROM campaigns WHERE id = $1', [campaignId]);
+    }
+
+    if (campaignCheckResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Campaign not found' });
+    }
+
+    // Build query to select leads with raw data based on filter
+    let condition = '';
+    const params = [campaignId];
+
+    if (filter === 'connection_accept') {
+      condition = `AND EXISTS (
+        SELECT 1 FROM campaign_analytics ca 
+        WHERE ca.campaign_id = cl.campaign_id AND ca.lead_id = cl.lead_id 
+        AND ca.action_type = 'CONNECTION_ACCEPTED'
+      )`;
+    } else if (filter === 'connection_sent') {
+      condition = `AND EXISTS (
+        SELECT 1 FROM campaign_analytics ca 
+        WHERE ca.campaign_id = cl.campaign_id AND ca.lead_id = cl.lead_id 
+        AND ca.action_type IN ('CONNECTION_SENT', 'CONNECTION_SENT_WITH_MESSAGE')
+      )`;
+    } else if (filter === 'contacted') {
+      condition = `AND EXISTS (
+        SELECT 1 FROM campaign_analytics ca 
+        WHERE ca.campaign_id = cl.campaign_id AND ca.lead_id = cl.lead_id 
+        AND ca.action_type IN ('MESSAGE_SENT', 'EMAIL_SENT', 'WHATSAPP_MESSAGE_SENT', 'VOICE_CALL_INITIATED', 'CONNECTION_SENT_WITH_MESSAGE')
+      )`;
+    } else if (filter === 'reply_received' || filter === 'lead_reply_back') {
+      condition = `AND EXISTS (
+        SELECT 1 FROM campaign_analytics ca 
+        WHERE ca.campaign_id = cl.campaign_id AND ca.lead_id = cl.lead_id 
+        AND ca.action_type IN ('REPLY_RECEIVED', 'EMAIL_REPLY_RECEIVED', 'WHATSAPP_REPLY_RECEIVED')
+      )`;
+    }
+
+    const leadsQuery = `
+      SELECT 
+        COALESCE(cl.first_name, l.first_name) AS first_name, 
+        COALESCE(cl.last_name, l.last_name) AS last_name,
+        COALESCE(cl.company_name, l.company_name) AS company_name,
+        l.email,
+        l.phone,
+        l.linkedin_url,
+        cl.lead_data,
+        cl.created_at
+      FROM campaign_leads cl
+      LEFT JOIN leads l ON cl.lead_id = l.id
+      WHERE cl.campaign_id = $1 ${condition}
+      ORDER BY cl.created_at DESC
+    `;
+
+    const leadsResult = await query(leadsQuery, params);
+
+    const leadsData = leadsResult.rows.map(row => {
+      let rawData = {};
+      try {
+        if (typeof row.lead_data === 'string') {
+          rawData = JSON.parse(row.lead_data);
+        } else if (typeof row.lead_data === 'object' && row.lead_data !== null) {
+          rawData = row.lead_data;
+        }
+
+        if (rawData._full_data) {
+          rawData = { ...rawData, ...rawData._full_data };
+        } else if (rawData._raw_unipile) {
+          rawData = { ...rawData, ...rawData._raw_unipile };
+        }
+      } catch (e) {
+        logger.warn('Failed to parse lead_data inside exportLeads');
+      }
+
+      return {
+        first_name: row.first_name || rawData.first_name || rawData.name?.split(' ')[0] || '',
+        last_name: row.last_name || rawData.last_name || rawData.name?.split(' ').slice(1).join(' ') || '',
+        full_name: `${row.first_name || rawData.first_name || ''} ${row.last_name || rawData.last_name || ''}`.trim(),
+        company_name: row.company_name || rawData.company_name || rawData.organization?.name || rawData.company?.name || rawData.current_company_name || '',
+        email: row.email || rawData.email || rawData.work_email || rawData.personal_email || '',
+        phone: row.phone || rawData.phone || rawData.phone_number || rawData.sanitized_phone || '',
+        linkedin_url: row.linkedin_url || rawData.linkedin_url || rawData.public_profile_url || rawData.profile_url || rawData.social_urls?.linkedin || '',
+        title: row.title || rawData.headline || rawData.title || '',
+        location: rawData.location || rawData.city || rawData.country || '',
+        industry: rawData.industry || rawData.organization?.industry || '',
+        added_at: row.created_at,
+        raw_info: rawData
+      };
+    });
+
+    return res.json({
+      success: true,
+      data: leadsData
+    });
+  } catch (error) {
+    logger.error('[exportLeads] Error exporting leads', { campaignId, error: error.message });
+    return res.status(500).json({ success: false, error: 'Failed to export leads' });
+  }
+}
+
 module.exports = {
   getCampaignAnalytics,
-  getCampaignAnalyticsSummary
+  getCampaignAnalyticsSummary,
+  exportLeads
 };
