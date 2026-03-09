@@ -319,28 +319,47 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
     // AUTO-ENRICHMENT: For linkedin_visit, linkedin_connect, linkedin_message steps
     // Automatically enrich lead to reveal email and LinkedIn URL if not available
     const linkedInStepsNeedingEnrichment = ['linkedin_visit', 'linkedin_connect', 'linkedin_message'];
-    if (linkedInStepsNeedingEnrichment.includes(stepType)) {
-      const hasLinkedIn = leadData.linkedin_url
-        || leadData.employee_linkedin_url
-        || leadData.employee_data?.linkedin_url
-        || leadData.employee_data?.linkedin
-        || leadData.employee_data?.profile_url;
+    const isUnipileSourced = leadData.source === 'linkedin_search' || leadData._source === 'linkedin_search';
 
-      if (!hasLinkedIn) {
-        logger.info('[LinkedInStepExecutor] LinkedIn URL not found - triggering auto-enrichment', {
-          stepType,
-          campaignLeadId: campaignLead.id,
-          databaseLeadId: campaignLead.lead_id,
-          campaignId: campaignLead.campaign_id
-        });
-        // Pass the actual database lead_id (UUID) for updating the leads table
-        // Also pass campaignId for credit tracking
-        leadData = await enrichLeadForLinkedIn(leadData, tenantId, campaignLead.lead_id, campaignLead.campaign_id);
+    if (linkedInStepsNeedingEnrichment.includes(stepType)) {
+      if (isUnipileSourced) {
+        // For Unipile leads: use provider_id directly — Unipile API accepts it natively and bypasses lookup errors
+        const providerId = leadData.provider_id || leadData.id || leadData._full_data?.provider_id;
+        if (providerId) {
+          logger.info('[LinkedInStepExecutor] Unipile lead — using provider_id as identifier', {
+            stepType, providerId, campaignLeadId: campaignLead.id
+          });
+          // Set linkedin_url to provider_id — Unipile service will detect and use directly
+          leadData.linkedin_url = providerId;
+          leadData.provider_id = providerId;
+        } else {
+          logger.warn('[LinkedInStepExecutor] Unipile lead — no provider_id found', {
+            campaignLeadId: campaignLead.id, leadDataKeys: Object.keys(leadData)
+          });
+        }
+      } else {
+        const hasLinkedIn = leadData.linkedin_url
+          || leadData.employee_linkedin_url
+          || leadData.employee_data?.linkedin_url
+          || leadData.employee_data?.linkedin
+          || leadData.employee_data?.profile_url;
+
+        if (!hasLinkedIn) {
+          // Apollo enrichment ONLY for non-Unipile leads
+          logger.info('[LinkedInStepExecutor] LinkedIn URL not found - triggering auto-enrichment', {
+            stepType,
+            campaignLeadId: campaignLead.id,
+            databaseLeadId: campaignLead.lead_id,
+            campaignId: campaignLead.campaign_id
+          });
+          leadData = await enrichLeadForLinkedIn(leadData, tenantId, campaignLead.lead_id, campaignLead.campaign_id);
+        }
       }
     }
 
     const linkedinUrl = leadData.linkedin_url
       || leadData.employee_linkedin_url
+      || leadData.provider_id
       || (leadData.employee_data && typeof leadData.employee_data === 'string'
         ? JSON.parse(leadData.employee_data).linkedin_url
         : leadData.employee_data?.linkedin_url)
@@ -384,7 +403,9 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
       fullname: leadData.name || leadData.employee_name || 'Unknown',
       first_name: (leadData.name || leadData.employee_name || 'Unknown').split(' ')[0],
       last_name: (leadData.name || leadData.employee_name || 'Unknown').split(' ').slice(1).join(' '),
-      public_identifier: linkedinUrl?.match(/linkedin\.com\/in\/([^\/\?]+)/)?.[1]
+      public_identifier: linkedinUrl?.match(/linkedin\.com\/in\/([^\/\?]+)/)?.[1],
+      provider_id: leadData.provider_id || (leadData.employee_data && typeof leadData.employee_data === 'string'
+        ? JSON.parse(leadData.employee_data).provider_id : leadData.employee_data?.provider_id)
     };
     let result;
     // Handle all LinkedIn step types dynamically

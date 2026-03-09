@@ -135,6 +135,15 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     if (typeof stepConfig === 'string') {
       stepConfig = JSON.parse(stepConfig);
     }
+
+    // ROUTE: If source is 'linkedin_search', use Unipile directly (NOT Apollo)
+    if (stepConfig.source === 'linkedin_search') {
+      logger.info('[executeLeadGeneration] LinkedIn Search source detected — routing to Unipile', {
+        campaignId, tenantId
+      });
+      return await executeLinkedInSearchLeadGeneration(campaignId, step, stepConfig, userId, tenantId, authToken);
+    }
+
     // LAD Architecture: Use tenant-aware schema resolution for background processes
     const schema = getTenantSchema(null, tenantId);
 
@@ -271,6 +280,23 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       fullStepConfig: stepConfig,
       stepConfigKeys: Object.keys(stepConfig)
     });
+
+    // NORMALIZE: LinkedIn Search format → standard format
+    // LinkedIn Search sends: { keywords, job_titles, locations, industries }
+    // Standard format expects: { roles, location, industries }
+    if (filters.job_titles && !filters.roles) {
+      filters.roles = Array.isArray(filters.job_titles) ? filters.job_titles : [filters.job_titles];
+      logger.info('[executeLeadGeneration] Normalized job_titles → roles', { roles: filters.roles });
+    }
+    if (filters.locations && !filters.location) {
+      filters.location = Array.isArray(filters.locations) ? filters.locations : [filters.locations];
+      logger.info('[executeLeadGeneration] Normalized locations → location', { location: filters.location });
+    }
+    if (filters.keywords && !filters.roles && !filters.person_titles) {
+      // Use keywords as fallback for roles/title search
+      filters.roles = [filters.keywords];
+      logger.info('[executeLeadGeneration] Using keywords as roles fallback', { roles: filters.roles });
+    }
 
     // GUARD: Check if at least one search criterion is provided
     // Support multiple formats:
@@ -536,13 +562,7 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     const maxPagesToFetch = 10; // Safety limit: don't fetch more than 10 pages
 
     while (employees.length < dailyLimit && currentPage < (page + maxPagesToFetch) && !searchError && !accessDenied) {
-      // Only continue if we got results but they were all duplicates
-      if (filteredOut === 0 || currentPage === page) {
-        // Either no duplicates were filtered, or this is the first page - don't fetch more
-        break;
-      }
-
-      logger.info('[executeLeadGeneration] All leads were duplicates, fetching next page', {
+      logger.info('[executeLeadGeneration] Fetching next page due to duplicate filtering or insufficient leads on previous page', {
         campaignId,
         currentPage: currentPage + 1,
         neededLeads: dailyLimit - employees.length
@@ -552,8 +572,29 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
       currentPage++;
 
       try {
-        const nextPageResult = await searchEmployees(searchParams, currentPage, 0, 100, authToken, tenantId);
-        const nextPageEmployees = nextPageResult.employees || [];
+        let nextPageEmployees = [];
+
+        if (searchSource === 'unipile' && unipileAccountId) {
+          const unipileNextResult = await UnipileApolloAdapterService.searchLeadsWithFallback(
+            {
+              keywords: searchParams.keywords,
+              industry: searchParams.organization_industries?.[0],
+              location: searchParams.organization_locations?.[0],
+              designation: searchParams.person_titles?.[0],
+              company: searchParams.company,
+              skills: searchParams.skills,
+              limit: 100,
+              offset: (currentPage - 1) * 100,
+              accountId: unipileAccountId
+            },
+            tenantId,
+            authToken
+          );
+          nextPageEmployees = unipileNextResult.people || [];
+        } else {
+          const nextPageResult = await searchEmployees(searchParams, currentPage, 0, 100, authToken, tenantId);
+          nextPageEmployees = nextPageResult.employees || [];
+        }
 
         if (nextPageEmployees.length === 0) {
           logger.info('[executeLeadGeneration] No more results available from Apollo', {
@@ -1014,6 +1055,381 @@ async function executeLeadGeneration(campaignId, step, stepConfig, userId, tenan
     return { success: false, error: error.message };
   }
 }
+
+/**
+ * Execute lead generation using Unipile LinkedIn Search (NOT Apollo)
+ * This is the dedicated lead generation function for Advanced Search campaigns.
+ * 
+ * Pipeline:
+ * 1. Get LinkedIn account ID for the tenant
+ * 2. Resolve location names → LinkedIn location IDs (via Unipile parameters API)
+ * 3. Resolve industry names → LinkedIn industry IDs (via Unipile parameters API)
+ * 4. Execute LinkedIn people search (via Unipile search API)
+ * 5. Filter out existing leads (no duplicates)
+ * 6. Save new leads to campaign_leads table
+ *
+ * @param {string} campaignId
+ * @param {Object} step
+ * @param {Object} stepConfig - Contains { source, leadGenerationFilters, leadGenerationLimit }
+ * @param {string} userId
+ * @param {string} tenantId
+ * @param {string} authToken
+ */
+async function executeLinkedInSearchLeadGeneration(campaignId, step, stepConfig, userId, tenantId, authToken = null) {
+  const LinkedInSearchService = require('./LinkedInSearchService');
+  const linkedInSearch = new LinkedInSearchService();
+
+  try {
+    const schema = getTenantSchema(null, tenantId);
+
+    // Get campaign config for offset/date tracking
+    let campaignConfig = await CampaignRepository.getConfigById(campaignId, tenantId, null);
+    if (!campaignConfig) campaignConfig = {};
+
+    // Daily limit from step config or campaign config
+    let dailyLimit = stepConfig.leadGenerationLimit || campaignConfig.leads_per_day || 10;
+
+    try {
+      // Enforce the tenant's total connected limits
+      const LinkedInAccountRepository = require('../repositories/LinkedInAccountRepository');
+      const repo = new LinkedInAccountRepository(require('../../../shared/database/connection').pool);
+      const tenantMaxLimit = await repo.getTotalDailyLimitForTenant(tenantId);
+      if (tenantMaxLimit > 0 && dailyLimit > tenantMaxLimit) {
+        logger.info(`[LinkedInSearchLeadGen] Capping daily limit from ${dailyLimit} to tenant max limit ${tenantMaxLimit}`);
+        dailyLimit = tenantMaxLimit;
+      }
+    } catch (err) {
+      logger.warn('[LinkedInSearchLeadGen] Failed to fetch tenant limit for capping', { error: err.message });
+    }
+
+    // Check if leads already generated today
+    const today = new Date().toISOString().split('T')[0];
+    const lastLeadGenDate = campaignConfig.last_lead_gen_date;
+
+    if (lastLeadGenDate === today) {
+      logger.info('[LinkedInSearchLeadGen] Skipping — leads already generated today', { campaignId, today });
+      return {
+        success: true,
+        leadsFound: 0,
+        leadsSaved: 0,
+        source: 'linkedin_search_skipped',
+        message: `LinkedIn search leads already generated today (${today})`
+      };
+    }
+
+    // Parse filters from step config
+    const filters = stepConfig.leadGenerationFilters || {};
+    const keywords = filters.keywords || '';
+    const locations = filters.locations || [];
+    const industries = filters.industries || [];
+    const jobTitles = filters.job_titles || [];
+    const profileLanguage = filters.profile_language || [];
+
+    logger.info('[LinkedInSearchLeadGen] Starting Unipile LinkedIn search', {
+      campaignId, tenantId, keywords, locations, industries, jobTitles, dailyLimit
+    });
+
+    // Step 1: Get LinkedIn account ID. Use Sales Navigator by default for advanced search.
+    const accountId = process.env.SALES_NAVIGATOR_PROVIDER_ID;
+    if (!accountId) {
+      logger.error('[LinkedInSearchLeadGen] No Sales Navigator account configured.');
+      await CampaignModel.updateExecutionState(campaignId, 'error', {
+        lastExecutionReason: 'Sales Navigator provider ID not configured for advanced search.'
+      });
+      return {
+        success: false,
+        error: 'Sales Navigator provider ID not configured.',
+        leadsFound: 0,
+        leadsSaved: 0,
+        source: 'linkedin_search'
+      };
+    }
+
+    logger.info('[LinkedInSearchLeadGen] LinkedIn account resolved', { accountId, tenantId });
+
+    // Step 2: Resolve location names → LinkedIn location IDs
+    const locationIds = [];
+    for (const loc of locations) {
+      if (!loc || loc.trim() === '') continue;
+      try {
+        const resolved = await linkedInSearch.resolveParameterIds('LOCATION', loc, accountId);
+        if (resolved.length > 0) {
+          locationIds.push(resolved[0].id);
+          logger.info('[LinkedInSearchLeadGen] Location resolved', { location: loc, id: resolved[0].id, name: resolved[0].name });
+        }
+      } catch (locErr) {
+        logger.warn('[LinkedInSearchLeadGen] Failed to resolve location', { location: loc, error: locErr.message });
+      }
+    }
+
+    // Step 3: Resolve industry names → LinkedIn industry IDs
+    const industryIds = [];
+    for (const ind of industries) {
+      if (!ind || ind.trim() === '') continue;
+      try {
+        const resolved = await linkedInSearch.resolveParameterIds('INDUSTRY', ind, accountId);
+        if (resolved.length > 0) {
+          industryIds.push(resolved[0].id);
+          logger.info('[LinkedInSearchLeadGen] Industry resolved', { industry: ind, id: resolved[0].id });
+        }
+      } catch (indErr) {
+        logger.warn('[LinkedInSearchLeadGen] Failed to resolve industry', { industry: ind, error: indErr.message });
+      }
+    }
+
+    // Retrieve saved cursor if any
+    let searchCursor = stepConfig.searchCursor || campaignConfig.searchCursor || null;
+
+    logger.info('[LinkedInSearchLeadGen] Executing Unipile search loop', { accountId, dailyLimit, startingCursor: searchCursor });
+
+    let finalNewLeads = [];
+    let _newCursor = searchCursor;
+    let iteration = 0;
+    const MAX_ITERATIONS = 5; // Safety fallback to prevent infinite loops
+
+    const existingLeadIds = await getExistingLeadIds(tenantId, null);
+
+    while (finalNewLeads.length < dailyLimit && iteration < MAX_ITERATIONS) {
+      iteration++;
+      const currentSearchParams = {
+        isSalesNav: true,
+        keywords: keywords || (jobTitles.length > 0 ? jobTitles[0] : ''),
+        location_ids: locationIds,
+        industry_ids: industryIds,
+        profile_language: profileLanguage,
+        title: jobTitles.length > 0 ? jobTitles[0] : undefined,
+        cursor: _newCursor
+      };
+
+      logger.info(`[LinkedInSearchLeadGen] Search iteration ${iteration}`, { currentSearchParams });
+
+      let searchResult;
+      try {
+        searchResult = await linkedInSearch.searchPeople(currentSearchParams, accountId);
+      } catch (searchErr) {
+        logger.error('[LinkedInSearchLeadGen] Unipile search failed during loop', { error: searchErr.message, campaignId });
+        if (finalNewLeads.length === 0) {
+          // If we got NO leads at all, fail out
+          await CampaignModel.updateExecutionState(campaignId, 'error', {
+            lastExecutionReason: `LinkedIn search failed on iteration ${iteration}: ${searchErr.message}`
+          });
+          return {
+            success: false,
+            error: `LinkedIn search failed: ${searchErr.message}`,
+            leadsFound: 0,
+            leadsSaved: 0,
+            source: 'linkedin_search'
+          };
+        } else {
+          // We got some leads previously, so just stop here and process what we have
+          break;
+        }
+      }
+
+      const results = searchResult.results || [];
+      _newCursor = searchResult.cursor || null;
+
+      logger.info(`[LinkedInSearchLeadGen] Search loop returned results`, {
+        iteration, resultsCount: results.length, total: searchResult.total, nextCursor: _newCursor
+      });
+
+      if (results.length === 0) {
+        break; // No more results returned
+      }
+
+      // Filter duplicates for this batch
+      let uniqueInBatch = results;
+      if (existingLeadIds.size > 0) {
+        uniqueInBatch = results.filter(lead => {
+          const leadId = lead.provider_id || lead.id;
+          return leadId && !existingLeadIds.has(leadId);
+        });
+      }
+
+      // Avoid adding exact same leads if multiple pages somehow return overlapping data
+      const currentFinalIds = new Set(finalNewLeads.map(l => l.provider_id || l.id));
+      uniqueInBatch = uniqueInBatch.filter(lead => !currentFinalIds.has(lead.provider_id || lead.id));
+
+      finalNewLeads = [...finalNewLeads, ...uniqueInBatch];
+
+      logger.info(`[LinkedInSearchLeadGen] Unique batch results`, {
+        iteration, uniqueInBatch: uniqueInBatch.length, totalAccumulated: finalNewLeads.length, required: dailyLimit
+      });
+
+      if (!_newCursor) {
+        break; // Search pool exhausted on API side
+      }
+    }
+
+    if (finalNewLeads.length === 0 && !_newCursor) {
+      // No more results and no cursor means we've completely exhausted the search pool!
+      logger.info('[LinkedInSearchLeadGen] Search pool exhausted. Completing campaign.', { campaignId });
+
+      await CampaignModel.updateExecutionState(campaignId, 'completed', {
+        lastLeadCheckAt: new Date().toISOString(),
+        lastExecutionReason: `Campaign completed. All matching leads exhausted.`
+      });
+
+      // Also update overall status
+      const schema = getTenantSchema(null, tenantId);
+      await require('../../../shared/database/connection').pool.query(
+        `UPDATE ${schema}.campaigns SET status = 'completed' WHERE id = $1`,
+        [campaignId]
+      );
+
+      return {
+        success: true,
+        leadsFound: 0,
+        leadsSaved: 0,
+        source: 'linkedin_search',
+        message: 'No more LinkedIn profiles found. Campaign automatically completed.'
+      };
+    } else if (finalNewLeads.length === 0) {
+      // We didn't find any unique leads, but there IS a cursor. This is rare but could happen if a full page was dupes.
+      // Let's set it to waiting so it can retry with the new cursor later
+      const retryIntervalHours = process.env.LEAD_RETRY_INTERVAL_HOURS || 6;
+      const nextRetryTime = new Date(Date.now() + (retryIntervalHours * 60 * 60 * 1000));
+
+      const schema = getTenantSchema(null, tenantId);
+      // We must save the cursor so it resumes from here on retry
+      const updatedConfig = { ...campaignConfig, searchCursor: _newCursor };
+      await require('../../../shared/database/connection').pool.query(
+        `UPDATE ${schema}.campaigns SET config = $1 WHERE id = $2`,
+        [JSON.stringify(updatedConfig), campaignId]
+      );
+
+      await CampaignModel.updateExecutionState(campaignId, 'waiting_for_leads', {
+        lastLeadCheckAt: new Date().toISOString(),
+        nextRunAt: nextRetryTime.toISOString(),
+        lastExecutionReason: `No new unique profiles found on this page. Retrying next page in ${retryIntervalHours}h.`
+      });
+
+      return {
+        success: true,
+        leadsFound: 0,
+        leadsSaved: 0,
+        source: 'linkedin_search',
+        message: 'No new unique LinkedIn profiles found. Will check next page shortly.'
+      };
+    }
+
+    // Limit precisely to daily limit
+    const leadsToSave = finalNewLeads.slice(0, dailyLimit);
+
+    // Step 6: Save leads using the existing LeadSaveService pipeline
+    const { saveLeadsToCampaign } = require('./LeadSaveService');
+
+    const employeesForSave = leadsToSave.map(lead => {
+      const raw = lead._raw || {};
+      return {
+        id: lead.provider_id || lead.id || '',
+        provider_id: lead.provider_id || lead.id || '',
+        public_identifier: lead.public_identifier || raw.public_identifier || '',
+        member_urn: lead.member_urn || raw.member_urn || '',
+        name: lead.name || `${lead.first_name || ''} ${lead.last_name || ''}`.trim(),
+        first_name: lead.first_name || raw.first_name || '',
+        last_name: lead.last_name || raw.last_name || '',
+        title: lead.headline || raw.headline || raw.title || '',
+        headline: lead.headline || raw.headline || '',
+        email: lead.email || raw.email || null,
+        phone: lead.phone || raw.phone || null,
+        linkedin_url: lead.profile_url || raw.public_profile_url || raw.profile_url || '',
+        profile_url: lead.profile_url || '',
+        company_name: lead.current_company || raw.current_company || raw.company || '',
+        photo_url: lead.profile_picture || raw.profile_picture_url || raw.profile_picture || '',
+        city: lead.location || raw.location || '',
+        country: raw.country || '',
+        industry: lead.industry || raw.industry || '',
+        network_distance: lead.network_distance || raw.network_distance || null,
+        premium: lead.premium || raw.premium || false,
+        summary: lead.summary || raw.summary || '',
+        _source: 'linkedin_search',
+        _raw_unipile: raw
+      };
+    });
+
+    let savedCount = 0;
+    try {
+      const saveResult = await saveLeadsToCampaign(campaignId, tenantId, employeesForSave, 'linkedin_search');
+      savedCount = saveResult.savedCount || 0;
+      logger.info('[LinkedInSearchLeadGen] Leads saved via LeadSaveService', {
+        campaignId, savedCount, skipped: saveResult.skippedCount || 0
+      });
+    } catch (saveErr) {
+      logger.error('[LinkedInSearchLeadGen] LeadSaveService failed', {
+        campaignId, error: saveErr.message
+      });
+    }
+
+    // Check if campaign duration has ended
+    const campaignDays = campaignConfig.campaign_days || 30;
+    const startDate = new Date(campaignConfig.campaign_start_date || campaignConfig.created_at);
+    const currentDate = new Date();
+    const daysElapsed = Math.floor((currentDate - startDate) / (1000 * 60 * 60 * 24));
+
+    let nextExecutionState = savedCount >= dailyLimit ? 'sleeping_until_next_day' : 'active';
+    let isCompleted = false;
+
+    if (daysElapsed >= campaignDays) {
+      logger.info('[LinkedInSearchLeadGen] Campaign duration elapsed. Completing campaign.', { campaignId, campaignDays, daysElapsed });
+      nextExecutionState = 'completed';
+      isCompleted = true;
+
+      const schema = getTenantSchema(null, tenantId);
+      await require('../../../shared/database/connection').pool.query(
+        `UPDATE ${schema}.campaigns SET status = 'completed' WHERE id = $1`,
+        [campaignId]
+      );
+    }
+
+    // Update campaign config with today's date, offset, and the NEW cursor
+    const currentOffset = campaignConfig.lead_gen_offset || 0;
+    const newOffset = currentOffset + savedCount;
+
+    try {
+      const updatedConfig = {
+        ...campaignConfig,
+        last_lead_gen_date: today,
+        lead_gen_offset: newOffset,
+        searchCursor: _newCursor // Store cursor for tomorrow's search
+      };
+      await updateCampaignConfig(campaignId, updatedConfig, null, tenantId);
+    } catch (configErr) {
+      logger.warn('[LinkedInSearchLeadGen] Failed to update campaign config', { error: configErr.message });
+    }
+
+    // Log activity
+    try {
+      await createLeadGenerationActivity(tenantId, campaignId, null, step.id || null, null);
+    } catch (actErr) {
+      logger.warn('[LinkedInSearchLeadGen] Failed to log activity', { error: actErr.message });
+    }
+
+    logger.info('[LinkedInSearchLeadGen] Lead generation complete', {
+      campaignId, leadsFound: finalNewLeads.length, leadsNew: leadsToSave.length,
+      leadsSaved: savedCount, dailyLimit, source: 'linkedin_search',
+      completed: isCompleted
+    });
+
+    return {
+      success: true,
+      leadsFound: finalNewLeads.length,
+      leadsSaved: savedCount,
+      leadCount: savedCount,
+      dailyLimit,
+      currentOffset: newOffset,
+      source: 'linkedin_search',
+      executionState: nextExecutionState,
+      dailyLimitReached: savedCount >= dailyLimit || isCompleted
+    };
+
+  } catch (error) {
+    logger.error('[LinkedInSearchLeadGen] Failed', { campaignId, error: error.message, stack: error.stack });
+    return { success: false, error: error.message, leadsFound: 0, leadsSaved: 0, source: 'linkedin_search' };
+  }
+}
+
 module.exports = {
-  executeLeadGeneration
+  executeLeadGeneration,
+  executeLinkedInSearchLeadGeneration
 };

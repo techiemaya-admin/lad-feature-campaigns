@@ -25,12 +25,12 @@ class UnipileConnectionService {
             // Template message: +5 credits (if message included)
             let totalCredits = CREDIT_COSTS.LINKEDIN_CONNECTION || 1;
             let usageType = 'linkedin_connection';
-            
+
             if (hasMessage) {
                 totalCredits += CREDIT_COSTS.TEMPLATE_MESSAGE || 5;
                 usageType = 'linkedin_connection_with_message';
             }
-            
+
             await deductCredits(tenantId, 'campaigns', usageType, totalCredits, req, {
                 campaignId: options.campaignId,
                 leadId: options.leadId,
@@ -41,7 +41,7 @@ class UnipileConnectionService {
                 hasMessage,
                 campaignId: options.campaignId ? options.campaignId.substring(0, 8) : null
             });
-            
+
             return { success: true, credits_deducted: totalCredits };
         } catch (error) {
             logger.error('[UnipileConnectionService] Error deducting credits for LinkedIn connection', { error: error.message });
@@ -97,46 +97,59 @@ class UnipileConnectionService {
             } else {
             }
             // Lookup the TARGET profile to get the encoded provider_id
-            let lookupResponse;
-            try {
-                lookupResponse = await axios.get(
-                    `${baseUrl}/users/${publicId}`,
-                    {
-                        headers: headers,
-                        params: {
-                            account_id: accountId
-                        },
-                        timeout: Number(process.env.UNIPILE_LOOKUP_TIMEOUT_MS) || 60000
-                    }
-                );
-            } catch (lookupError) {
-                // Handle 404 "Account not found" - account doesn't exist in Unipile
-                if (lookupError.response?.status === 404) {
-                    const errorDetail = lookupError.response.data?.detail || lookupError.response.data?.message || '';
-                    if (errorDetail.includes('Account not found')) {
-                        return {
-                            success: false,
-                            error: `Account not found in Unipile: ${accountId}`,
-                            errorType: 'account_not_found',
-                            statusCode: 404,
-                            accountExpired: true,  // Mark as expired since it's no longer available
-                            isAccountInvalid: true,
-                            employee: { fullname: employee.fullname }
-                        };
-                    }
+            let encodedProviderId = null;
+
+            if (employee.provider_id && typeof employee.provider_id === 'string' && employee.provider_id.includes('ACo')) {
+                // If the provider_id already contains the ACo prefix or is the URN, extract it directly
+                encodedProviderId = employee.provider_id;
+                // If it's a full URN, extract the ACo part
+                if (encodedProviderId.includes(':ACo')) {
+                    encodedProviderId = encodedProviderId.split(':').pop();
                 }
-                throw lookupError;
-            }
-            // Handle response structure (may be wrapped in 'data' object)
-            const responseData = lookupResponse.data?.data || lookupResponse.data;
-            // Validate that we got the correct profile
-            const returnedPublicId = responseData?.public_identifier;
-            if (returnedPublicId && returnedPublicId.toLowerCase() !== publicId.toLowerCase()) {
-            }
-            // Extract the encoded provider_id from lookup response
-            const encodedProviderId = responseData?.provider_id || lookupResponse.data?.provider_id;
-            if (!encodedProviderId) {
-                throw new Error('No provider_id found in lookup response');
+                logger.info('[UnipileConnectionService] Using existing provider_id, skipping profile lookup', { encodedProviderId });
+            } else {
+                let lookupResponse;
+                try {
+                    lookupResponse = await axios.get(
+                        `${baseUrl}/users/${publicId}`,
+                        {
+                            headers: headers,
+                            params: {
+                                account_id: accountId
+                            },
+                            timeout: Number(process.env.UNIPILE_LOOKUP_TIMEOUT_MS) || 60000
+                        }
+                    );
+                } catch (lookupError) {
+                    // Handle 404 "Account not found" - account doesn't exist in Unipile
+                    if (lookupError.response?.status === 404) {
+                        const errorDetail = lookupError.response.data?.detail || lookupError.response.data?.message || '';
+                        if (errorDetail.includes('Account not found')) {
+                            return {
+                                success: false,
+                                error: `Account not found in Unipile: ${accountId}`,
+                                errorType: 'account_not_found',
+                                statusCode: 404,
+                                accountExpired: true,  // Mark as expired since it's no longer available
+                                isAccountInvalid: true,
+                                employee: { fullname: employee.fullname }
+                            };
+                        }
+                    }
+                    throw lookupError;
+                }
+                // Handle response structure (may be wrapped in 'data' object)
+                const responseData = lookupResponse.data?.data || lookupResponse.data;
+                // Validate that we got the correct profile
+                const returnedPublicId = responseData?.public_identifier;
+                if (returnedPublicId && returnedPublicId.toLowerCase() !== publicId.toLowerCase()) {
+                    // Mismatches are logged upstream if needed
+                }
+                // Extract the encoded provider_id from lookup response
+                encodedProviderId = responseData?.provider_id || lookupResponse.data?.provider_id;
+                if (!encodedProviderId) {
+                    throw new Error('No provider_id found in lookup response');
+                }
             }
             // STEP 2: Send invitation with the ENCODED provider_id
             const payload = {
@@ -171,14 +184,14 @@ class UnipileConnectionService {
                             employee: { fullname: employee.fullname }
                         };
                     }
-                    
+
                     // SUCCESS: Deduct credits for successful connection
                     let creditsDeducted = 0;
                     if (tenantId) {
                         const creditResult = await this._deductConnectionCredits(tenantId, !!customMessage, req || {});
                         creditsDeducted = creditResult.credits_deducted || 0;
                     }
-                    
+
                     return {
                         success: true,
                         data: responseData,
@@ -212,7 +225,7 @@ class UnipileConnectionService {
                     const errorData = inviteError.response.data;
                     const errorType = errorData?.type || '';
                     const errorDetail = errorData?.detail || errorData?.message || '';
-                    if (errorType.includes('already_invited') || 
+                    if (errorType.includes('already_invited') ||
                         (errorDetail.includes('already') && errorDetail.includes('invited') && !errorDetail.includes('limit'))) {
                         return {
                             success: true,
@@ -221,7 +234,7 @@ class UnipileConnectionService {
                             employee: { fullname: employee.fullname }
                         };
                     }
-                    if (errorType.includes('cannot_resend_yet') || 
+                    if (errorType.includes('cannot_resend_yet') ||
                         errorDetail.includes('temporary provider limit') ||
                         errorDetail.includes('provider limit')) {
                         return {
@@ -268,11 +281,14 @@ class UnipileConnectionService {
                     }
                 };
             }
-            let errorLinkedInUrl = employee.profile_url || employee.linkedin_url || 
+            let errorLinkedInUrl = employee.profile_url || employee.linkedin_url ||
                 (employee.public_identifier ? `https://www.linkedin.com/in/${employee.public_identifier}` : null);
+
+            const detailError = error.response?.data?.detail || error.response?.data?.message || error.message;
+
             return {
                 success: false,
-                error: error.message,
+                error: detailError,
                 statusCode: error.response?.status,
                 errorType: error.response?.data?.type,
                 employee: {

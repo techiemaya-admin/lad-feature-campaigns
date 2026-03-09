@@ -13,6 +13,95 @@ const { pollingScheduler } = require('../services/pollingScheduler');
 const messageTemplatesRoutes = require('./linkedinMessageTemplates');
 router.use('/message-templates', messageTemplatesRoutes);
 
+// LinkedIn Search routes (mount before /:id routes to avoid conflicts)
+const LinkedInSearchController = require('../controllers/LinkedInSearchController');
+
+// POST /api/campaigns/linkedin/search/extract-intent - Extract search filters from natural language
+router.post('/search/extract-intent', jwtAuth, LinkedInSearchController.extractIntent);
+
+// GET /api/campaigns/linkedin/search/parameters - Resolve location/industry names to LinkedIn IDs
+router.get('/search/parameters', jwtAuth, LinkedInSearchController.resolveParameters);
+
+// POST /api/campaigns/linkedin/search - Full LinkedIn people search
+router.post('/search', jwtAuth, LinkedInSearchController.searchPeople);
+
+// POST /api/campaigns/linkedin/search/advanced - Full LinkedIn search using Sales Navigator account
+// Uses SALES_NAVIGATOR_PROVIDER_ID from .env instead of user's LinkedIn account
+router.post('/search/advanced', jwtAuth, async (req, res) => {
+  const logger = require('../../../core/utils/logger');
+  try {
+    const { query, filters = {}, start = 0, count = 25, targeting: preExtractedTargeting } = req.body;
+    const salesNavProviderId = process.env.SALES_NAVIGATOR_PROVIDER_ID;
+
+    if (!salesNavProviderId) {
+      return res.status(500).json({ success: false, error: 'Sales Navigator provider ID not configured' });
+    }
+
+    if (!query || typeof query !== 'string' || query.trim().length === 0) {
+      return res.status(400).json({ success: false, error: 'Query is required' });
+    }
+
+    logger.info('[AdvancedSearch] Starting search with Sales Navigator', {
+      query: query.trim(),
+      hasPreExtractedTargeting: !!preExtractedTargeting,
+      preExtractedTargeting: preExtractedTargeting ? {
+        titles: preExtractedTargeting.job_titles,
+        industries: preExtractedTargeting.industries,
+        locations: preExtractedTargeting.locations,
+      } : null,
+      salesNavProviderId: salesNavProviderId.substring(0, 8) + '...'
+    });
+
+    const LinkedInSearchService = require('../services/LinkedInSearchService');
+    const searchService = new LinkedInSearchService();
+
+    let result;
+
+    if (preExtractedTargeting &&
+      (preExtractedTargeting.job_titles?.length > 0 ||
+        preExtractedTargeting.industries?.length > 0 ||
+        preExtractedTargeting.locations?.length > 0)) {
+      // ── Fast path: targeting already extracted by AI chat (skip Gemini re-parse) ──
+      // Build synthetic intent from the pre-extracted targeting
+      logger.info('[AdvancedSearch] Using pre-extracted targeting — skipping Gemini intent parse');
+      const syntheticIntent = {
+        job_titles: preExtractedTargeting.job_titles || [],
+        industries: preExtractedTargeting.industries || [],
+        locations: preExtractedTargeting.locations || [],
+        keywords: preExtractedTargeting.keywords || [],
+        profile_language: preExtractedTargeting.profile_language || [],
+      };
+      result = await searchService.fullSearchWithIntent(
+        query.trim(),
+        salesNavProviderId,
+        syntheticIntent,
+        { ...filters, start, count, isSalesNav: true }
+      );
+    } else {
+      // ── Normal path: extract intent from text query via Gemini ──
+      result = await searchService.fullSearch(
+        query.trim(),
+        salesNavProviderId,
+        { ...filters, start, count, isSalesNav: true }
+      );
+    }
+
+    return res.json({
+      success: true,
+      intent: result.intent,
+      summary: searchService.generateIntentSummary(result.intent),
+      resolvedFilters: result.resolvedFilters,
+      results: result.results,
+      total: result.total,
+      paging: result.paging
+    });
+  } catch (error) {
+    logger.error('[AdvancedSearch] Search failed', { error: error.message });
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
 // GET /api/campaigns/linkedin/status - Check LinkedIn connection status
 router.get('/status', jwtAuth, async (req, res) => {
   try {
