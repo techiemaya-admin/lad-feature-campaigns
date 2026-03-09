@@ -11,85 +11,7 @@ const logger = require('../../../core/utils/logger');
 const UnipileBaseService = require('./UnipileBaseService');
 const geminiClient = require('../../ai-icp-assistant/services/gemini-client.service');
 
-/**
- * Maps common AI-generated industry names → exact LinkedIn/Unipile parameter API names.
- * LinkedIn uses specific industry taxonomy — many variations exist in common usage.
- * Add more as you discover mismatches in logs (look for "bestMatch: null").
- */
-const INDUSTRY_ALIAS_MAP = {
-    // Travel & Hospitality
-    'leisure, travel & tourism': 'Travel Arrangements',
-    'leisure travel tourism': 'Travel Arrangements',
-    'travel & tourism': 'Travel Arrangements',
-    'travel and tourism': 'Travel Arrangements',
-    'travel': 'Travel Arrangements',
-    'tourism': 'Travel Arrangements',
-    'hospitality': 'Hospitality',
-    'hotels': 'Hospitality',
-    'hotel and hospitality': 'Hospitality',
-    'food and beverage': 'Food and Beverage Services',
-    'restaurants': 'Food and Beverage Services',
-
-    // Finance & Tech
-    'fintech': 'Financial Services',
-    'financial technology': 'Financial Services',
-    'finance': 'Financial Services',
-    'banking': 'Banking',
-    'investment': 'Investment Management',
-    'insurance': 'Insurance',
-
-    // Energy
-    'oil and energy': 'Oil and Gas',
-    'oil & energy': 'Oil and Gas',
-    'oil and gas': 'Oil and Gas',
-    'energy': 'Utilities',
-    'renewable energy': 'Renewable Energy Semiconductor Manufacturing',
-
-    // Technology
-    'technology': 'Software Development',
-    'software': 'Software Development',
-    'it': 'IT Services and IT Consulting',
-    'information technology': 'IT Services and IT Consulting',
-    'saas': 'Software Development',
-    'ecommerce': 'Online Commerce',
-    'e-commerce': 'Online Commerce',
-
-    // Healthcare & Education
-    'healthcare': 'Hospitals and Health Care',
-    'health': 'Hospitals and Health Care',
-    'pharma': 'Pharmaceutical Manufacturing',
-    'pharmaceuticals': 'Pharmaceutical Manufacturing',
-    'education': 'Education Administration Programs',
-
-    // Professional Services
-    'professional services': 'Business Consulting and Services',
-    'consulting': 'Business Consulting and Services',
-    'management consulting': 'Business Consulting and Services',
-    'marketing': 'Advertising Services',
-    'advertising': 'Advertising Services',
-    'hr': 'Human Resources Services',
-    'human resources': 'Human Resources Services',
-    'recruitment': 'Staffing and Recruiting',
-    'real estate': 'Real Estate',
-    'construction': 'Construction',
-    'retail': 'Retail',
-    'e-commerce & retail': 'Retail',
-    'ecommerce & retail': 'Retail',
-    'travel & hospitality': 'Hospitality',
-    'logistics': 'Transportation, Logistics, Supply Chain and Storage',
-    'supply chain': 'Transportation, Logistics, Supply Chain and Storage',
-    'legal': 'Law Practice',
-};
-
-/**
- * Normalize an AI-generated industry name to the closest LinkedIn API name.
- * Returns the normalized name, or the original if no mapping found.
- */
-function normalizeIndustryName(industry) {
-    if (!industry) return industry;
-    const key = industry.toLowerCase().trim();
-    return INDUSTRY_ALIAS_MAP[key] || industry;
-}
+// AI handles semantic taxonomy analysis now
 
 class LinkedInSearchService extends UnipileBaseService {
     constructor() {
@@ -105,29 +27,107 @@ class LinkedInSearchService extends UnipileBaseService {
     async extractSearchIntent(naturalLanguageQuery) {
         logger.info('[LinkedInSearchService] Extracting search intent', { query: naturalLanguageQuery });
 
-        const prompt = `You are a LinkedIn search expert. Parse the following natural language query into structured LinkedIn search filters for Sales Navigator.
+        const prompt = `You are an AI B2B Lead Generation Strategist.
 
-User query: "${naturalLanguageQuery}"
+Your job is to analyze the user's input and extract a precise Ideal Customer Profile (ICP) for LinkedIn lead search.
 
-Return ONLY a valid JSON object (no markdown, no code fences) with these fields:
+Your goal is to identify the most relevant decision makers, industries, and locations that match the user's intent.
+
+IMPORTANT RULES:
+
+1. Extract structured targeting filters from the user's request.
+2. Always prioritize real LinkedIn job titles used by professionals.
+3. Avoid vague keywords like "marketing people" or "business leaders".
+4. Only include industries that exist on LinkedIn.
+5. If the user mentions a city, extract the correct location.
+6. If the user mentions a startup or company size, infer company headcount.
+7. If the user input is a company URL, analyze the business model and identify ideal buyers or partners.
+8. Focus on decision makers who control budgets or purchasing decisions.
+9. Prefer senior roles such as Director, Head, VP, C-level when appropriate.
+
+Return results ONLY as JSON.
+
+JSON STRUCTURE:
+
 {
-  "keywords": "main search keywords (keep short, 2-4 words max)",
-  "job_titles": ["array of job titles mentioned or implied"],
-  "industries": ["array of industries mentioned - use LinkedIn industry names like: Software Development, Financial Services, Healthcare, etc."],
-  "locations": ["array of location names mentioned (cities, states, countries)"],
-  "functions": ["array of job functions if mentioned - e.g. Sales, Marketing, Engineering, Information Technology"],
-  "seniority": ["array of seniority levels if mentioned: Owner, Partner, CXO, VP, Director, Manager, Senior, Entry, Training"],
-  "company_headcount": ["array of company size ranges if mentioned: 1-10, 11-50, 51-200, 201-500, 501-1000, 1001-5000, 5001-10000, 10001+"],
-  "company_names": ["array of specific company names if mentioned"],
-  "profile_language": ["ISO 639-1 language codes if nationality/language is mentioned, e.g. 'en', 'hi', 'fr'"]
+  "keywords": "",
+  "job_titles": [],
+  "industries": [],
+  "locations": [],
+  "functions": [],
+  "seniority": [],
+  "company_headcount": [],
+  "company_names": [],
+  "profile_language": []
 }
 
-Rules:
-- Always extract at least keywords
-- If a parameter category is not mentioned, return empty array
-- If nationality is mentioned (e.g. "Indian"), add the country to locations AND set profile_language
-- Keep keywords concise
-- Return ONLY the JSON object, nothing else`;
+FIELD RULES:
+
+job_titles:
+Use real professional titles such as:
+- Marketing Director
+- Head of Sales
+- Procurement Manager
+- Travel Manager
+- CEO
+- Founder
+- Investment Director
+
+industries:
+Use common LinkedIn industries such as:
+- Financial Services
+- Information Technology
+- Real Estate
+- Management Consulting
+- Marketing & Advertising
+- E-commerce
+- Hospitality
+- Investment Management
+
+locations:
+Return full location names such as:
+- London, United Kingdom
+- Dubai, United Arab Emirates
+- New York, United States
+
+seniority:
+Use:
+- Manager
+- Director
+- VP
+- CXO
+- Owner
+
+company_headcount:
+Use ranges:
+- 1-10
+- 11-50
+- 51-200
+- 201-500
+- 501-1000
+- 1001-5000
+- 5000+
+
+Example Input:
+"Marketing directors at fintech startups in London"
+
+Example Output:
+
+{
+  "keywords": "marketing directors fintech startups london",
+  "job_titles": ["Marketing Director", "Head of Marketing", "CMO"],
+  "industries": ["Financial Services", "Information Technology"],
+  "locations": ["London, United Kingdom"],
+  "functions": ["Marketing"],
+  "seniority": ["Director", "CXO"],
+  "company_headcount": ["11-50", "51-200"],
+  "company_names": [],
+  "profile_language": []
+}
+
+Always return clean JSON with no explanation.
+
+User query: "${naturalLanguageQuery}"`;
 
         try {
             const responseText = await geminiClient.generateContent(prompt);
@@ -229,18 +229,6 @@ Rules:
                 else if (nameLow.includes(queryLower)) score = 3;
                 else if (nameLow.includes(firstWordLow)) score = 2;
                 else if (primaryWord && primaryWord.length >= 4 && nameLow.includes(primaryWord)) score = 1;
-                // Intentional word-level check for industries like "Information Technology" matching "Technology, Information and Internet"
-                else if (type === 'INDUSTRY' && firstWordLow.length > 5) {
-                    const queryWords = queryLower.split(' ').filter(w => w.length > 4);
-                    let matchedWords = 0;
-                    for (const kw of queryWords) {
-                        if (nameLow.includes(kw)) matchedWords++;
-                    }
-                    if (matchedWords >= Math.min(2, queryWords.length)) score = 1;
-
-                    // Fallback alias check
-                    if (firstWordLow.includes('information technology') && nameLow.includes('technology, information')) score = 3;
-                }
 
                 return {
                     id: String(item.id || item.urn || item.value || ''),
@@ -252,8 +240,46 @@ Rules:
             // Sort: score descending, then name length ascending (country 'India' before 'Ahmedabad, Gujarat, India')
             mapped.sort((a, b) => b.score - a.score || a.name.length - b.name.length);
 
-            // bestMatch = first item with score > 0
-            const bestMatch = mapped.find(m => m.score > 0) || null;
+            let bestMatch = mapped.find(m => m.score > 0) || null;
+            const highestScore = mapped.length > 0 ? mapped[0].score : 0;
+
+            // INTELLIGENT MATCHING: If we don't have a perfect exact string match (score 4 or 5), 
+            // use Gemini AI to semantically figure out the closest match from the list!
+            if (highestScore < 4 && mapped.length > 0) {
+                try {
+                    const prompt = `You are a LinkedIn taxonomy expert mapping a user's intent to the standard LinkedIn API list.
+The user wants to filter by ${type.toLowerCase()} using the term: "${queryName}".
+
+Here is the JSON list of available options returned by the LinkedIn search API:
+${JSON.stringify(mapped.map(m => ({ id: m.id, name: m.name })))}
+
+Select the ID of the ONE item from this list that is the best semantic match for the user's intent. 
+For example, if the user wants "Information Technology", the best match might be "Technology, Information and Internet" or "IT Services and IT Consulting". 
+If the user wants "Fintech", the best match is "Financial Services".
+
+Return ONLY valid JSON like:
+{"best_match_id": "123", "reasoning": "Explain why"}
+If NO item in the list is a reasonably good logical match, return:
+{"best_match_id": null, "reasoning": "No relevant match found."}`;
+
+                    const rawResponse = await geminiClient.generateContent(prompt);
+                    const cleaned = rawResponse.replace(/```json\s*|\s*```/g, '').trim();
+                    const parsed = JSON.parse(cleaned);
+
+                    if (parsed.best_match_id) {
+                        const aiMatch = mapped.find(m => m.id === parsed.best_match_id);
+                        if (aiMatch) {
+                            bestMatch = { ...aiMatch, score: 99 }; // override to designate AI precision
+                            logger.info('[LinkedInSearchService] Gemini AI dynamically picked parameter match!', { queryName, aiMatchName: aiMatch.name, reasoning: parsed.reasoning });
+
+                            // Re-insert at top of mapped array so the caller uses it
+                            mapped.unshift(bestMatch);
+                        }
+                    }
+                } catch (aiErr) {
+                    logger.warn('[LinkedInSearchService] Gemini AI parameter matching failed, falling back to basic scoring', { error: aiErr.message });
+                }
+            }
 
             logger.info('[LinkedInSearchService] Parameter resolved', {
                 type,
@@ -645,16 +671,11 @@ Rules:
             else unmappedLocs.push(loc);
         }
 
-        // Resolve industry names → LinkedIn IDs
-        // Apply alias normalization first (FinTech→Financial Services, Hospitality→Hospitality, etc.)
         const industryIds = [];
         const unmappedInds = [];
 
         for (const rawInd of normIntent.industries) {
-            const ind = normalizeIndustryName(rawInd);
-            if (ind !== rawInd) {
-                logger.info('[LinkedInSearchService] Industry normalized', { from: rawInd, to: ind });
-            }
+            const ind = rawInd; // We now use AI to resolve aliases inline in resolveParameterIds instead of hardcoding
             const resolved = await this.resolveParameterIds(industryType, ind, accountId);
             // Only use the result if it has a real match (score > 0)
             const best = resolved.find(r => r.score > 0);
