@@ -62,6 +62,7 @@ const INDUSTRY_ALIAS_MAP = {
     'education': 'Education Administration Programs',
 
     // Professional Services
+    'professional services': 'Business Consulting and Services',
     'consulting': 'Business Consulting and Services',
     'management consulting': 'Business Consulting and Services',
     'marketing': 'Advertising Services',
@@ -72,6 +73,9 @@ const INDUSTRY_ALIAS_MAP = {
     'real estate': 'Real Estate',
     'construction': 'Construction',
     'retail': 'Retail',
+    'e-commerce & retail': 'Retail',
+    'ecommerce & retail': 'Retail',
+    'travel & hospitality': 'Hospitality',
     'logistics': 'Transportation, Logistics, Supply Chain and Storage',
     'supply chain': 'Transportation, Logistics, Supply Chain and Storage',
     'legal': 'Law Practice',
@@ -224,9 +228,19 @@ Rules:
                 else if (nameLow.startsWith(queryLower)) score = 4;
                 else if (nameLow.includes(queryLower)) score = 3;
                 else if (nameLow.includes(firstWordLow)) score = 2;
-                else if (primaryWord.length >= 5 && nameLow.includes(primaryWord)) score = 1;
-                // Intentionally NO generic word-level score — avoids false positives like
-                // "Accommodation and Food Services" matching "Financial Services" via "services"
+                else if (primaryWord && primaryWord.length >= 4 && nameLow.includes(primaryWord)) score = 1;
+                // Intentional word-level check for industries like "Information Technology" matching "Technology, Information and Internet"
+                else if (type === 'INDUSTRY' && firstWordLow.length > 5) {
+                    const queryWords = queryLower.split(' ').filter(w => w.length > 4);
+                    let matchedWords = 0;
+                    for (const kw of queryWords) {
+                        if (nameLow.includes(kw)) matchedWords++;
+                    }
+                    if (matchedWords >= Math.min(2, queryWords.length)) score = 1;
+
+                    // Fallback alias check
+                    if (firstWordLow.includes('information technology') && nameLow.includes('technology, information')) score = 3;
+                }
 
                 return {
                     id: String(item.id || item.urn || item.value || ''),
@@ -355,8 +369,7 @@ Rules:
                         body.profile_language = searchParams.profile_language;
                     }
                     if (searchParams.title) {
-                        const titleStr = Array.isArray(searchParams.title) ? searchParams.title[0] : searchParams.title;
-                        body.role = { include: [titleStr] };
+                        body.role = { include: Array.isArray(searchParams.title) ? searchParams.title : [searchParams.title] };
                     }
                     if (searchParams.company) {
                         const compStr = Array.isArray(searchParams.company) ? searchParams.company[0] : searchParams.company;
@@ -372,7 +385,7 @@ Rules:
                     if (searchParams.profile_language?.length) body.profile_language = searchParams.profile_language;
                     if (searchParams.title?.length) {
                         body.advanced_keywords = body.advanced_keywords || {};
-                        body.advanced_keywords.title = searchParams.title;
+                        body.advanced_keywords.title = Array.isArray(searchParams.title) ? searchParams.title.join(' OR ') : searchParams.title;
                     }
                     if (searchParams.company?.length) {
                         body.advanced_keywords = body.advanced_keywords || {};
@@ -557,7 +570,7 @@ Rules:
             seniority_ids: seniorityIds,
             company_headcount_ids: companyHeadcountIds,
             profile_language: intent.profile_language,
-            title: intent.job_titles.length > 0 ? intent.job_titles[0] : undefined,
+            title: intent.job_titles.length > 0 ? intent.job_titles : undefined,
             company: intent.company_names.length > 0 ? intent.company_names : undefined,
             cursor: additionalFilters.cursor || undefined
         };
@@ -650,19 +663,15 @@ Rules:
         }
 
         // Build final keywords string:
-        // PRIORITY: job_titles[0] > explicit keywords > first 3 words of queryHint
-        // Rationale: job title is the most targeted keyword for LinkedIn search.
-        // "startup", "fintech" style keywords extracted by Gemini are noisy and cause 0 results.
+        // By default, do not pollute keywords with job titles since we use the 'role' filter natively now.
+        // Only use keywords if the user explicitly provided them, or as a last resort fallback.
         let finalKeywords = '';
-        if (normIntent.job_titles.length > 0) {
-            // Always prefer job title as primary keyword — most relevant for LinkedIn search
-            finalKeywords = normIntent.job_titles[0];
-        } else if (normIntent.keywords) {
-            finalKeywords = String(normIntent.keywords);
-        } else {
-            // Last resort: first 3 words of queryHint
+        if (normIntent.keywords && typeof normIntent.keywords === 'string') {
+            finalKeywords = normIntent.keywords;
+        } else if (normIntent.job_titles.length === 0) {
             finalKeywords = String(queryHint || '').split(' ').slice(0, 3).join(' ');
         }
+
         // Append unresolved locations/industries as keyword fallback
         if (unmappedLocs.length > 0) finalKeywords += ` ${unmappedLocs.join(' ')}`;
         if (unmappedInds.length > 0) finalKeywords += ` ${unmappedInds.join(' ')}`;
@@ -676,7 +685,7 @@ Rules:
             seniority_ids: normIntent.seniority,
             company_headcount_ids: normIntent.company_headcount,
             profile_language: normIntent.profile_language,
-            title: normIntent.job_titles.length > 0 ? normIntent.job_titles[0] : undefined,
+            title: normIntent.job_titles.length > 0 ? normIntent.job_titles : undefined,
             company: normIntent.company_names.length > 0 ? normIntent.company_names : undefined,
             cursor: additionalFilters.cursor || undefined,
         };
