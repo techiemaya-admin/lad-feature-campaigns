@@ -41,9 +41,24 @@ IMPORTANT RULES:
 4. Only include industries that exist on LinkedIn.
 5. If the user mentions a city, extract the correct location.
 6. If the user mentions a startup or company size, infer company headcount.
-7. If the user input is a company URL, analyze the business model and identify ideal buyers or partners.
+7. If the user input is a company URL (like linkedin.com/company/xxx), extract the company name from the URL slug.
 8. Focus on decision makers who control budgets or purchasing decisions.
 9. Prefer senior roles such as Director, Head, VP, C-level when appropriate.
+COMPANY-SPECIFIC SEARCH RULES:
+- If the query starts with "Search for people working at company:", the user wants to find employees at that specific company.
+- ALWAYS extract the company name into "company_names" array.
+- CRITICAL: Pay close attention to what the user is asking for:
+  * If user says "find people" or "all people" or "everyone" or just a company name → set job_titles to EMPTY [] and seniority to EMPTY []. This returns ALL employees without any role filter.
+  * If user says "decision makers" → set job_titles to ["CEO", "CTO", "CFO", "COO", "VP", "Director", "Founder", "Managing Director"] and seniority to ["CXO", "VP", "Director", "Owner"].
+  * If user says a SPECIFIC role like "founders" or "engineers" or "CEO" → set job_titles to ONLY that specific role (e.g. ["Founder"] or ["Software Engineer"] or ["CEO"]).
+- If the user provides a LinkedIn company URL, extract the company name from the URL path (e.g. "https://linkedin.com/company/openai" → company_names: ["OpenAI"]).
+
+PERSON-SPECIFIC SEARCH RULES:
+- If the query starts with "Find specific person:", the user wants to find one specific individual.
+- Extract the person's name into "keywords" field.
+- If a company is mentioned, extract it into "company_names".
+- If a job title is mentioned, extract it into "job_titles".
+- If a location is mentioned, extract it into "locations".
 
 Return results ONLY as JSON.
 
@@ -108,10 +123,10 @@ Use ranges:
 - 1001-5000
 - 5000+
 
-Example Input:
+Example 1 Input:
 "Marketing directors at fintech startups in London"
 
-Example Output:
+Example 1 Output:
 
 {
   "keywords": "marketing directors fintech startups london",
@@ -122,6 +137,91 @@ Example Output:
   "seniority": ["Director", "CXO"],
   "company_headcount": ["11-50", "51-200"],
   "company_names": [],
+  "profile_language": []
+}
+
+Example 2 Input:
+"Search for people working at company: find all people in techiemaya"
+
+Example 2 Output:
+
+{
+  "keywords": "techiemaya",
+  "job_titles": [],
+  "industries": [],
+  "locations": [],
+  "functions": [],
+  "seniority": [],
+  "company_headcount": [],
+  "company_names": ["techiemaya"],
+  "profile_language": []
+}
+
+Example 3 Input:
+"Find specific person: naveen reddy yeluru, founder at techiemaya"
+
+Example 3 Output:
+
+{
+  "keywords": "naveen reddy yeluru",
+  "job_titles": ["Founder"],
+  "industries": [],
+  "locations": [],
+  "functions": [],
+  "seniority": ["Owner"],
+  "company_headcount": [],
+  "company_names": ["techiemaya"],
+  "profile_language": []
+}
+
+Example 4 Input:
+"Search for people working at company: find decision makers at Tesla USA"
+
+Example 4 Output:
+
+{
+  "keywords": "Tesla",
+  "job_titles": ["CEO", "CTO", "CFO", "COO", "VP", "Director", "Founder", "Managing Director"],
+  "industries": [],
+  "locations": ["United States"],
+  "functions": [],
+  "seniority": ["CXO", "VP", "Director", "Owner"],
+  "company_headcount": [],
+  "company_names": ["Tesla"],
+  "profile_language": []
+}
+
+Example 5 Input:
+"Search for people working at company: founders in techiemaya"
+
+Example 5 Output:
+
+{
+  "keywords": "techiemaya",
+  "job_titles": ["Founder", "Co-Founder"],
+  "industries": [],
+  "locations": [],
+  "functions": [],
+  "seniority": ["Owner"],
+  "company_headcount": [],
+  "company_names": ["techiemaya"],
+  "profile_language": []
+}
+
+Example 6 Input:
+"Search for people working at company: techiemaya"
+
+Example 6 Output:
+
+{
+  "keywords": "techiemaya",
+  "job_titles": [],
+  "industries": [],
+  "locations": [],
+  "functions": [],
+  "seniority": [],
+  "company_headcount": [],
+  "company_names": ["techiemaya"],
   "profile_language": []
 }
 
@@ -409,11 +509,23 @@ If NO item in the list is a reasonably good logical match, return:
                     if (searchParams.keywords) body.keywords = searchParams.keywords;
                     if (searchParams.location_ids?.length) body.location = searchParams.location_ids;
                     if (searchParams.profile_language?.length) body.profile_language = searchParams.profile_language;
+                    
+                    // Classic API has strict payload size limits
+                    // When searching a company with many titles, prioritize company filter
+                    const hasCompany = searchParams.company?.length > 0;
+                    
                     if (searchParams.title?.length) {
-                        body.advanced_keywords = body.advanced_keywords || {};
-                        body.advanced_keywords.title = Array.isArray(searchParams.title) ? searchParams.title.join(' OR ') : searchParams.title;
+                        const titles = Array.isArray(searchParams.title) ? searchParams.title : [searchParams.title];
+                        // Limit to 3 titles max for classic API to avoid 400 "Content too large"
+                        const limitedTitles = titles.slice(0, 3);
+                        // If we have a company filter AND too many titles, skip titles entirely
+                        // (company filter + keywords is enough for classic API)
+                        if (!(hasCompany && titles.length > 4)) {
+                            body.advanced_keywords = body.advanced_keywords || {};
+                            body.advanced_keywords.title = limitedTitles.join(' OR ');
+                        }
                     }
-                    if (searchParams.company?.length) {
+                    if (hasCompany) {
                         body.advanced_keywords = body.advanced_keywords || {};
                         body.advanced_keywords.company = Array.isArray(searchParams.company) ? searchParams.company[0] : searchParams.company;
                     }
@@ -445,6 +557,44 @@ If NO item in the list is a reasonably good logical match, return:
                     response = await axios.post(`${baseUrl}/linkedin/search`, currentSearchBody, requestConfig);
                 } else {
                     throw err; // Re-throw if it wasn't a 403 or it was already on classic
+                }
+            }
+
+            // Smart retry: if classic API returned 0 results AND we used a company filter,
+            // retry with company name as keywords instead (LinkedIn doesn't recognize small companies as structured filters)
+            const firstItems = response.data?.items || response.data?.data?.items || [];
+            if (firstItems.length === 0 && currentSearchBody.api === 'classic' && currentSearchBody.advanced_keywords?.company) {
+                const companyName = currentSearchBody.advanced_keywords.company;
+                logger.info('[LinkedInSearchService] 0 results with company filter, retrying with company as keyword', { companyName });
+                const retryBody = { ...currentSearchBody };
+                retryBody.keywords = ((retryBody.keywords || '') + ' ' + companyName).trim();
+                delete retryBody.advanced_keywords.company;
+                if (Object.keys(retryBody.advanced_keywords).length === 0) delete retryBody.advanced_keywords;
+                try {
+                    response = await axios.post(`${baseUrl}/linkedin/search`, retryBody, requestConfig);
+                    const retryItems = response.data?.items || response.data?.data?.items || [];
+                    logger.info('[LinkedInSearchService] Retry search completed', { 
+                        retryBody, 
+                        resultsCount: retryItems.length 
+                    });
+                    
+                    // Fuzzy secondary retry: if STILL 0 results, the user might have misspelled a last name or added a middle name.
+                    // Classic API is a strict AND search. Retrying with just the FIRST word of the name + company.
+                    if (retryItems.length === 0 && currentSearchBody.keywords) {
+                        const firstWord = currentSearchBody.keywords.split(' ')[0];
+                        if (firstWord && firstWord !== currentSearchBody.keywords) {
+                            const fuzzyBody = { ...retryBody, keywords: firstWord + ' ' + companyName };
+                            logger.info('[LinkedInSearchService] Still 0 results, trying fuzzy match with first word + company', { fuzzyBody });
+                            const fuzzyResponse = await axios.post(`${baseUrl}/linkedin/search`, fuzzyBody, requestConfig);
+                            const fuzzyItems = fuzzyResponse.data?.items || fuzzyResponse.data?.data?.items || [];
+                            if (fuzzyItems.length > 0) {
+                                response = fuzzyResponse;
+                                logger.info('[LinkedInSearchService] Fuzzy retry succeeded!', { resultsCount: fuzzyItems.length });
+                            }
+                        }
+                    }
+                } catch (retryErr) {
+                    logger.warn('[LinkedInSearchService] Retry search also failed', { error: retryErr.message });
                 }
             }
 

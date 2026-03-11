@@ -770,7 +770,184 @@ class LinkedInAccountRepository {
       return 0;
     }
   }
+
+  /**
+   * Get last 7 days connection count for a SPECIFIC LinkedIn account (not tenant-wide)
+   * LAD Architecture: Repository Layer — SQL only
+   * Used by LimitTunerService to detect the real LinkedIn limit per account
+   * @param {string} tenantId - Tenant ID
+   * @param {string} providerAccountId - Provider (Unipile) Account ID
+   * @param {Object} context - Request context
+   * @returns {Promise<number>} Count of connections sent in last 7 days for this account
+   */
+  async getWeeklyConnectionCountForAccount(tenantId, providerAccountId, context = {}) {
+    if (!tenantId || !providerAccountId) {
+      return 0;
+    }
+
+    const schema = getSchema(context);
+
+    try {
+      const query = `
+        SELECT COUNT(*) as total_actions
+        FROM ${schema}.campaign_analytics
+        WHERE tenant_id = $1
+        AND provider_account_id = $2
+        AND action_type IN ('CONNECTION_SENT', 'CONNECTION_SENT_WITH_MESSAGE')
+        AND status = 'success'
+        AND created_at >= NOW() - INTERVAL '7 days'
+      `;
+
+      const result = await this.pool.query(query, [tenantId, providerAccountId]);
+      const weeklyCount = parseInt(result.rows[0]?.total_actions || 0);
+
+      logger.debug('[LinkedInAccountRepository] Weekly connection count for account', {
+        tenantId,
+        providerAccountId,
+        weeklyCount,
+        dateRange: 'last 7 days'
+      });
+
+      return weeklyCount;
+    } catch (error) {
+      logger.error('[LinkedInAccountRepository] Error getting weekly count for account', {
+        tenantId,
+        providerAccountId,
+        error: error.message
+      });
+      return 0;
+    }
+  }
+
+  /**
+   * Update daily and weekly limits for a specific LinkedIn account
+   * Also stores the detected real LinkedIn limit in detected_weekly_limit
+   * LAD Architecture: Repository Layer — SQL only
+   * @param {string} accountId - Account UUID (id column)
+   * @param {string} tenantId - Tenant ID
+   * @param {number} newDailyLimit - New daily limit
+   * @param {number} newWeeklyLimit - New weekly limit (also stored as detected_weekly_limit)
+   * @param {Object} context - Request context
+   * @returns {Promise<Object|null>} Updated account or null
+   */
+  async updateAccountLimits(accountId, tenantId, newDailyLimit, newWeeklyLimit, context = {}) {
+    const schema = getSchema(context);
+
+    try {
+      const result = await this.pool.query(
+        `UPDATE ${schema}.social_linkedin_accounts
+         SET
+           default_daily_limit = $3,
+           default_weekly_limit = $4,
+           detected_weekly_limit = $4,
+           updated_at = NOW()
+         WHERE id = $1 AND tenant_id = $2
+         RETURNING id, default_daily_limit, default_weekly_limit, detected_weekly_limit`,
+        [accountId, tenantId, newDailyLimit, newWeeklyLimit]
+      );
+
+      if (result.rows.length === 0) {
+        logger.warn('[LinkedInAccountRepository] Account not found for limit update', {
+          accountId, tenantId
+        });
+        return null;
+      }
+
+      logger.info('[LinkedInAccountRepository] Account limits updated', {
+        accountId,
+        tenantId,
+        newDailyLimit,
+        newWeeklyLimit
+      });
+
+      return result.rows[0];
+    } catch (error) {
+      logger.error('[LinkedInAccountRepository] Error updating account limits', {
+        accountId,
+        tenantId,
+        error: error.message
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Get current limits for a specific LinkedIn account
+   * LAD Architecture: Repository Layer — SQL only
+   * @param {string} accountId - Account UUID
+   * @param {string} tenantId - Tenant ID
+   * @param {Object} context - Request context
+   * @returns {Promise<Object|null>} Account limits or null
+   */
+  async getAccountLimitsById(accountId, tenantId, context = {}) {
+    const schema = getSchema(context);
+
+    try {
+      const result = await this.pool.query(
+        `SELECT
+           id,
+           provider_account_id,
+           account_name,
+           default_daily_limit,
+           default_weekly_limit,
+           detected_weekly_limit
+         FROM ${schema}.social_linkedin_accounts
+         WHERE id = $1 AND tenant_id = $2
+         LIMIT 1`,
+        [accountId, tenantId]
+      );
+
+      return result.rows.length > 0 ? result.rows[0] : null;
+    } catch (error) {
+      logger.error('[LinkedInAccountRepository] Error getting account limits', {
+        accountId,
+        tenantId,
+        error: error.message
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Get account by provider_account_id (Unipile ID) for a tenant
+   * LAD Architecture: Repository Layer — SQL only
+   * Used by LimitTunerService to find the account row from the provider_account_id
+   * @param {string} tenantId - Tenant ID
+   * @param {string} providerAccountId - Provider Account ID
+   * @param {Object} context - Request context
+   * @returns {Promise<Object|null>} Account data or null
+   */
+  async getAccountByProviderIdForTenant(tenantId, providerAccountId, context = {}) {
+    const schema = getSchema(context);
+
+    try {
+      const result = await this.pool.query(
+        `SELECT
+           id,
+           provider_account_id,
+           account_name,
+           default_daily_limit,
+           default_weekly_limit,
+           detected_weekly_limit
+         FROM ${schema}.social_linkedin_accounts
+         WHERE tenant_id = $1 AND provider_account_id = $2
+         AND status = 'active' AND is_deleted = false
+         LIMIT 1`,
+        [tenantId, providerAccountId]
+      );
+
+      return result.rows.length > 0 ? result.rows[0] : null;
+    } catch (error) {
+      logger.error('[LinkedInAccountRepository] Error getting account by provider ID', {
+        tenantId,
+        providerAccountId,
+        error: error.message
+      });
+      return null;
+    }
+  }
 }
 
 module.exports = LinkedInAccountRepository;
+
 
