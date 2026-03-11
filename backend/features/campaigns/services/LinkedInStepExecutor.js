@@ -12,6 +12,7 @@ const {
 } = require('./LinkedInAccountHelper');
 const { generateAndSaveProfileSummary } = require('./LinkedInProfileSummaryService');
 const { campaignStatsTracker } = require('./campaignStatsTracker');
+const { linkedInLimitTuner } = require('./LinkedInLimitTunerService');
 const linkedInPollingRepository = require('../repositories/LinkedInPollingRepository');
 
 // Import ApolloRevealService for data enrichment
@@ -498,8 +499,22 @@ async function executeLinkedInStep(stepType, stepConfig, campaignLead, userId, t
         accountUsed: result.accountUsed,
         strategy: result.strategy,
         error: result.error,
+        isRateLimit: result.isRateLimit || false,
         employeeName: employee.fullname
       });
+
+      // AUTO-TUNE: If LinkedIn rate limit detected, trigger limit auto-tuning
+      // This learns the real LinkedIn limit for this account and adjusts DB automatically
+      if (result.isRateLimit) {
+        const rateLimitedAccountId = result.accountInfo?.provider_account_id || linkedinAccountId;
+        try {
+          await linkedInLimitTuner.onRateLimitHit(tenantId, rateLimitedAccountId, campaignLead.campaign_id);
+        } catch (tuneErr) {
+          logger.warn('[LinkedInStepExecutor] Limit auto-tune failed (non-fatal)', {
+            error: tuneErr.message
+          });
+        }
+      }
 
       // Track connection request in campaign_analytics for Live Activity Feed
       // Differentiate between connection with message vs without message
