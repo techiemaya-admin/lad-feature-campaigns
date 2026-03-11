@@ -17,7 +17,7 @@ class UnipileLeadSearchService {
   constructor() {
     this.unipileDsn = process.env.UNIPILE_DSN;
     this.unipileToken = process.env.UNIPILE_TOKEN;
-    
+
     if (!this.isConfigured()) {
       logger.warn('[Unipile Lead Search] UNIPILE_DSN or UNIPILE_TOKEN not configured');
     }
@@ -41,20 +41,20 @@ class UnipileLeadSearchService {
     }
 
     let dsn = this.unipileDsn.trim();
-    
+
     // Add https:// if not present
     if (!dsn.startsWith('http://') && !dsn.startsWith('https://')) {
       dsn = `https://${dsn}`;
     }
-    
+
     // Remove trailing slashes
     dsn = dsn.replace(/\/+$/, '');
-    
+
     // Add /api/v1 path
     if (!dsn.includes('/api/v1')) {
       dsn = `${dsn}/api/v1`;
     }
-    
+
     return dsn;
   }
 
@@ -200,9 +200,9 @@ class UnipileLeadSearchService {
         });
       }
 
-      logger.debug('[Unipile Company Search] Making request to', { 
-        url: searchUrl, 
-        body: searchBody 
+      logger.debug('[Unipile Company Search] Making request to', {
+        url: searchUrl,
+        body: searchBody
       });
 
       const response = await axios.post(searchUrl, searchBody, {
@@ -394,9 +394,9 @@ class UnipileLeadSearchService {
         searchBody.company = Array.isArray(company) ? company : [company];
       }
 
-      logger.debug('[Unipile People Search] Making request to', { 
-        url: searchUrl, 
-        body: searchBody 
+      logger.debug('[Unipile People Search] Making request to', {
+        url: searchUrl,
+        body: searchBody
       });
 
       const response = await axios.post(searchUrl, searchBody, {
@@ -818,47 +818,61 @@ class UnipileLeadSearchService {
    * @param {number} limit - Maximum number of posts to fetch (default: 10)
    * @returns {Promise<Object>} Posts data or empty array if fetch fails
    */
-  async getLinkedInPosts(linkedinIdOrUrl, accountId, limit = 10) {
+    async getLinkedInPosts(linkedinIdOrUrl, accountId) {
+    const fetchLimit = 50;
     try {
-      if (!accountId) {
-        throw new Error('accountId is required');
-      }
+      if (!accountId) throw new Error('accountId is required');
+      if (!linkedinIdOrUrl) throw new Error('linkedinId is required');
 
-      if (!linkedinIdOrUrl) {
-        throw new Error('linkedinId is required');
-      }
-
-      // Extract LinkedIn identifier from URL if needed
       const linkedinId = this.extractLinkedInIdentifier(linkedinIdOrUrl);
-
-      logger.info('[Unipile Posts] Fetching posts', { linkedinId, accountId, limit });
+      logger.info('[Unipile Posts] Fetching posts using advanced search method', { linkedinId, accountId, fetchLimit });
 
       const baseUrl = this.getBaseUrl();
       const headers = this.getAuthHeaders();
 
-      // Correct Unipile API endpoint: /api/v1/users/{identifier}/posts
-      const response = await axios.get(`${baseUrl}/users/${linkedinId}/posts`, {
-        headers,
-        params: { 
-          account_id: accountId,
-          limit: limit
-        },
-        timeout: 30000
-      });
+      // Implement exactly like advanced search uses for posts
+      const requestBody = {
+          api: 'classic',
+          category: 'posts',
+          posted_by: {
+              people: [linkedinId]
+          }
+      };
 
-      const posts = response.data?.data || response.data?.posts || response.data;
+      const response = await axios.post(
+          `${baseUrl}/linkedin/search`,
+          requestBody,
+          { headers, params: { account_id: accountId } }
+      );
+
+      const posts = response.data?.items || response.data?.data?.items || [];
       
       if (Array.isArray(posts) && posts.length > 0) {
-        const limitedPosts = posts.slice(0, limit);
-        logger.info('[Unipile Posts] Successfully fetched posts', { 
-          linkedinId, 
-          count: limitedPosts.length
+        const oneMonthAgo = new Date();
+        oneMonthAgo.setDate(oneMonthAgo.getDate() - 30);
+
+        const recentMonthPosts = posts.filter(post => {
+            const dateStr = post.date || post.timestamp || post.created_at || post.publishedAt;
+            if (!dateStr) return false;
+            
+            const postDate = new Date(dateStr);
+            if (isNaN(postDate.getTime())) return false;
+            return postDate >= oneMonthAgo;
         });
-        
+
+        let selectedPosts = [];
+        if (recentMonthPosts.length > 0) {
+            selectedPosts = recentMonthPosts;
+            logger.info('[Unipile Posts] Found 1 month of posts', { linkedinId, count: selectedPosts.length });
+        } else {
+            selectedPosts = posts.slice(0, 10);
+            logger.info('[Unipile Posts] No posts in last month, fallback to Top 10', { linkedinId, count: selectedPosts.length });
+        }
+
         return {
           success: true,
-          posts: limitedPosts,
-          count: limitedPosts.length,
+          posts: selectedPosts,
+          count: selectedPosts.length,
           source: 'unipile'
         };
       }
@@ -871,12 +885,11 @@ class UnipileLeadSearchService {
         source: 'unipile'
       };
     } catch (error) {
-      logger.error('[Unipile Posts] Failed to fetch posts', {
+      logger.warn('[Unipile Posts] Failed to fetch posts (account might not have posts or privacy settings restrict it)', {
         error: error.message,
         linkedinId: linkedinIdOrUrl,
         status: error.response?.status,
-        statusText: error.response?.statusText,
-        stack: error.stack
+        statusText: error.response?.statusText
       });
 
       return {

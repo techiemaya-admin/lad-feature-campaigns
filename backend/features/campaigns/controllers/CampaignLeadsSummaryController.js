@@ -107,10 +107,16 @@ class CampaignLeadsSummaryController {
       if (linkedinUrl) {
         try {
           // Get active Unipile account
-          const accountHelper = new LinkedInAccountHelper();
-          const accounts = await accountHelper.getActiveLinkedInAccounts(tenantId);
+          const { getAllLinkedInAccountsForTenant } = require('../services/LinkedInAccountHelper');
+          const accounts = await getAllLinkedInAccountsForTenant(tenantId, tenantId);
           if (accounts && accounts.length > 0) {
-            unipileAccountId = accounts[0].unipile_account_id;
+            const userId = req.user?.userId;
+            const userAccount = accounts.find(a => a.user_id === userId);
+            unipileAccountId = userAccount ? userAccount.unipile_account_id : accounts[0].unipile_account_id;
+            
+            if (userAccount) {
+               logger.info('Using perfectly matched user account for Unipile data', { userId, accountId: unipileAccountId });
+            }
             logger.info('Fetching Unipile profile details', {
               leadName: lead.name,
               linkedinUrl,
@@ -121,8 +127,15 @@ class CampaignLeadsSummaryController {
             if (profileResult.success && profileResult.profile) {
               unipileProfile = profileResult.profile;
             }
+            
+            // To fetch a user's posts accurately via LinkedIn search, we MUST use their internal URN/member ID (e.g., ACoAAB...). 
+            // Passing the public handle (e.g., naveen-yelluru) causes LinkedIn to ignore the filter and return the auth user's posts.
+            const profileIdentifier = unipileProfile && (unipileProfile.id || unipileProfile.profile_id) 
+              ? (unipileProfile.id || unipileProfile.profile_id) 
+              : linkedinUrl;
+
             // Fetch recent posts from Unipile
-            const postsResult = await UnipileLeadSearchService.getLinkedInPosts(linkedinUrl, unipileAccountId, 10);
+            const postsResult = await UnipileLeadSearchService.getLinkedInPosts(profileIdentifier, unipileAccountId, 10);
             if (postsResult.success && postsResult.posts.length > 0) {
               unipilePosts = postsResult.posts;
               logger.info('Fetched LinkedIn posts from Unipile', {
@@ -154,7 +167,7 @@ Keep the summary professional, insightful, and concise (2-3 paragraphs maximum).
 Profile Information:
 ${profileInfo}
 Summary:`;
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
       const result = await model.generateContent(prompt);
       const response = await result.response;
       const summary = response.text().trim();
