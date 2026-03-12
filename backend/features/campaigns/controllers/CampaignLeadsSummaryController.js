@@ -107,10 +107,16 @@ class CampaignLeadsSummaryController {
       if (linkedinUrl) {
         try {
           // Get active Unipile account
-          const accountHelper = new LinkedInAccountHelper();
-          const accounts = await accountHelper.getActiveLinkedInAccounts(tenantId);
+          const { getAllLinkedInAccountsForTenant } = require('../services/LinkedInAccountHelper');
+          const accounts = await getAllLinkedInAccountsForTenant(tenantId, tenantId);
           if (accounts && accounts.length > 0) {
-            unipileAccountId = accounts[0].unipile_account_id;
+            const userId = req.user?.userId;
+            const userAccount = accounts.find(a => a.user_id === userId);
+            unipileAccountId = userAccount ? userAccount.unipile_account_id : accounts[0].unipile_account_id;
+            
+            if (userAccount) {
+               logger.info('Using perfectly matched user account for Unipile data', { userId, accountId: unipileAccountId });
+            }
             logger.info('Fetching Unipile profile details', {
               leadName: lead.name,
               linkedinUrl,
@@ -121,8 +127,15 @@ class CampaignLeadsSummaryController {
             if (profileResult.success && profileResult.profile) {
               unipileProfile = profileResult.profile;
             }
+            
+            // To fetch a user's posts accurately via LinkedIn search, we MUST use their internal URN/member ID (e.g., ACoAAB...). 
+            // Passing the public handle (e.g., naveen-yelluru) causes LinkedIn to ignore the filter and return the auth user's posts.
+            const profileIdentifier = unipileProfile && (unipileProfile.id || unipileProfile.profile_id) 
+              ? (unipileProfile.id || unipileProfile.profile_id) 
+              : linkedinUrl;
+
             // Fetch recent posts from Unipile
-            const postsResult = await UnipileLeadSearchService.getLinkedInPosts(linkedinUrl, unipileAccountId, 10);
+            const postsResult = await UnipileLeadSearchService.getLinkedInPosts(profileIdentifier, unipileAccountId, 10);
             if (postsResult.success && postsResult.posts.length > 0) {
               unipilePosts = postsResult.posts;
               logger.info('Fetched LinkedIn posts from Unipile', {
@@ -154,7 +167,7 @@ Keep the summary professional, insightful, and concise (2-3 paragraphs maximum).
 Profile Information:
 ${profileInfo}
 Summary:`;
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
       const result = await model.generateContent(prompt);
       const response = await result.response;
       const summary = response.text().trim();
@@ -180,6 +193,147 @@ Summary:`;
       res.status(500).json({
         success: false,
         error: 'Failed to generate lead summary',
+        details: error.message
+      });
+    }
+  }
+
+  /**
+   * POST /api/campaigns/preview/lead-summary
+   * Generate a profile summary from raw profile data — NO database interaction.
+   * Used by the AI Lead Finder (advanced-search) preview feature.
+   */
+  static async generatePreviewSummary(req, res) {
+    try {
+      const tenantId = req.user.tenantId;
+      const { profileData } = req.body;
+
+      if (!profileData || !profileData.name) {
+        return res.status(400).json({
+          success: false,
+          error: 'profileData with at least a name is required'
+        });
+      }
+
+      // Initialize Gemini AI
+      let genAI = null;
+      try {
+        const { GoogleGenerativeAI } = require('@google/generative-ai');
+        const geminiApiKey = process.env.GEMINI_API_KEY;
+        if (geminiApiKey) {
+          genAI = new GoogleGenerativeAI(geminiApiKey);
+        }
+      } catch (e) { /* ignore */ }
+
+      if (!genAI) {
+        return res.status(503).json({
+          success: false,
+          error: 'Gemini AI is not available. Please set GEMINI_API_KEY environment variable.'
+        });
+      }
+
+      const lead = {
+        name: profileData.name || 'Unknown',
+        title: profileData.title || profileData.headline || '',
+        company: profileData.company || profileData.current_company || '',
+        linkedin_url: profileData.linkedin_url || profileData.profile_url || ''
+      };
+
+      const linkedinUrl = lead.linkedin_url;
+
+      // Fetch Unipile profile + posts if we have a LinkedIn URL
+      let unipileProfile = null;
+      let unipilePosts = [];
+
+      if (linkedinUrl) {
+        try {
+          const { getAllLinkedInAccountsForTenant } = require('../services/LinkedInAccountHelper');
+          const accounts = await getAllLinkedInAccountsForTenant(tenantId, tenantId);
+          if (accounts && accounts.length > 0) {
+            const userId = req.user?.userId;
+            const userAccount = accounts.find(a => a.user_id === userId);
+            const unipileAccountId = userAccount
+              ? userAccount.unipile_account_id
+              : accounts[0].unipile_account_id;
+
+            logger.info('[PreviewSummary] Fetching Unipile profile', { leadName: lead.name, linkedinUrl, unipileAccountId });
+
+            const profileResult = await UnipileLeadSearchService.getProfileDetails(linkedinUrl, unipileAccountId);
+            if (profileResult.success && profileResult.profile) {
+              unipileProfile = profileResult.profile;
+            }
+
+            // Determine best identifier for posts (must use internal URN, not public handle)
+            let profileIdentifier = unipileProfile?.id
+              || unipileProfile?.profile_id
+              || unipileProfile?.provider_id
+              || unipileProfile?.public_identifier;
+
+            if (!profileIdentifier) {
+              const urnMatch = linkedinUrl.match(/ACoAA[A-Za-z0-9_-]+/);
+              profileIdentifier = urnMatch ? urnMatch[0] : linkedinUrl;
+            }
+
+            const leadName = unipileProfile?.name || lead.name || '';
+            const postsResult = await UnipileLeadSearchService.getLinkedInPosts(profileIdentifier, unipileAccountId, leadName);
+            if (postsResult.success && postsResult.posts.length > 0) {
+              unipilePosts = postsResult.posts;
+            }
+          }
+        } catch (unipileError) {
+          logger.warn('[PreviewSummary] Unipile fetch failed, proceeding with basic data', { error: unipileError.message });
+        }
+      }
+
+      const profileInfo = buildProfileInfo(lead, unipileProfile, unipilePosts);
+      const personName = unipileProfile?.name || lead.name || 'this professional';
+      const personTitle = unipileProfile?.title || unipileProfile?.headline || lead.title || '';
+      const personCompany = unipileProfile?.company || unipileProfile?.company_name || lead.company || '';
+      const hasPosts = unipilePosts && unipilePosts.length > 0;
+
+      const prompt = `You are writing a unique profile summary for a SPECIFIC person. This is NOT a template — every summary must be distinctly different based on the actual data provided.
+
+PERSON: ${personName}
+${personTitle ? `ROLE: ${personTitle}` : ''}
+${personCompany ? `COMPANY: ${personCompany}` : ''}
+
+FULL PROFILE DATA:
+${profileInfo}
+
+INSTRUCTIONS:
+- Write a 2-3 paragraph summary that is UNIQUE to ${personName}
+- Start by mentioning ${personName} BY NAME and their SPECIFIC current role${personCompany ? ` at ${personCompany}` : ''}
+- Use ONLY facts from the profile data above. Do NOT invent details
+- If experience history is available, mention their career trajectory
+- If education data is available, mention it specifically
+${hasPosts ? '- Reference specific topics from their SELF-AUTHORED posts' : '- Focus on professional positioning based on title and experience'}
+- Write in a natural, conversational tone
+- If data is limited, write a shorter honest summary instead of padding
+
+CRITICAL RULES:
+❌ Do NOT use filler phrases like "passionate professional" or "well-positioned"
+❌ Do NOT generate generic summaries — each must be SPECIFIC to this person
+❌ Do NOT invent skills or achievements not in the data
+✅ DO mention specific companies, titles, and topics from the actual data
+
+Summary for ${personName}:`;
+
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const summary = response.text().trim();
+
+      res.json({
+        success: true,
+        summary: summary,
+        source: unipileProfile ? 'unipile' : 'fallback',
+        generated_at: new Date().toISOString()
+      });
+    } catch (error) {
+      logger.error('[PreviewSummary] Failed to generate preview summary', { error: error.message });
+      res.status(500).json({
+        success: false,
+        error: 'Failed to generate preview summary',
         details: error.message
       });
     }
