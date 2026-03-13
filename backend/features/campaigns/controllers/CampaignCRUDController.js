@@ -314,7 +314,7 @@ class CampaignCRUDController {
           error: 'User ID is required. Please ensure you are authenticated.'
         });
       }
-      const { name, status, config, steps, campaign_type, leads_per_day, inbound_lead_ids, campaign_start_date, campaign_end_date, conversationId } = req.body;
+      const { name, status, config, steps, campaign_type, leads_per_day, inbound_lead_ids, inbound_leads, campaign_start_date, campaign_end_date, conversationId } = req.body;
 
       logger.info('[CampaignCreate] Request payload parsed', {
         name,
@@ -324,7 +324,9 @@ class CampaignCRUDController {
         stepsCount: steps?.length,
         campaign_type,
         leads_per_day,
-        hasInboundLeads: !!(inbound_lead_ids && inbound_lead_ids.length),
+        hasInboundLeadIds: !!(inbound_lead_ids && inbound_lead_ids.length),
+        hasInboundLeads: !!(inbound_leads && inbound_leads.length),
+        inboundLeadsCount: inbound_leads?.length || 0,
         campaign_start_date,
         campaign_end_date,
         conversationId,
@@ -504,6 +506,71 @@ class CampaignCRUDController {
       }
       // NOTE: Inbound leads are already linked by CampaignModel.create() when inbound_lead_ids is passed
       // No need to link them again here to avoid duplicates
+
+      // Handle inbound_leads (raw lead data from CSV upload on Advanced Search AI page)
+      if (inbound_leads && Array.isArray(inbound_leads) && inbound_leads.length > 0) {
+        try {
+          logger.info('[CampaignCreate] Processing inbound CSV leads', {
+            campaignId: campaign.id,
+            tenantId,
+            leadsCount: inbound_leads.length
+          });
+
+          const { saveLeadsToCampaign } = require('../services/LeadSaveService');
+
+          // Transform inbound leads to the format saveLeadsToCampaign expects
+          const transformedLeads = inbound_leads.map(lead => {
+            // Extract LinkedIn provider ID from URL if available
+            let linkedinProviderId = null;
+            if (lead.linkedin_url) {
+              const match = lead.linkedin_url.match(/\/in\/([^/?]+)/);
+              if (match) linkedinProviderId = match[1];
+            }
+
+            return {
+              id: linkedinProviderId || `inbound-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              name: lead.name || `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || 'Imported Lead',
+              first_name: lead.first_name || '',
+              last_name: lead.last_name || '',
+              email: lead.email || null,
+              phone: lead.phone || lead.whatsapp || null,
+              title: lead.title || '',
+              headline: lead.title || '',
+              company_name: lead.company_name || '',
+              linkedin_url: lead.linkedin_url || null,
+              profile_url: lead.linkedin_url || null,
+              city: '',
+              country: '',
+              _source: 'inbound_csv',
+              source: 'inbound_csv',
+              notes: lead.notes || '',
+              website: lead.website || '',
+              whatsapp: lead.whatsapp || '',
+            };
+          });
+
+          const saveResult = await saveLeadsToCampaign(
+            campaign.id,
+            tenantId,
+            transformedLeads,
+            'inbound_csv'
+          );
+
+          logger.info('[CampaignCreate] Inbound CSV leads saved', {
+            campaignId: campaign.id,
+            savedCount: saveResult.savedCount,
+            skippedCount: saveResult.skippedCount,
+            firstLeadId: saveResult.firstGeneratedLeadId
+          });
+        } catch (inboundError) {
+          logger.error('[CampaignCreate] Failed to save inbound CSV leads', {
+            campaignId: campaign.id,
+            error: inboundError.message,
+            stack: inboundError.stack
+          });
+          // Continue anyway - campaign is created
+        }
+      }
 
       // ✅ 1-day campaigns: skip Cloud Tasks entirely — immediate execution on creation IS the full run
       // A campaign is 1-day if: duration_days=1 OR only 1 scheduled date OR no dates at all (manual start)
