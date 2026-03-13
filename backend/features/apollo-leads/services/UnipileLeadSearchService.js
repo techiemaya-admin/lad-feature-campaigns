@@ -571,7 +571,39 @@ class UnipileLeadSearchService {
       // Extract LinkedIn ID or handle from URL
       const linkedinId = this.extractLinkedInIdentifier(profileUrl);
 
-      // Correct Unipile API endpoint: /api/v1/users/{identifier}
+      // We'll first try using the search endpoint to reliably resolve the user without 422 errors, 
+      // especially when dealing with just public handles.
+      // Use the extracted handle as keywords (not the full URL, which causes 400 errors)
+      const searchKeywords = linkedinId.replace(/-/g, ' ').replace(/\d+$/, '').trim();
+      try {
+        const searchRes = await axios.post(`${baseUrl}/linkedin/search`, {
+            api: 'classic',
+            category: 'people',
+            keywords: searchKeywords
+        }, {
+            headers,
+            params: { account_id: accountId, limit: 1 },
+            timeout: 30000
+        });
+        
+        const items = searchRes.data?.items || searchRes.data?.data?.items || [];
+        if (items.length > 0) {
+            const profile = items[0];
+            logger.info('[Unipile Profile Details] Successfully fetched profile via search', { 
+              linkedinId: profile.provider_id || profile.id,
+              profileKeys: Object.keys(profile)
+            });
+            return {
+                success: true,
+                profile: profile,
+                source: 'unipile'
+            };
+        }
+      } catch (searchError) {
+          logger.warn('[Unipile Profile Details] Search fallback failed, trying direct user fetch', { error: searchError.message });
+      }
+
+      // If search fails or returns nothing, fallback to the direct user route
       const response = await axios.get(`${baseUrl}/users/${linkedinId}`, {
         headers,
         params: { account_id: accountId },
@@ -580,7 +612,10 @@ class UnipileLeadSearchService {
 
       const profile = response.data?.data || response.data;
 
-      logger.info('[Unipile Profile Details] Successfully fetched profile', { linkedinId });
+      logger.info('[Unipile Profile Details] Successfully fetched profile directly', { 
+        linkedinId,
+        profileKeys: Object.keys(profile || {})
+      });
 
       return {
         success: true,
@@ -591,9 +626,10 @@ class UnipileLeadSearchService {
       logger.error('[Unipile Profile Details] Fetch failed', {
         error: error.message,
         profileUrl,
+        linkedinId: this.extractLinkedInIdentifier(profileUrl),
         status: error.response?.status,
         statusText: error.response?.statusText,
-        stack: error.stack
+        unipileError: error.response?.data
       });
 
       return {
@@ -808,84 +844,73 @@ class UnipileLeadSearchService {
   }
 
   /**
-   * Fetch recent posts/activity from a LinkedIn profile
+   * Fetch recent posts from a LinkedIn profile
    * Used for profile summary generation to analyze professional activity
    * 
-   * Unipile API endpoint: /api/v1/users/{identifier}/posts
+   * Uses GET /api/v1/users/{identifier}/posts which requires the internal member ID (ACoAA...)
    * 
-   * @param {string} linkedinIdOrUrl - LinkedIn profile ID/handle or URL
+   * @param {string} linkedinIdOrUrl - LinkedIn member ID (e.g., ACoAADY8aBIB...) or URL
    * @param {string} accountId - Account ID for the Unipile request
-   * @param {number} limit - Maximum number of posts to fetch (default: 10)
+   * @param {string} personName - Kept for compatibility, no longer needed for filtering
    * @returns {Promise<Object>} Posts data or empty array if fetch fails
    */
-    async getLinkedInPosts(linkedinIdOrUrl, accountId) {
-    const fetchLimit = 50;
+  async getLinkedInPosts(linkedinIdOrUrl, accountId, personName) {
     try {
       if (!accountId) throw new Error('accountId is required');
       if (!linkedinIdOrUrl) throw new Error('linkedinId is required');
 
-      const linkedinId = this.extractLinkedInIdentifier(linkedinIdOrUrl);
-      logger.info('[Unipile Posts] Fetching posts using advanced search method', { linkedinId, accountId, fetchLimit });
+      logger.info('[Unipile Posts] Fetching posts for user via GET endpoint', { linkedinIdOrUrl, accountId, personName });
 
       const baseUrl = this.getBaseUrl();
       const headers = this.getAuthHeaders();
 
-      // Implement exactly like advanced search uses for posts
-      const requestBody = {
-          api: 'classic',
-          category: 'posts',
-          posted_by: {
-              people: [linkedinId]
-          }
-      };
+      // Ensure we extract the identifier if a full URL was somehow passed, though the controller
+      // is now passing the ACoAA... provider_id directly, which is exactly what this endpoint needs.
+      let identifier = linkedinIdOrUrl;
+      const urnMatch = String(identifier).match(/ACoAA[A-Za-z0-9_-]+/);
+      if (urnMatch) {
+          identifier = urnMatch[0];
+      } else {
+          identifier = this.extractLinkedInIdentifier(identifier);
+      }
 
-      const response = await axios.post(
-          `${baseUrl}/linkedin/search`,
-          requestBody,
-          { headers, params: { account_id: accountId } }
+      // Use Unipile's dedicated user posts endpoint (requires provider_id/member_urn to avoid 422s)
+      const response = await axios.get(
+        `${baseUrl}/users/${identifier}/posts`,
+        { headers, params: { account_id: accountId, limit: 15 }, timeout: 30000 }
       );
 
-      const posts = response.data?.items || response.data?.data?.items || [];
+      const posts = response.data?.items || response.data?.data || response.data?.posts || [];
       
       if (Array.isArray(posts) && posts.length > 0) {
-        const oneMonthAgo = new Date();
-        oneMonthAgo.setDate(oneMonthAgo.getDate() - 30);
-
-        const recentMonthPosts = posts.filter(post => {
-            const dateStr = post.date || post.timestamp || post.created_at || post.publishedAt;
-            if (!dateStr) return false;
-            
-            const postDate = new Date(dateStr);
-            if (isNaN(postDate.getTime())) return false;
-            return postDate >= oneMonthAgo;
+        logger.info('[Unipile Posts] Successfully fetched authored posts', { 
+          identifier, 
+          count: posts.length 
         });
 
-        let selectedPosts = [];
-        if (recentMonthPosts.length > 0) {
-            selectedPosts = recentMonthPosts;
-            logger.info('[Unipile Posts] Found 1 month of posts', { linkedinId, count: selectedPosts.length });
-        } else {
-            selectedPosts = posts.slice(0, 10);
-            logger.info('[Unipile Posts] No posts in last month, fallback to Top 10', { linkedinId, count: selectedPosts.length });
-        }
+        // Take the top 5 most recent posts
+        const selectedPosts = posts.slice(0, 5);
 
         return {
           success: true,
           posts: selectedPosts,
+          engagementActivity: [], // Removed as search API returned auth user's feed, not target's
           count: selectedPosts.length,
+          totalActivity: posts.length,
           source: 'unipile'
         };
       }
 
-      logger.warn('[Unipile Posts] No posts found', { linkedinId });
+      logger.warn('[Unipile Posts] No posts found', { identifier });
       return {
         success: false,
         posts: [],
+        engagementActivity: [],
         count: 0,
         source: 'unipile'
       };
     } catch (error) {
-      logger.warn('[Unipile Posts] Failed to fetch posts (account might not have posts or privacy settings restrict it)', {
+      logger.warn('[Unipile Posts] Failed to fetch posts (account might not have posts or wrong ID format)', {
         error: error.message,
         linkedinId: linkedinIdOrUrl,
         status: error.response?.status,
@@ -896,6 +921,7 @@ class UnipileLeadSearchService {
         success: false,
         error: error.message,
         posts: [],
+        engagementActivity: [],
         count: 0
       };
     }

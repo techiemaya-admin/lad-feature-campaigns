@@ -87,7 +87,7 @@ class CampaignLeadsSummaryController {
         const leadDataFull = dbLead.lead_data_full || {};
         linkedinUrl = dbLead.linkedin_url || leadDataFull.linkedin_url || leadDataFull.employee_linkedin_url;
         lead = {
-          name: dbLead.first_name && dbLead.last_name 
+          name: dbLead.first_name && dbLead.last_name
             ? `${dbLead.first_name} ${dbLead.last_name}`.trim()
             : dbLead.first_name || dbLead.last_name || leadDataFull.name || leadDataFull.employee_name || 'Unknown',
           title: dbLead.title || leadDataFull.title || leadDataFull.employee_title || leadDataFull.headline || '',
@@ -113,36 +113,60 @@ class CampaignLeadsSummaryController {
             const userId = req.user?.userId;
             const userAccount = accounts.find(a => a.user_id === userId);
             unipileAccountId = userAccount ? userAccount.unipile_account_id : accounts[0].unipile_account_id;
-            
             if (userAccount) {
-               logger.info('Using perfectly matched user account for Unipile data', { userId, accountId: unipileAccountId });
+              logger.info('Using perfectly matched user account for Unipile data', { userId, accountId: unipileAccountId });
             }
             logger.info('Fetching Unipile profile details', {
               leadName: lead.name,
               linkedinUrl,
-              accountId: unipileAccountId 
+              accountId: unipileAccountId
             });
             // Fetch profile details from Unipile
             const profileResult = await UnipileLeadSearchService.getProfileDetails(linkedinUrl, unipileAccountId);
             if (profileResult.success && profileResult.profile) {
               unipileProfile = profileResult.profile;
             }
-            
             // To fetch a user's posts accurately via LinkedIn search, we MUST use their internal URN/member ID (e.g., ACoAAB...). 
             // Passing the public handle (e.g., naveen-yelluru) causes LinkedIn to ignore the filter and return the auth user's posts.
-            const profileIdentifier = unipileProfile && (unipileProfile.id || unipileProfile.profile_id) 
-              ? (unipileProfile.id || unipileProfile.profile_id) 
-              : linkedinUrl;
+            // Check all possible ID fields from the Unipile profile response
+            let profileIdentifier = null;
+            if (unipileProfile) {
+              profileIdentifier = unipileProfile.id
+                || unipileProfile.profile_id
+                || unipileProfile.provider_id
+                || unipileProfile.member_urn
+                || unipileProfile.public_identifier;
+            }
+            // If still no identifier, try extracting the miniProfile URN from the LinkedIn URL
+            if (!profileIdentifier && linkedinUrl) {
+              const urnMatch = linkedinUrl.match(/ACoAA[A-Za-z0-9_-]+/);
+              if (urnMatch) {
+                profileIdentifier = urnMatch[0];
+              }
+            }
+            // Last resort: use the LinkedIn URL itself
+            if (!profileIdentifier) {
+              profileIdentifier = linkedinUrl;
+            }
 
-            // Fetch recent posts from Unipile
-            const postsResult = await UnipileLeadSearchService.getLinkedInPosts(profileIdentifier, unipileAccountId, 10);
+            logger.info('Using profile identifier for posts fetch', {
+              profileIdentifier,
+              source: unipileProfile ? 'unipile_profile' : 'url_extraction'
+            });
+
+            // Fetch recent posts from Unipile — pass personName so we can filter authored vs. engagement posts
+            const leadName = unipileProfile?.name || lead.name || '';
+            const postsResult = await UnipileLeadSearchService.getLinkedInPosts(profileIdentifier, unipileAccountId, leadName);
             if (postsResult.success && postsResult.posts.length > 0) {
               unipilePosts = postsResult.posts;
-              logger.info('Fetched LinkedIn posts from Unipile', {
+              logger.info('Fetched authored LinkedIn posts from Unipile', {
                 leadName: lead.name,
-                postCount: unipilePosts.length 
+                authoredPostCount: unipilePosts.length,
+                engagementActivityCount: postsResult.engagementActivity?.length || 0
               });
             }
+            // Also store engagement activity for additional context
+            var engagementActivity = postsResult.engagementActivity || [];
           } else {
             logger.warn('No active LinkedIn accounts found for Unipile data fetch');
           }
@@ -156,17 +180,38 @@ class CampaignLeadsSummaryController {
       }
       // Build comprehensive profile information for Gemini, prioritizing Unipile data
       const profileInfo = buildProfileInfo(lead, unipileProfile, unipilePosts);
-      // Create prompt for Gemini
-      const prompt = `Analyze the following LinkedIn profile information and recent posts to create a concise, professional summary that highlights:
-1. Professional background, expertise, and current role
-2. Key accomplishments and notable projects
-3. Industry context and role significance
-4. Recent professional activities and engagement (based on posts)
-5. Potential value and relevance to professional networks
-Keep the summary professional, insightful, and concise (2-3 paragraphs maximum). Reference specific insights from their recent activities and professional engagement.
-Profile Information:
+      // Create prompt for Gemini — designed to produce UNIQUE, data-specific summaries
+      const personName = unipileProfile?.name || lead.name || 'this professional';
+      const personTitle = unipileProfile?.title || unipileProfile?.headline || lead.title || '';
+      const personCompany = unipileProfile?.company || unipileProfile?.company_name || lead.company || '';
+      const hasPosts = unipilePosts && unipilePosts.length > 0;
+
+      const prompt = `You are writing a unique profile summary for a SPECIFIC person. This is NOT a template — every summary must be distinctly different based on the actual data provided.
+
+PERSON: ${personName}
+${personTitle ? `ROLE: ${personTitle}` : ''}
+${personCompany ? `COMPANY: ${personCompany}` : ''}
+
+FULL PROFILE DATA:
 ${profileInfo}
-Summary:`;
+INSTRUCTIONS:
+- Write a 2-3 paragraph summary that is UNIQUE to ${personName} — no two summaries should ever sound similar
+- Start the first paragraph by mentioning ${personName} BY NAME and their SPECIFIC current role${personCompany ? ` at ${personCompany}` : ''}
+- Use ONLY facts from the profile data above. Do NOT invent accomplishments, skills, or details not present in the data
+- If experience history is available, mention their career trajectory with specific company names and roles
+- If education data is available, mention their educational background specifically
+${hasPosts ? '- The profile data includes SELF-AUTHORED posts (posts this person wrote). Reference these with SPECIFIC topics — quote short phrases from their actual posts' : '- This person has no self-authored posts found. Focus on their professional positioning and expertise based on their title and experience'}
+- Write in a natural, conversational tone — vary sentence structure and avoid formulaic patterns
+- If the data is limited (only name/title/company), acknowledge that and write a shorter, honest summary instead of padding with generic statements
+
+CRITICAL RULES:
+❌ Do NOT use filler phrases like "demonstrates a keen interest" or "passionate professional" or "well-positioned in the industry" unless the data proves this
+❌ Do NOT generate generic summaries that could apply to anyone — each must be SPECIFIC to the provided data
+❌ Do NOT invent achievements, projects, or skills not explicitly mentioned in the profile data
+✅ DO mention specific companies, job titles, industries, and topics from the actual data
+✅ DO keep it concise — if data is sparse, a shorter summary is better than a padded one
+
+Summary for ${personName}:`;
       const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
       const result = await model.generateContent(prompt);
       const response = await result.response;
@@ -263,7 +308,7 @@ Summary:`;
               unipileProfile = profileResult.profile;
             }
 
-            // Determine best identifier for posts (must use internal URN, not public handle)
+            // Determine best identifier for posts
             let profileIdentifier = unipileProfile?.id
               || unipileProfile?.profile_id
               || unipileProfile?.provider_id
@@ -301,20 +346,21 @@ FULL PROFILE DATA:
 ${profileInfo}
 
 INSTRUCTIONS:
-- Write a 2-3 paragraph summary that is UNIQUE to ${personName}
-- Start by mentioning ${personName} BY NAME and their SPECIFIC current role${personCompany ? ` at ${personCompany}` : ''}
-- Use ONLY facts from the profile data above. Do NOT invent details
-- If experience history is available, mention their career trajectory
-- If education data is available, mention it specifically
-${hasPosts ? '- Reference specific topics from their SELF-AUTHORED posts' : '- Focus on professional positioning based on title and experience'}
-- Write in a natural, conversational tone
-- If data is limited, write a shorter honest summary instead of padding
+- Write a 2-3 paragraph summary that is UNIQUE to ${personName} — no two summaries should ever sound similar
+- Start the first paragraph by mentioning ${personName} BY NAME and their SPECIFIC current role${personCompany ? ` at ${personCompany}` : ''}
+- Use ONLY facts from the profile data above. Do NOT invent accomplishments, skills, or details not present in the data
+- If experience history is available, mention their career trajectory with specific company names and roles
+- If education data is available, mention their educational background specifically
+${hasPosts ? '- The profile data includes SELF-AUTHORED posts (posts this person wrote). Reference these with SPECIFIC topics — quote short phrases from their actual posts' : '- This person has no self-authored posts found. Focus on their professional positioning and expertise based on their title and experience'}
+- Write in a natural, conversational tone — vary sentence structure and avoid formulaic patterns
+- If the data is limited (only name/title/company), acknowledge that and write a shorter, honest summary instead of padding with generic statements
 
 CRITICAL RULES:
-❌ Do NOT use filler phrases like "passionate professional" or "well-positioned"
-❌ Do NOT generate generic summaries — each must be SPECIFIC to this person
-❌ Do NOT invent skills or achievements not in the data
-✅ DO mention specific companies, titles, and topics from the actual data
+❌ Do NOT use filler phrases like "demonstrates a keen interest" or "passionate professional" or "well-positioned in the industry" unless the data proves this
+❌ Do NOT generate generic summaries that could apply to anyone — each must be SPECIFIC to the provided data
+❌ Do NOT invent achievements, projects, or skills not explicitly mentioned in the profile data
+✅ DO mention specific companies, job titles, industries, and topics from the actual data
+✅ DO keep it concise — if data is sparse, a shorter summary is better than a padded one
 
 Summary for ${personName}:`;
 
@@ -330,7 +376,7 @@ Summary for ${personName}:`;
         generated_at: new Date().toISOString()
       });
     } catch (error) {
-      logger.error('[PreviewSummary] Failed to generate preview summary', { error: error.message });
+      logger.error('[PreviewSummary] Failed to generate preview summary', { error: error.message, stack: error.stack });
       res.status(500).json({
         success: false,
         error: 'Failed to generate preview summary',
@@ -358,13 +404,31 @@ LinkedIn: ${profile.linkedin_url || baseProfile.linkedin_url || 'Not available'}
   if (profile.bio || profile.summary || profile.about) {
     profileInfo += `\nBio/About: ${profile.bio || profile.summary || profile.about}`;
   }
+  // Industry
+  if (profile.industry || baseProfile.industry) {
+    profileInfo += `\nIndustry: ${profile.industry || baseProfile.industry}`;
+  }
+  // Seniority & Department
+  if (profile.seniority) {
+    profileInfo += `\nSeniority: ${profile.seniority}`;
+  }
+  if (profile.departments) {
+    const dept = Array.isArray(profile.departments) ? profile.departments.join(', ') : profile.departments;
+    profileInfo += `\nDepartment: ${dept}`;
+  }
+  // Connections count
+  if (profile.connections_count || profile.follower_count) {
+    profileInfo += `\nConnections/Followers: ${profile.connections_count || profile.follower_count}`;
+  }
   if (profile.experience || profile.experiences) {
     const experiences = profile.experience || profile.experiences || [];
     if (Array.isArray(experiences) && experiences.length > 0) {
       profileInfo += '\n\nRecent Experience:';
-      experiences.slice(0, 3).forEach((exp, idx) => {
-        profileInfo += `\n${idx + 1}. ${exp.title || exp.position || 'Position'} at ${exp.company || 'Company'}`;
+      experiences.slice(0, 4).forEach((exp, idx) => {
+        profileInfo += `\n${idx + 1}. ${exp.title || exp.position || 'Position'} at ${exp.company || exp.company_name || 'Company'}`;
         if (exp.duration) profileInfo += ` (${exp.duration})`;
+        if (exp.description) profileInfo += ` — ${exp.description.substring(0, 200)}`;
+        if (exp.start_date) profileInfo += ` [Started: ${exp.start_date}]`;
       });
     }
   }
@@ -372,20 +436,49 @@ LinkedIn: ${profile.linkedin_url || baseProfile.linkedin_url || 'Not available'}
     const education = profile.education || profile.educations || [];
     if (Array.isArray(education) && education.length > 0) {
       profileInfo += '\n\nEducation:';
-      education.slice(0, 2).forEach((edu, idx) => {
-        profileInfo += `\n${idx + 1}. ${edu.school || edu.institution || 'School'} - ${edu.degree || 'Degree'}`;
+      education.slice(0, 3).forEach((edu, idx) => {
+        profileInfo += `\n${idx + 1}. ${edu.school || edu.institution || 'School'}`;
+        if (edu.degree) profileInfo += ` — ${edu.degree}`;
+        if (edu.field_of_study) profileInfo += ` in ${edu.field_of_study}`;
+        if (edu.start_year || edu.end_year) profileInfo += ` (${edu.start_year || ''}–${edu.end_year || ''})`;
       });
     }
   }
+  // Skills
+  if (profile.skills) {
+    const skills = Array.isArray(profile.skills)
+      ? profile.skills.slice(0, 10).map(s => typeof s === 'string' ? s : s.name || s.skill || '').filter(Boolean)
+      : [];
+    if (skills.length > 0) {
+      profileInfo += `\n\nTop Skills: ${skills.join(', ')}`;
+    }
+  }
+  // Languages
+  if (profile.languages) {
+    const langs = Array.isArray(profile.languages)
+      ? profile.languages.map(l => typeof l === 'string' ? l : l.name || '').filter(Boolean)
+      : [];
+    if (langs.length > 0) {
+      profileInfo += `\nLanguages: ${langs.join(', ')}`;
+    }
+  }
+
+  // Self-authored posts (posts this person actually wrote)
   if (posts && Array.isArray(posts) && posts.length > 0) {
-    profileInfo += '\n\nRecent Posts & Activities:';
+    profileInfo += '\n\nSelf-Authored Posts (written by this person):';
     posts.slice(0, 5).forEach((post, idx) => {
       const postText = post.text || post.content || post.message || '';
       const postDate = post.date || post.created_at || post.timestamp || '';
-      profileInfo += `\n${idx + 1}. ${postText.substring(0, 150)}...`;
+      const truncated = postText.length > 200 ? postText.substring(0, 200) + '...' : postText;
+      profileInfo += `\n${idx + 1}. "${truncated}"`;
       if (postDate) profileInfo += ` (${postDate})`;
+      if (post.likes_count || post.reactions) profileInfo += ` [${post.likes_count || post.reactions} reactions]`;
+      if (post.comments_count) profileInfo += ` [${post.comments_count} comments]`;
     });
+  } else {
+    profileInfo += '\n\n[No self-authored LinkedIn posts found]';
   }
+
   return profileInfo;
 }
 module.exports = CampaignLeadsSummaryController;

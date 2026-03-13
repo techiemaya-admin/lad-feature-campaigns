@@ -506,7 +506,14 @@ If NO item in the list is a reasonably good logical match, return:
                         api: 'classic',
                         category: 'people'
                     };
-                    if (searchParams.keywords) body.keywords = searchParams.keywords;
+                    // Classic API does NOT support structured industry filters.
+                    // Inject industry names as keywords so they're not lost during SalesNav → Classic fallback.
+                    let classicKeywords = searchParams.keywords || '';
+                    if (searchParams.industry_names?.length) {
+                        classicKeywords = (classicKeywords + ' ' + searchParams.industry_names.join(' ')).trim();
+                        logger.info('[LinkedInSearchService] Classic API: injected industry names as keywords', { industry_names: searchParams.industry_names, classicKeywords });
+                    }
+                    if (classicKeywords) body.keywords = classicKeywords;
                     if (searchParams.location_ids?.length) body.location = searchParams.location_ids;
                     if (searchParams.profile_language?.length) body.profile_language = searchParams.profile_language;
                     
@@ -742,6 +749,7 @@ If NO item in the list is a reasonably good logical match, return:
             keywords: finalKeywords.trim(),
             location_ids: locationIds,
             industry_ids: industryIds,
+            industry_names: intent.industries || [], // Pass original names for classic API fallback
             function_ids: functionIds,
             seniority_ids: seniorityIds,
             company_headcount_ids: companyHeadcountIds,
@@ -852,6 +860,7 @@ If NO item in the list is a reasonably good logical match, return:
             keywords: finalKeywords.trim(),
             location_ids: locationIds,
             industry_ids: industryIds,
+            industry_names: normIntent.industries || [], // Pass original names for classic API fallback
             function_ids: [],
             seniority_ids: normIntent.seniority,
             company_headcount_ids: normIntent.company_headcount,
