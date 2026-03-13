@@ -54,7 +54,7 @@ router.use('/linkedin', linkedInRoutes);
 
 // Real-time campaigns stream (SSE)
 router.get('/stream', sseAuth, CampaignsStreamController.streamAllCampaigns);
-// Preview summary (no DB interaction — must be before /:id routes)
+// Preview summary - no DB interaction (must be before /:id routes to avoid UUID conflict)
 router.post('/preview/lead-summary', jwtAuth, CampaignLeadsSummaryController.generatePreviewSummary);
 // Campaign CRUD operations
 router.get('/', jwtAuth, validatePagination, CampaignController.listCampaigns);

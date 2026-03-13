@@ -113,7 +113,6 @@ class CampaignLeadsSummaryController {
             const userId = req.user?.userId;
             const userAccount = accounts.find(a => a.user_id === userId);
             unipileAccountId = userAccount ? userAccount.unipile_account_id : accounts[0].unipile_account_id;
-
             if (userAccount) {
               logger.info('Using perfectly matched user account for Unipile data', { userId, accountId: unipileAccountId });
             }
@@ -127,7 +126,6 @@ class CampaignLeadsSummaryController {
             if (profileResult.success && profileResult.profile) {
               unipileProfile = profileResult.profile;
             }
-
             // To fetch a user's posts accurately via LinkedIn search, we MUST use their internal URN/member ID (e.g., ACoAAB...). 
             // Passing the public handle (e.g., naveen-yelluru) causes LinkedIn to ignore the filter and return the auth user's posts.
             // Check all possible ID fields from the Unipile profile response
@@ -196,7 +194,6 @@ ${personCompany ? `COMPANY: ${personCompany}` : ''}
 
 FULL PROFILE DATA:
 ${profileInfo}
-
 INSTRUCTIONS:
 - Write a 2-3 paragraph summary that is UNIQUE to ${personName} — no two summaries should ever sound similar
 - Start the first paragraph by mentioning ${personName} BY NAME and their SPECIFIC current role${personCompany ? ` at ${personCompany}` : ''}
@@ -248,7 +245,7 @@ Summary for ${personName}:`;
 
   /**
    * POST /api/campaigns/preview/lead-summary
-   * Generate a profile summary from raw profile data .
+   * Generate a profile summary from raw profile data — NO database interaction.
    * Used by the AI Lead Finder (advanced-search) preview feature.
    */
   static async generatePreviewSummary(req, res) {
